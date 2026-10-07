@@ -12,6 +12,8 @@ const eslintConfig = defineConfig([
     "out/**",
     "build/**",
     "next-env.d.ts",
+    // Static assets, incl. the embedded Leave & Attendance prototype runtime.
+    "public/**",
   ]),
 ]);
 

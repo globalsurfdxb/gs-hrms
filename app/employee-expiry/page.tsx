@@ -1,0 +1,525 @@
+'use client';
+
+import { useState } from 'react';
+import Link from 'next/link';
+import { EMPLOYEES, REFERENCE_TODAY, employeeById, matchesEmployee } from '@/lib/data';
+import { addDays } from '@/lib/dates';
+import { useOrg } from '@/context/OrgContext';
+import { useSeparation } from '@/context/SeparationContext';
+import { RUNGS } from '@/context/VisaContext';
+import { DocRow, useExpiry } from '@/context/ExpiryContext';
+import { ExpiryState } from '@/lib/types';
+import { PageHeader } from '@/components/ui/PageHeader';
+import { Card, CardHeader, EmptyState, Button } from '@/components/ui/Card';
+import { ExpiryBadge } from '@/components/ui/Badge';
+import { Drawer } from '@/components/ui/Drawer';
+import { SearchSelect } from '@/components/ui/SearchSelect';
+import { EmpId } from '@/components/ui/EmployeeBits';
+import { BellIcon, ClockIcon, PlusIcon, SearchIcon, XIcon } from '@/components/icons';
+
+const SORTED_RUNGS = [...RUNGS].sort((a, b) => b - a);
+const DOC_TYPES = ['Passport', 'Emirates ID', 'Residence Visa', 'Labour Card', 'UAE Driving Licence', 'Medical Insurance', 'Professional Licence', 'Insurance Document', 'Other'];
+const FILTERS: { key: 'All' | ExpiryState; label: string }[] = [
+  { key: 'All', label: 'All statuses' },
+  { key: 'expired', label: 'Expired' },
+  { key: 'soon', label: 'Expiring soon' },
+  { key: 'ok', label: 'Valid' },
+];
+
+const addYears = (iso: string, n: number) => {
+  const d = new Date(`${iso}T00:00:00Z`);
+  d.setUTCFullYear(d.getUTCFullYear() + n);
+  return d.toISOString().slice(0, 10);
+};
+
+function inWindow(days: number, rung: number) {
+  const lower = [...RUNGS].sort((a, b) => a - b).filter((r) => r < rung).pop() ?? -1;
+  return days >= 0 && days <= rung && days > lower;
+}
+
+function Stat({ label, value, color, active, onClick }: { label: string; value: number; color: string; active: boolean; onClick: () => void }) {
+  return (
+    <button
+      type="button"
+      className="compcard"
+      onClick={onClick}
+      title="Click to filter the register"
+      style={{ textAlign: 'left', cursor: 'pointer', font: 'inherit', outline: active ? '2px solid var(--primary)' : undefined, outlineOffset: -1 }}
+    >
+      <div className="ttl">{label}</div>
+      <div className="num" style={{ fontSize: 24, fontWeight: 700, color }}>
+        {value}
+      </div>
+    </button>
+  );
+}
+
+function DaysLeft({ days }: { days: number }) {
+  if (days < 0) return <span style={{ color: '#B91C1C', fontWeight: 700 }}>Expired {-days}d ago</span>;
+  return <span style={{ color: days <= 30 ? '#C2410C' : days <= 90 ? '#B45309' : 'var(--muted)', fontWeight: days <= 90 ? 600 : 400 }}>{days} days</span>;
+}
+
+export default function EmployeeExpiryPage() {
+  const { locations, locationName } = useOrg();
+  const { statusOf } = useSeparation();
+  const { reminders, renewals, rowsFor, daysOf, stateOf, dueRung, isReminded, lastReminder, sendReminder, sendDue, renew, addDoc } = useExpiry();
+
+  const [q, setQ] = useState('');
+  const [loc, setLoc] = useState('All');
+  const [type, setType] = useState('All');
+  const [statusFilter, setStatusFilter] = useState<'All' | ExpiryState>('All');
+  const [rungFilter, setRungFilter] = useState<number | null>(null);
+  const [notice, setNotice] = useState('');
+
+  const [renewKey, setRenewKey] = useState<string | null>(null);
+  const [newExpiry, setNewExpiry] = useState('');
+  const [reference, setReference] = useState('');
+  const [renewError, setRenewError] = useState('');
+
+  const [addOpen, setAddOpen] = useState(false);
+  const [addEmp, setAddEmp] = useState('');
+  const [addType, setAddType] = useState('UAE Driving Licence');
+  const [addCustom, setAddCustom] = useState('');
+  const [addDate, setAddDate] = useState('');
+  const [addError, setAddError] = useState('');
+
+  const employees = EMPLOYEES.filter((e) => statusOf(e) !== 'Inactive');
+  const all = rowsFor(employees).filter((r) => loc === 'All' || r.employee.location === loc);
+  const types = [...new Set(all.map((r) => r.type))];
+
+  const count = (s: ExpiryState) => all.filter((r) => stateOf(r) === s).length;
+  const dueList = all.filter((r) => {
+    const x = dueRung(r);
+    return x !== null && !isReminded(r, x);
+  });
+
+  const rows = all
+    .filter((r) => (type === 'All' || r.type === type) && (statusFilter === 'All' || stateOf(r) === statusFilter) && (rungFilter === null || inWindow(daysOf(r), rungFilter)))
+    .filter((r) => matchesEmployee(r.employee, q) || r.type.toLowerCase().includes(q.trim().toLowerCase()))
+    .sort((a, b) => daysOf(a) - daysOf(b));
+
+  const renewing: DocRow | undefined = renewKey ? all.find((r) => r.key === renewKey) ?? rowsFor(employees).find((r) => r.key === renewKey) : undefined;
+  const quickBase = renewing && renewing.expiry > REFERENCE_TODAY ? renewing.expiry : REFERENCE_TODAY;
+
+  const remind = (r: DocRow) => {
+    const x = dueRung(r);
+    sendReminder(r, x);
+    setNotice(`Reminder sent to ${r.employee.name} (${r.employee.employeeCode}) about the ${r.type}${x ? ` — ${x}-day notice` : ''}.`);
+  };
+
+  const sendAll = () => {
+    const n = sendDue(dueList);
+    setNotice(n ? `Sent ${n} scheduled reminder${n > 1 ? 's' : ''} to the employees and HR.` : 'No reminders are due right now.');
+  };
+
+  const openRenew = (r: DocRow) => {
+    setRenewKey(r.key);
+    setNewExpiry('');
+    setReference('');
+    setRenewError('');
+  };
+
+  const submitRenew = () => {
+    if (!renewing) return;
+    if (!newExpiry) {
+      setRenewError('Enter the new expiry date.');
+      return;
+    }
+    if (newExpiry <= renewing.expiry || newExpiry <= REFERENCE_TODAY) {
+      setRenewError('The new expiry must be later than the current expiry and in the future.');
+      return;
+    }
+    renew(renewing, { newExpiry, reference });
+    setNotice(`${renewing.type} updated for ${renewing.employee.name} (${renewing.employee.employeeCode}) — now valid until ${newExpiry}.`);
+    setRenewKey(null);
+  };
+
+  const openAdd = () => {
+    setAddEmp('');
+    setAddType('UAE Driving Licence');
+    setAddCustom('');
+    setAddDate('');
+    setAddError('');
+    setAddOpen(true);
+  };
+
+  const submitAdd = () => {
+    const finalType = addType === 'Other' ? addCustom.trim() : addType;
+    if (!addEmp) {
+      setAddError('Select the employee this document belongs to.');
+      return;
+    }
+    if (!finalType) {
+      setAddError('Enter the document type.');
+      return;
+    }
+    if (!addDate) {
+      setAddError('Enter the expiry date.');
+      return;
+    }
+    if (rowsFor([employeeById(addEmp)!]).some((r) => r.type.toLowerCase() === finalType.toLowerCase())) {
+      setAddError(`${finalType} is already tracked for this employee — use Update expiry on its row instead.`);
+      return;
+    }
+    addDoc({ employeeId: addEmp, type: finalType, expiryDate: addDate });
+    const e = employeeById(addEmp)!;
+    setNotice(`${finalType} added for ${e.name} (${e.employeeCode}) — expires ${addDate}.`);
+    setAddOpen(false);
+  };
+
+  return (
+    <div>
+      <PageHeader
+        eyebrow="Documents & Compliance"
+        title="Employee Expiry"
+        description="Every dated document across your employees — passports, visas, Emirates IDs and licences — sorted by urgency, with reminders and renewals."
+        actions={
+          <>
+            <Button onClick={openAdd}>
+              <PlusIcon /> Add document
+            </Button>
+            <Button variant="primary" onClick={sendAll} disabled={!dueList.length}>
+              <BellIcon /> Send due reminders{dueList.length ? ` · ${dueList.length}` : ''}
+            </Button>
+          </>
+        }
+      />
+
+      {notice && (
+        <div className="note-box" style={{ marginBottom: 14, alignItems: 'center' }}>
+          <BellIcon />
+          <div style={{ flex: 1 }}>{notice}</div>
+          <button type="button" className="icon-act" title="Dismiss" onClick={() => setNotice('')}>
+            <XIcon />
+          </button>
+        </div>
+      )}
+
+      <div className="g3">
+        <Stat label="Expired" value={count('expired')} color="#B91C1C" active={statusFilter === 'expired'} onClick={() => setStatusFilter(statusFilter === 'expired' ? 'All' : 'expired')} />
+        <Stat label="Expiring soon" value={count('soon')} color="#C2410C" active={statusFilter === 'soon'} onClick={() => setStatusFilter(statusFilter === 'soon' ? 'All' : 'soon')} />
+        <Stat label="Valid" value={count('ok')} color="#15803D" active={statusFilter === 'ok'} onClick={() => setStatusFilter(statusFilter === 'ok' ? 'All' : 'ok')} />
+      </div>
+
+      <Card className="row-gap">
+        <CardHeader title="Reminder ladder" sub="Click a notice window to filter the register. Green = every document in the window has been reminded." />
+        <div className="ladder" style={{ padding: '18px 22px' }}>
+          {SORTED_RUNGS.map((r) => {
+            const inWin = all.filter((d) => inWindow(daysOf(d), r));
+            const reminded = inWin.filter((d) => isReminded(d, r)).length;
+            const cls = inWin.length && reminded === inWin.length ? 'sent' : inWin.length ? 'now' : '';
+            return (
+              <button
+                key={r}
+                type="button"
+                className={`ladder-step ${cls}`}
+                onClick={() => setRungFilter(rungFilter === r ? null : r)}
+                style={{ cursor: 'pointer', font: 'inherit', background: rungFilter === r ? 'var(--primary-50)' : 'transparent', borderRadius: 10, paddingTop: 6, paddingBottom: 6 }}
+              >
+                <div className="cap">{r}d</div>
+                <div className="lt">{r} days notice</div>
+                <div className="ls">{inWin.length ? `${inWin.length} document(s) · ${reminded} reminded` : 'Nothing in this window'}</div>
+              </button>
+            );
+          })}
+        </div>
+      </Card>
+
+      <Card className="row-gap">
+        <CardHeader title="Expiry register" sub={`${all.length} tracked document(s)`} />
+        <div className="tbar">
+          <div className="tsearch" style={{ width: 260 }}>
+            <SearchIcon />
+            <input value={q} onChange={(e) => setQ(e.target.value)} placeholder="Search name, employee ID or document…" />
+          </div>
+          <select value={loc} onChange={(e) => setLoc(e.target.value)} className="chip">
+            <option value="All">All locations</option>
+            {locations.map((l) => (
+              <option key={l.id} value={l.id}>
+                {l.name}
+              </option>
+            ))}
+          </select>
+          <select value={type} onChange={(e) => setType(e.target.value)} className="chip">
+            <option value="All">All document types</option>
+            {types.map((t) => (
+              <option key={t}>{t}</option>
+            ))}
+          </select>
+          <select value={statusFilter} onChange={(e) => setStatusFilter(e.target.value as 'All' | ExpiryState)} className="chip">
+            {FILTERS.map((f) => (
+              <option key={f.key} value={f.key}>
+                {f.label}
+              </option>
+            ))}
+          </select>
+          {rungFilter !== null && (
+            <button type="button" className="chip" onClick={() => setRungFilter(null)} style={{ background: 'var(--primary-50)', borderColor: 'var(--primary-100)', color: 'var(--primary)' }}>
+              {rungFilter}-day window <XIcon />
+            </button>
+          )}
+          <span className="sp" />
+          <span style={{ fontSize: 12, color: 'var(--muted)' }}>
+            {rows.length} of {all.length}
+          </span>
+        </div>
+
+        {!rows.length ? (
+          <EmptyState icon={<ClockIcon />} title={all.length ? 'No matching documents' : 'Nothing tracked'} description={all.length ? 'Try a different search or filter.' : 'Add a dated document to start tracking its expiry.'} />
+        ) : (
+          <table>
+            <thead>
+              <tr>
+                <th>Employee</th>
+                <th>Document</th>
+                <th>Expiry date</th>
+                <th>Days left</th>
+                <th>Status</th>
+                <th>Reminder</th>
+                <th />
+              </tr>
+            </thead>
+            <tbody>
+              {rows.map((r) => {
+                const st = stateOf(r);
+                const n = daysOf(r);
+                const due = dueRung(r);
+                const last = lastReminder(r);
+                return (
+                  <tr key={r.key}>
+                    <td>
+                      <Link href={`/directory/${r.employee.employeeCode}`} className="person">
+                        <div className="av" style={{ background: 'var(--primary-100)', color: 'var(--primary)' }}>
+                          {r.employee.avatarInitials}
+                        </div>
+                        <div>
+                          <div className="nm">
+                            {r.employee.name}
+                            <EmpId code={r.employee.employeeCode} />
+                          </div>
+                          <div className="sb">{locationName(r.employee.location)}</div>
+                        </div>
+                      </Link>
+                    </td>
+                    <td>
+                      {r.type}
+                      {r.custom && <span style={{ marginLeft: 6, fontSize: 11, color: 'var(--faint)' }}>custom</span>}
+                    </td>
+                    <td className="mono">{r.expiry}</td>
+                    <td>
+                      <DaysLeft days={n} />
+                    </td>
+                    <td>
+                      <ExpiryBadge state={st} />
+                    </td>
+                    <td style={{ fontSize: 12 }}>
+                      {due !== null && !isReminded(r, due) ? (
+                        <span style={{ color: '#B45309', fontWeight: 600 }}>Due: {due}-day notice</span>
+                      ) : last ? (
+                        <span style={{ color: 'var(--muted)' }}>
+                          Sent {last.sentOn}
+                          {last.rung ? ` · ${last.rung}-day` : ' · manual'}
+                        </span>
+                      ) : n > 90 ? (
+                        <span style={{ color: 'var(--faint)' }}>Next: 90-day on {addDays(r.expiry, -90)}</span>
+                      ) : (
+                        <span style={{ color: 'var(--faint)' }}>—</span>
+                      )}
+                    </td>
+                    <td style={{ textAlign: 'right', whiteSpace: 'nowrap' }}>
+                      <Button size="sm" onClick={() => remind(r)} title="Send a reminder now">
+                        <BellIcon /> Remind
+                      </Button>{' '}
+                      <Button size="sm" variant={st === 'ok' ? 'ghost' : 'primary'} onClick={() => openRenew(r)}>
+                        Update expiry
+                      </Button>
+                    </td>
+                  </tr>
+                );
+              })}
+            </tbody>
+          </table>
+        )}
+      </Card>
+
+      <div className="g2 row-gap">
+        <Card>
+          <CardHeader title="Reminder log" sub={`${reminders.length} sent this session`} />
+          {!reminders.length && <div style={{ padding: '14px 18px', fontSize: 13, color: 'var(--muted)' }}>No reminders sent yet. Use “Send due reminders” or “Remind” on a row.</div>}
+          {[...reminders]
+            .reverse()
+            .slice(0, 8)
+            .map((r) => {
+              const e = employeeById(r.employeeId)!;
+              return (
+                <div key={r.id} className="doc">
+                  <div className="fic">
+                    <BellIcon />
+                  </div>
+                  <div>
+                    <div className="nm">
+                      {e.name}
+                      <EmpId code={e.employeeCode} /> · {r.type}
+                    </div>
+                    <div className="mt">
+                      {r.rung ? `${r.rung}-day notice` : 'Manual reminder'} · {r.sentOn} · to {r.to.join(', ')}
+                    </div>
+                  </div>
+                </div>
+              );
+            })}
+        </Card>
+        <Card>
+          <CardHeader title="Update history" sub={`${renewals.length} update(s) this session`} />
+          {!renewals.length && <div style={{ padding: '14px 18px', fontSize: 13, color: 'var(--muted)' }}>No expiry dates updated yet. Use “Update expiry” on a row after a document is renewed.</div>}
+          {[...renewals]
+            .reverse()
+            .slice(0, 8)
+            .map((r) => {
+              const e = employeeById(r.employeeId)!;
+              return (
+                <div key={r.id} className="doc">
+                  <div className="fic">
+                    <ClockIcon />
+                  </div>
+                  <div>
+                    <div className="nm">
+                      {e.name}
+                      <EmpId code={e.employeeCode} /> · {r.type}
+                    </div>
+                    <div className="mt">
+                      {r.previousExpiry} → {r.newExpiry} · {r.renewedOn}
+                      {r.reference ? ` · ref ${r.reference}` : ''}
+                    </div>
+                  </div>
+                </div>
+              );
+            })}
+        </Card>
+      </div>
+
+      <Drawer
+        open={!!renewing}
+        onClose={() => setRenewKey(null)}
+        title="Update expiry"
+        description={renewing ? `${renewing.type} · ${renewing.employee.name} (${renewing.employee.employeeCode})` : undefined}
+        footer={
+          <>
+            <Button variant="ghost" onClick={() => setRenewKey(null)}>
+              Cancel
+            </Button>
+            <Button variant="primary" onClick={submitRenew}>
+              Save new expiry
+            </Button>
+          </>
+        }
+      >
+        {renewing && (
+          <>
+            <div style={{ border: '1px solid var(--border)', borderRadius: 'var(--r-sm)', padding: 12, background: 'var(--bg)', marginBottom: 16, fontSize: 13 }}>
+              <div style={{ fontWeight: 600 }}>
+                {renewing.employee.designation} · {renewing.employee.department}
+              </div>
+              <div style={{ color: 'var(--muted)', marginTop: 4 }}>
+                Current expiry <b>{renewing.expiry}</b> · <DaysLeft days={daysOf(renewing)} />
+              </div>
+            </div>
+            <div className="form-grid">
+              <div className="fg full">
+                <label>
+                  New expiry date <span className="req">*</span>
+                </label>
+                <input
+                  type="date"
+                  value={newExpiry}
+                  onChange={(e) => {
+                    setNewExpiry(e.target.value);
+                    setRenewError('');
+                  }}
+                />
+                <div style={{ display: 'flex', gap: 6, marginTop: 6 }}>
+                  {[1, 2, 5].map((y) => (
+                    <button key={y} type="button" className="chip" onClick={() => { setNewExpiry(addYears(quickBase, y)); setRenewError(''); }}>
+                      +{y} year{y > 1 ? 's' : ''}
+                    </button>
+                  ))}
+                </div>
+                <span className="hint">Quick options count from the current expiry (or today if it has already passed).</span>
+              </div>
+              <div className="fg full">
+                <label>Reference / application no.</label>
+                <input value={reference} onChange={(e) => setReference(e.target.value)} placeholder="Optional" />
+              </div>
+            </div>
+            {!renewing.custom && (renewing.type === 'Residence Visa' || renewing.type === 'Emirates ID') && (
+              <div className="note-box" style={{ marginTop: 12 }}>
+                <div>This also updates the {renewing.type === 'Residence Visa' ? 'visa record on the Visa Management page' : 'Emirates ID date on the Visa Management page'}.</div>
+              </div>
+            )}
+            {renewError && <div style={{ marginTop: 10, fontSize: 12, color: 'var(--danger)' }}>{renewError}</div>}
+          </>
+        )}
+      </Drawer>
+
+      <Drawer
+        open={addOpen}
+        onClose={() => setAddOpen(false)}
+        title="Add dated document"
+        description="Start tracking another expiring document so it appears in the register and gets reminders."
+        footer={
+          <>
+            <Button variant="ghost" onClick={() => setAddOpen(false)}>
+              Cancel
+            </Button>
+            <Button variant="primary" onClick={submitAdd}>
+              Add document
+            </Button>
+          </>
+        }
+      >
+        <div className="form-grid">
+          <div className="fg full">
+            <label>
+              Employee <span className="req">*</span>
+            </label>
+            <SearchSelect
+              options={employees.map((e) => ({ value: e.id, label: e.name, meta: `${e.employeeCode} · ${e.department}` }))}
+              value={addEmp}
+              onChange={(v) => {
+                setAddEmp(v);
+                setAddError('');
+              }}
+              placeholder="Search by name or employee ID…"
+              emptyText="No employees found"
+            />
+          </div>
+          <div className="fg">
+            <label>
+              Document type <span className="req">*</span>
+            </label>
+            <select value={addType} onChange={(e) => { setAddType(e.target.value); setAddError(''); }}>
+              {DOC_TYPES.map((t) => (
+                <option key={t}>{t}</option>
+              ))}
+            </select>
+          </div>
+          <div className="fg">
+            <label>
+              Expiry date <span className="req">*</span>
+            </label>
+            <input type="date" value={addDate} onChange={(e) => { setAddDate(e.target.value); setAddError(''); }} />
+          </div>
+          {addType === 'Other' && (
+            <div className="fg full">
+              <label>
+                Document name <span className="req">*</span>
+              </label>
+              <input value={addCustom} onChange={(e) => { setAddCustom(e.target.value); setAddError(''); }} placeholder="e.g. Forklift Operator Certificate" />
+            </div>
+          )}
+        </div>
+        {addError && <div style={{ marginTop: 10, fontSize: 12, color: 'var(--danger)' }}>{addError}</div>}
+      </Drawer>
+    </div>
+  );
+}
