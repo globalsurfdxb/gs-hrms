@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useRef, useState } from 'react';
+import { ReactNode, useEffect, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import { EMPLOYEES, PERSONAS } from '@/lib/data';
 import { Role } from '@/lib/types';
@@ -8,10 +8,88 @@ import { accountFor, safeNext, signIn, useAuth } from '@/lib/auth';
 
 const DEMO_ROLES: Role[] = ['Super Admin', 'HR', 'Office Admin', 'Team Lead', 'Employee'];
 
+const icon = (d: ReactNode) => (
+  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+    {d}
+  </svg>
+);
+const I = {
+  users: icon(
+    <>
+      <circle cx="9" cy="8" r="3.2" />
+      <path d="M3 20c0-3.3 2.7-5.5 6-5.5s6 2.2 6 5.5" />
+      <path d="M16 5.2a3.2 3.2 0 0 1 0 5.6M18 14.8c1.8.7 3 2.4 3 5.2" />
+    </>,
+  ),
+  cube: icon(
+    <>
+      <path d="M12 3l8 4.5v9L12 21l-8-4.5v-9L12 3z" />
+      <path d="M4 7.5L12 12l8-4.5M12 12v9" />
+    </>,
+  ),
+  wallet: icon(
+    <>
+      <path d="M4 7a2 2 0 0 1 2-2h11v4" />
+      <rect x="3" y="7" width="18" height="13" rx="2" />
+      <circle cx="16.5" cy="13.5" r="1.2" />
+    </>,
+  ),
+  sync: icon(
+    <>
+      <path d="M20 11a8 8 0 0 0-14.3-4.5L4 8.5M4 4v4.5h4.5" />
+      <path d="M4 13a8 8 0 0 0 14.3 4.5l1.7-2M20 20v-4.5h-4.5" />
+    </>,
+  ),
+  shield: icon(
+    <>
+      <path d="M12 3l7.5 3v5.5c0 4.5-3 8-7.5 9.5-4.5-1.5-7.5-5-7.5-9.5V6L12 3z" />
+      <path d="M8.5 12l2.5 2.5 4.5-5" />
+    </>,
+  ),
+  cal: icon(
+    <>
+      <rect x="3.5" y="5" width="17" height="15" rx="2.5" />
+      <path d="M3.5 10h17M8 3v4M16 3v4M8 14h3" />
+    </>,
+  ),
+  bell: icon(
+    <>
+      <path d="M6 16V11a6 6 0 0 1 12 0v5l1.5 2h-15L6 16z" />
+      <path d="M10 21h4" />
+    </>,
+  ),
+  mail: icon(
+    <>
+      <rect x="3" y="5" width="18" height="14" rx="2.5" />
+      <path d="M3.5 7l8.5 6 8.5-6" />
+    </>,
+  ),
+  lock: icon(
+    <>
+      <rect x="5" y="11" width="14" height="9" rx="2" />
+      <path d="M8 11V8a4 4 0 0 1 8 0v3" />
+    </>,
+  ),
+  eye: icon(
+    <>
+      <path d="M2 12s3.6-6.5 10-6.5S22 12 22 12s-3.6 6.5-10 6.5S2 12 2 12z" />
+      <circle cx="12" cy="12" r="3" />
+    </>,
+  ),
+  eyeOff: icon(
+    <>
+      <path d="M3 3l18 18" />
+      <path d="M10.6 6a9.6 9.6 0 0 1 1.4-.1C18.4 5.9 22 12 22 12a17 17 0 0 1-3.2 3.9M6.6 7.6A17 17 0 0 0 2 12s3.6 6.1 10 6.1a9.5 9.5 0 0 0 3.6-.7" />
+      <path d="M9.9 9.9a3 3 0 0 0 4.2 4.2" />
+    </>,
+  ),
+};
+
 const SLIDES = [
-  { title: 'Every people process in one place', text: 'Onboarding, directory, performance, expense claims and offboarding — connected, so nothing is re-entered.', tag: 'Employee Management' },
-  { title: 'Leave & attendance that follows each location', text: 'Working weeks, holidays, shifts and policies set per location, with approvals in a single inbox.', tag: 'Leave & Attendance' },
-  { title: 'Never miss a renewal again', text: 'Visas, Emirates IDs, licences and insurance tracked with reminders before they expire.', tag: 'Renewal Management' },
+  { title: 'Every people process in one place', text: 'Onboarding, directory, performance, expenses and offboarding — connected, so nothing is entered twice.', centre: I.users, bubbles: [I.users, I.cube, I.sync, I.wallet] },
+  { title: 'Leave & attendance by location', text: 'Working weeks, holidays and policies are set per location, with approvals in a single inbox.', centre: I.cal, bubbles: [I.users, I.cube, I.sync, I.wallet] },
+  { title: 'Always up to date', text: 'Real-time records mean decisions are always based on the latest information.', centre: I.shield, bubbles: [I.users, I.cube, I.sync, I.wallet] },
+  { title: 'Never miss a renewal', text: 'Visas, Emirates IDs, licences and insurance are tracked, with reminders before they expire.', centre: I.bell, bubbles: [I.users, I.cube, I.sync, I.wallet] },
 ];
 
 const initials = (name: string) => {
@@ -22,19 +100,17 @@ const initials = (name: string) => {
 export default function LoginPage() {
   const router = useRouter();
   const auth = useAuth();
-  const [step, setStep] = useState<'email' | 'password'>('email');
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [show, setShow] = useState(false);
   const [remember, setRemember] = useState(true);
-  const [error, setError] = useState('');
+  const [error, setError] = useState<{ field: 'email' | 'password' | 'form'; msg: string } | null>(null);
+  const [notice, setNotice] = useState('');
   const [busy, setBusy] = useState(false);
   const [forgot, setForgot] = useState(false);
   const [sent, setSent] = useState(false);
-  const [slide, setSlide] = useState(0);
-  const passRef = useRef<HTMLInputElement>(null);
-
-  const account = accountFor(email);
+  const [demo, setDemo] = useState(false);
+  const [slide, setSlide] = useState(2);
 
   // Already signed in → straight to the app.
   useEffect(() => {
@@ -42,34 +118,24 @@ export default function LoginPage() {
   }, [auth.status, router]);
 
   useEffect(() => {
-    const id = setInterval(() => setSlide((s) => (s + 1) % SLIDES.length), 5000);
-    return () => clearInterval(id);
-  }, []);
-
-  useEffect(() => {
-    if (step === 'password') passRef.current?.focus();
-  }, [step]);
-
-  const next = () => {
-    const v = email.trim();
-    if (!v) return setError('Enter your work email address.');
-    if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(v)) return setError('That doesn’t look like an email address.');
-    const acc = accountFor(v);
-    if (!acc) return setError('We couldn’t find an account with that email. Check it or contact your HR administrator.');
-    if (acc.employee.employmentStatus === 'Inactive') return setError('This account has been deactivated. Contact your HR administrator.');
-    setError('');
-    setForgot(false);
-    setSent(false);
-    setStep('password');
-  };
+    const id = setTimeout(() => setSlide((s) => (s + 1) % SLIDES.length), 5500);
+    return () => clearTimeout(id);
+  }, [slide]);
 
   const submit = () => {
-    if (!password) return setError('Enter your password.');
-    setError('');
+    setNotice('');
+    const v = email.trim();
+    if (!v) return setError({ field: 'email', msg: 'Enter your work email address.' });
+    if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(v)) return setError({ field: 'email', msg: 'That doesn’t look like an email address.' });
+    const acc = accountFor(v);
+    if (!acc) return setError({ field: 'email', msg: 'We couldn’t find an account with that email. Check it or contact your HR administrator.' });
+    if (acc.employee.employmentStatus === 'Inactive') return setError({ field: 'email', msg: 'This account has been deactivated. Contact your HR administrator.' });
+    if (!password) return setError({ field: 'password', msg: 'Enter your password.' });
+    setError(null);
     setBusy(true);
     // No sign-in service is connected yet, so the session is created locally after a short pause.
     setTimeout(() => {
-      signIn(email, remember);
+      signIn(v, remember);
       router.replace(safeNext(new URLSearchParams(window.location.search).get('next')));
     }, 650);
   };
@@ -78,78 +144,47 @@ export default function LoginPage() {
     const emp = EMPLOYEES.find((e) => e.id === PERSONAS[role].employeeId);
     if (!emp) return;
     setEmail(emp.email);
-    setError('');
-    setStep('email');
+    if (!password) setPassword('demo1234');
+    setError(null);
   };
 
   if (auth.status === 'in') return <div className="boot" aria-busy="true" />;
 
+  const s = SLIDES[slide];
+  const bad = (f: 'email' | 'password') => (error?.field === f ? 'bad' : '');
+
   return (
-    <div className="lg">
-      <section className="lg-left">
-        <div className="lg-top">
-          <div className="lg-logo">GS</div>
-          <div>
-            <div className="lg-brand">Global Surf IT</div>
-            <div className="lg-prod">GSIT ERP</div>
-          </div>
-        </div>
+    <div className="sg">
+      <div className="sg-wrap">
+        <div className="sg-card">
+          <section className="sg-left">
+            <div className="sg-logo" aria-label="GS">
+              <span>GS</span>
+              <i>
+                <b style={{ background: '#2b4a9b' }} />
+                <b style={{ background: '#e5434e' }} />
+                <b style={{ background: '#8bc53f' }} />
+                <b style={{ background: '#1fa5a0' }} />
+              </i>
+            </div>
+            <h1>Sign in</h1>
+            <p className="sg-sub">to access GSIT ERP</p>
 
-        <div className="lg-form">
-          <h1>Sign in</h1>
-          <p className="lg-sub">Use your work email to continue to GSIT ERP.</p>
+            <button type="button" className="sg-ms" onClick={() => setNotice('Microsoft sign-in isn’t connected in this prototype. Use your work email and password below.')}>
+              <svg viewBox="0 0 21 21" width="16" height="16" aria-hidden="true">
+                <rect x="1" y="1" width="9" height="9" fill="#f25022" />
+                <rect x="11" y="1" width="9" height="9" fill="#7fba00" />
+                <rect x="1" y="11" width="9" height="9" fill="#00a4ef" />
+                <rect x="11" y="11" width="9" height="9" fill="#ffb900" />
+              </svg>
+              Continue with Microsoft
+            </button>
+            {notice && <div className="sg-note warn">{notice}</div>}
 
-          {step === 'email' ? (
-            <form
-              onSubmit={(e) => {
-                e.preventDefault();
-                next();
-              }}
-              noValidate
-            >
-              <label className="lg-lbl" htmlFor="lg-email">
-                Work email
-              </label>
-              <input
-                id="lg-email"
-                className={`lg-in ${error ? 'bad' : ''}`}
-                type="email"
-                autoComplete="username"
-                autoFocus
-                value={email}
-                onChange={(e) => {
-                  setEmail(e.target.value);
-                  if (error) setError('');
-                }}
-                placeholder="name@gs-it.ae"
-              />
-              {error && <div className="lg-err">{error}</div>}
-              <button type="submit" className="lg-btn">
-                Next
-              </button>
+            <div className="sg-or">
+              <span>OR</span>
+            </div>
 
-              <div className="lg-or">
-                <span>Demo accounts</span>
-              </div>
-              <div className="lg-demo">
-                {DEMO_ROLES.map((r) => {
-                  const emp = EMPLOYEES.find((e) => e.id === PERSONAS[r].employeeId);
-                  if (!emp) return null;
-                  return (
-                    <button key={r} type="button" className={`lg-chip ${email.toLowerCase() === emp.email.toLowerCase() ? 'on' : ''}`} onClick={() => pickDemo(r)} title={emp.email}>
-                      <span className="lg-chip-av">{initials(emp.name)}</span>
-                      <span className="lg-chip-t">
-                        <b>{emp.name}</b>
-                        <small>{emp.email}</small>
-                      </span>
-                      <em className="lg-role">{r}</em>
-                    </button>
-                  );
-                })}
-              </div>
-              <p className="lg-note">This is a prototype: choose a demo account above, or type any registered work email. No password is checked until the sign-in service is connected.</p>
-            </form>
-          ) : (
             <form
               onSubmit={(e) => {
                 e.preventDefault();
@@ -157,159 +192,133 @@ export default function LoginPage() {
               }}
               noValidate
             >
-              <div className="lg-acc">
-                <span className="lg-acc-av">{account ? initials(account.employee.name) : '?'}</span>
-                <div style={{ minWidth: 0, flex: 1 }}>
-                  <div className="lg-acc-n">{account?.employee.name}</div>
-                  <div className="lg-acc-e">{email.trim().toLowerCase()}</div>
-                </div>
-                <button
-                  type="button"
-                  className="lg-link"
-                  onClick={() => {
-                    setStep('email');
-                    setPassword('');
-                    setError('');
+              <label className="sg-lbl" htmlFor="sg-email">
+                Email
+              </label>
+              <div className={`sg-field ${bad('email')}`}>
+                {I.mail}
+                <input
+                  id="sg-email"
+                  type="email"
+                  autoComplete="username"
+                  autoFocus
+                  value={email}
+                  onChange={(e) => {
+                    setEmail(e.target.value);
+                    if (error?.field === 'email') setError(null);
                   }}
-                >
-                  Change
-                </button>
+                  placeholder="name@gs-it.ae"
+                />
               </div>
+              {error?.field === 'email' && <div className="sg-err">{error.msg}</div>}
 
-              <div className="lg-lblrow">
-                <label className="lg-lbl" htmlFor="lg-pass">
+              <div className="sg-lblrow">
+                <label className="sg-lbl" htmlFor="sg-pass">
                   Password
                 </label>
-                <button type="button" className="lg-link" onClick={() => setForgot((v) => !v)}>
+                <button type="button" className="sg-link" onClick={() => setForgot((v) => !v)}>
                   Forgot password?
                 </button>
               </div>
-              <div className="lg-pw">
+              <div className={`sg-field ${bad('password')}`}>
+                {I.lock}
                 <input
-                  id="lg-pass"
-                  ref={passRef}
-                  className={`lg-in ${error ? 'bad' : ''}`}
+                  id="sg-pass"
                   type={show ? 'text' : 'password'}
                   autoComplete="current-password"
                   value={password}
                   onChange={(e) => {
                     setPassword(e.target.value);
-                    if (error) setError('');
+                    if (error?.field === 'password') setError(null);
                   }}
                   placeholder="Enter your password"
                 />
-                <button type="button" className="lg-eye" onClick={() => setShow((v) => !v)} aria-label={show ? 'Hide password' : 'Show password'}>
-                  {show ? 'Hide' : 'Show'}
+                <button type="button" className="sg-eye" onClick={() => setShow((v) => !v)} aria-label={show ? 'Hide password' : 'Show password'}>
+                  {show ? I.eyeOff : I.eye}
                 </button>
               </div>
-              {error && <div className="lg-err">{error}</div>}
+              {error?.field === 'password' && <div className="sg-err">{error.msg}</div>}
 
               {forgot && (
-                <div className="lg-forgot">
+                <div className="sg-note">
                   {sent ? (
                     <>
-                      <b>Check your inbox.</b> If an account exists for {email.trim().toLowerCase()}, a reset link would be sent. <span style={{ color: 'var(--faint)' }}>(Prototype — no email is actually sent.)</span>
+                      <b>Check your inbox.</b> If an account exists for {email.trim() || 'that email'}, a reset link would be sent. (Prototype — no email is sent.)
                     </>
                   ) : (
                     <>
-                      We’ll send a password reset link to <b>{email.trim().toLowerCase()}</b>.
-                      <button type="button" className="lg-btn sm" onClick={() => setSent(true)}>
-                        Send reset link
+                      We’ll send a password reset link to <b>{email.trim() || 'your work email'}</b>.{' '}
+                      <button type="button" className="sg-link" onClick={() => setSent(true)}>
+                        Send link
                       </button>
                     </>
                   )}
                 </div>
               )}
 
-              <label className="lg-check">
+              <label className="sg-check">
                 <input type="checkbox" checked={remember} onChange={(e) => setRemember(e.target.checked)} />
-                Keep me signed in on this device
+                <span className="sg-box" aria-hidden="true" />
+                Keep me signed in
               </label>
 
-              <button type="submit" className="lg-btn" disabled={busy}>
-                {busy ? <span className="lg-spin" /> : 'Sign in'}
+              <button type="submit" className="sg-next" disabled={busy}>
+                {busy ? <span className="sg-spin" /> : 'Next'}
               </button>
-              <p className="lg-note">Signing in as {account?.role}. Prototype: any password is accepted.</p>
             </form>
-          )}
-        </div>
 
-        <div className="lg-foot">
-          <span>© {new Date().getFullYear()} Global Surf IT</span>
-          <span className="lg-dots">·</span>
-          <button type="button" className="lg-link muted" onClick={() => setForgot(false)}>
-            Privacy
-          </button>
-          <span className="lg-dots">·</span>
-          <button type="button" className="lg-link muted">
-            Terms
-          </button>
-        </div>
-      </section>
+            <p className="sg-demo-note">
+              Demo build — no password is checked until the sign-in service is connected.{' '}
+              <button type="button" className="sg-link" onClick={() => setDemo((v) => !v)} aria-expanded={demo}>
+                {demo ? 'Hide demo accounts' : 'Use a demo account'}
+              </button>
+            </p>
+            {demo && (
+              <div className="sg-accts">
+                {DEMO_ROLES.map((r) => {
+                  const emp = EMPLOYEES.find((e) => e.id === PERSONAS[r].employeeId);
+                  if (!emp) return null;
+                  return (
+                    <button key={r} type="button" className={`sg-acct ${email.toLowerCase() === emp.email.toLowerCase() ? 'on' : ''}`} onClick={() => pickDemo(r)} title={emp.email}>
+                      <span className="sg-av">{initials(emp.name)}</span>
+                      <span className="sg-acct-t">
+                        <b>{emp.name}</b>
+                        <small>{emp.email}</small>
+                      </span>
+                      <em>{r}</em>
+                    </button>
+                  );
+                })}
+              </div>
+            )}
+          </section>
 
-      <aside className="lg-right" aria-hidden="true">
-        <div className="lg-orb a" />
-        <div className="lg-orb b" />
-        <div className="lg-mock">
-          <div className="lg-card c1">
-            <span className="lg-ci g">✓</span>
-            <div>
-              <b>Leave approved</b>
-              <small>Nived · 3 days · Annual leave</small>
-            </div>
-          </div>
-          <div className="lg-card c2">
-            <div className="lg-dash-h">
-              <b>Attendance today</b>
-              <span>Dubai · Mon–Fri</span>
-            </div>
-            <div className="lg-kpis">
-              <div>
-                <strong>86%</strong>
-                <small>Present</small>
-              </div>
-              <div>
-                <strong>9</strong>
-                <small>On leave</small>
-              </div>
-              <div>
-                <strong>4</strong>
-                <small>Approvals</small>
+          <aside className="sg-right" aria-label="About GSIT ERP">
+            <div className="sg-art" key={`art-${slide}`}>
+              <span className="sg-bub b1">{s.bubbles[0]}</span>
+              <span className="sg-bub b2">{s.bubbles[1]}</span>
+              <span className="sg-bub b3">{s.bubbles[2]}</span>
+              <span className="sg-bub b4">{s.bubbles[3]}</span>
+              <div className="sg-halo">
+                <div className="sg-tile">{s.centre}</div>
               </div>
             </div>
-            <div className="lg-bars">
-              {[48, 62, 55, 70, 66, 82, 74].map((h, i) => (
-                <i key={i} style={{ height: `${h}%` }} />
+            <div className="sg-copy" key={`copy-${slide}`}>
+              <h2>{s.title}</h2>
+              <p>{s.text}</p>
+              <button type="button" className="sg-more" onClick={() => setSlide((x) => (x + 1) % SLIDES.length)}>
+                Learn more
+              </button>
+            </div>
+            <div className="sg-dots">
+              {SLIDES.map((x, i) => (
+                <button key={x.title} type="button" className={i === slide ? 'on' : ''} onClick={() => setSlide(i)} aria-label={`Show: ${x.title}`} />
               ))}
             </div>
-            <div className="lg-bar">
-              <i style={{ width: '62%', background: '#34d399' }} />
-              <i style={{ width: '20%', background: '#60a5fa' }} />
-              <i style={{ width: '10%', background: '#fbbf24' }} />
-              <i style={{ width: '8%', background: '#f87171' }} />
-            </div>
-            <div className="lg-legend">In office · WFH · Leave · Absent</div>
-          </div>
-          <div className="lg-card c3">
-            <span className="lg-ci a">!</span>
-            <div>
-              <b>Residence visa renewal</b>
-              <small>Due in 14 days · reminder sent</small>
-            </div>
-          </div>
+          </aside>
         </div>
-
-        <div className="lg-copy" key={slide}>
-          <span className="lg-tag">{SLIDES[slide].tag}</span>
-          <h2>{SLIDES[slide].title}</h2>
-          <p>{SLIDES[slide].text}</p>
-          <div className="lg-pager">
-            {SLIDES.map((s, i) => (
-              <span key={s.tag} className={i === slide ? 'on' : ''} />
-            ))}
-          </div>
-        </div>
-      </aside>
+        <footer className="sg-foot">© {new Date().getFullYear()}, Global Surf IT LLC. All Rights Reserved.</footer>
+      </div>
     </div>
   );
 }
