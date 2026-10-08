@@ -19,7 +19,7 @@ const dmSans = DM_Sans({
 });
 
 export const metadata: Metadata = {
-  title: "GSIT ERP · Employee Management",
+  title: "GS HRMS · Employee Management",
   description: "Global Surf IT — Employee Management module",
 };
 

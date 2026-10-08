@@ -273,11 +273,12 @@
   }
 
   /* ---------- team attendance (by date) ---------- */
-  const STAT_GROUP = { Present: ['Present', 'Late Login', 'Approved Late Login', 'Unscheduled Late Login', 'Work from Home'], 'On leave': ['Annual Leave', 'Sick Leave', 'Restricted Festive Holiday', 'Compassionate Leave', 'Maternity Leave'], Late: ['Late Login', 'Unscheduled Late Login'], Absent: ['Absent', 'Unauthorized Absence'] };
+  const STAT_GROUP = { Present: ['Present', 'Late Login', 'Approved Late Login', 'Unscheduled Late Login', 'Work from Home'], 'On leave': ['Annual Leave', 'Sick Leave', 'Restricted Festive Holiday', 'Compassionate Leave', 'Maternity Leave'], Late: ['Late Login', 'Unscheduled Late Login'], Absent: ['Absent', 'Unauthorized Absence'], 'Not yet joined': ['Not Yet Joined'] };
   L.teamDay = (date) => EMP.map((e) => {
     const base = { n: e.n, id: e.id, desig: e.desig, dept: e.dept, loc: e.loc, late: 0, early: 0 };
     const isMe = e.n === me();
     if (isMe) { const r = L.dayRec(date); return { ...base, in: r.in != null ? hm(r.in) : '—', out: r.live ? '—' : r.out != null ? hm(r.out) : '—', st: r.kind === 'present' || r.kind === 'missing' ? 'Present' : r.kind === 'weekend' ? 'Weekly Off' : r.kind === 'holiday' ? 'Public Holiday' : r.kind === 'leave' ? stKey(r.st) : r.kind === 'absent' ? 'Absent' : '—' }; }
+    if (e.doj && date < e.doj) return { ...base, in: '—', out: '—', st: 'Not Yet Joined' }; // joining date is still ahead
     const mc = db().manual[e.n + '|' + date];
     const lv = leaveOn(date, e.n);
     if (L.isOff(date, e.loc)) return { ...base, in: '—', out: '—', st: 'Weekly Off' };
@@ -293,19 +294,36 @@
   const teamFilters = () => `<div class="filters">
     ${L.fLoc()}${L.fDept('tDept')}
     <div class="fld"><label>Date</label><input id="tdate" type="date" value="${L.ui('teamDate', TODAY)}" onchange="LA.setUi('teamDate',this.value||'${TODAY}')"></div>
-    ${L.fSel('teamStat', 'Status', ['All statuses', 'Present', 'On leave', 'Late', 'Absent', 'Weekly Off / holiday'], 'All statuses')}
+    ${L.fSel('teamStat', 'Status', ['All statuses', 'Present', 'On leave', 'Late', 'Absent', 'Not yet joined', 'Weekly Off / holiday'], 'All statuses')}
     ${L.searchBox('teamQ', 'Name or ID')}
     ${L.fReset(['teamStat', 'teamQ', 'teamDate', 'tDept', 'loc'])}</div>`;
   function teamAtt() {
     const date = L.ui('teamDate', TODAY);
     const stat = L.ui('teamStat', 'All statuses');
     const q = L.ui('teamQ', '');
-    const rows = L.teamDay(date).filter((r) => L.inLoc(r.n) && L.deptOk(r.n, 'tDept') && (stat === 'All statuses' || (stat === 'Weekly Off / holiday' ? ['Weekly Off', 'Public Holiday'].includes(r.st) : (STAT_GROUP[stat] || []).includes(r.st))) && L.matches(q, r.n, r.id, r.dept));
+    const dept = L.ui('tDept', 'All departments');
+    // people who have accepted an offer but whose joining date is after the selected day are listed as "Not yet joined"
+    const hires = L.org().employees.filter((o) => o.status === 'Onboarding' && o.doj && o.doj > date && !EMP.some((e) => e.id === o.code))
+      .map((o) => ({ n: o.name, id: o.code, desig: o.designation, dept: o.department, loc: o.location, in: '—', out: '—', st: 'Not Yet Joined', late: 0, early: 0, extra: true }));
+    const scoped = L.teamDay(date).concat(hires).filter((r) => (L.loc() === 'all' || r.loc === L.loc()) && (dept === 'All departments' || r.dept === dept));
+    const rows = scoped.filter((r) => (stat === 'All statuses' || (stat === 'Weekly Off / holiday' ? ['Weekly Off', 'Public Holiday'].includes(r.st) : (STAT_GROUP[stat] || []).includes(r.st))) && L.matches(q, r.n, r.id, r.dept));
+    // counts never include people who have not joined yet, and "everyone accounted for" is only said when it is true
+    const cnt = (g) => scoped.filter((r) => STAT_GROUP[g].includes(r.st)).length;
+    const nj = cnt('Not yet joined');
+    const absent = cnt('Absent');
+    const unknown = scoped.filter((r) => r.st === '—').length;
+    const summary = L.statStrip([
+      { lbl: 'Present', val: cnt('Present'), icon: 'check', tone: 'g', hint: date > TODAY ? 'Future date' : 'Checked in or working remotely' },
+      { lbl: 'On leave', val: cnt('On leave'), icon: 'calendar', tone: 'b', hint: 'Approved leave' },
+      { lbl: 'Absent', val: absent, icon: 'alert', tone: absent ? 'r' : 'g', hint: absent ? 'No check-in recorded' : unknown ? `${unknown} with no record yet` : 'Everyone accounted for' },
+      { lbl: 'Not yet joined', val: nj, icon: 'users', tone: 'a', hint: nj ? 'Joining date is after this day — not counted as absent' : 'No upcoming joiners' },
+    ]);
     return pageHead('Team Attendance', 'Real-time attendance and availability for your team', `<button class="btn" onclick="LA.teamExport()">${ic('download')} Export</button>`, 'Team')
       + teamFilters()
+      + summary
       + tableCard(`Team · ${fmt(date)}`, ['Member', 'Location', 'Check-in', 'Check-out', 'Status', 'Late', 'Early', 'Action'],
-        rows.map((e) => `<tr><td>${personCell(e.n, e.id + ' · ' + esc(e.dept))}</td><td>${L.locChip(e.loc)}</td><td class="mono">${e.in}</td><td class="mono">${e.out}</td><td>${e.st === '—' ? '—' : statusBadge(e.st)}${e.corrected ? ' <span class="muted" title="Manually corrected">✎</span>' : ''}</td><td class="num">${e.late || '—'}</td><td class="num">${e.early || '—'}</td><td><button class="btn sm ghost" onclick="LA.teamDetail('${esc(e.n)}')">Detail</button></td></tr>`).join('') || `<tr><td colspan="8">${L.empty('No team members match')}</td></tr>`,
-        { sub: `${rows.length} of ${EMP.length}` });
+        rows.map((e) => `<tr><td>${personCell(e.n, e.id + ' · ' + esc(e.dept))}</td><td>${L.locChip(e.loc)}</td><td class="mono">${e.in}</td><td class="mono">${e.out}</td><td>${e.st === '—' ? '—' : statusBadge(e.st)}${e.corrected ? ' <span class="muted" title="Manually corrected">✎</span>' : ''}</td><td class="num">${e.late || '—'}</td><td class="num">${e.early || '—'}</td><td>${e.extra ? '<span class="muted">—</span>' : `<button class="btn sm ghost" onclick="LA.teamDetail('${esc(e.n)}')">Detail</button>`}</td></tr>`).join('') || `<tr><td colspan="8">${L.empty('No team members match')}</td></tr>`,
+        { sub: `${rows.length} of ${scoped.length}` });
   }
   L.teamExport = () => { const date = L.ui('teamDate', TODAY); L.csv(`team_attendance_${date}.csv`, ['Member', 'ID', 'Location', 'Department', 'Check-in', 'Check-out', 'Status', 'Late (min)', 'Early (min)'], L.teamDay(date).filter((r) => L.inLoc(r.n) && L.deptOk(r.n, 'tDept')).map((r) => [r.n, r.id, L.locName(r.loc), r.dept, r.in, r.out, r.st, r.late, r.early])); };
   L.teamDetail = (name) => {

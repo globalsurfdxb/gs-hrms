@@ -2,7 +2,10 @@
 
 import { useMemo, useState } from 'react';
 import Link from 'next/link';
-import { companyHeadcount } from '@/lib/data';
+import { EMPLOYEES } from '@/lib/data';
+import { useEmployeeVersion } from '@/lib/employeeStore';
+import { useSeparation } from '@/context/SeparationContext';
+import { countHeadcount, headcountByCompany } from '@/lib/headcount';
 import { useOrg } from '@/context/OrgContext';
 import { Company } from '@/lib/types';
 import { PageHeader } from '@/components/ui/PageHeader';
@@ -62,6 +65,8 @@ function Fg({ label, required, children }: { label: string; required?: boolean; 
 
 export default function AdminCompaniesPage() {
   const { companies, departments, locations, locationName, addCompany, updateCompany, removeCompany } = useOrg();
+  useEmployeeVersion();
+  const { statusOf } = useSeparation();
   const [drawerOpen, setDrawerOpen] = useState(false);
   const [mode, setMode] = useState<'add' | 'edit'>('add');
   const [draft, setDraft] = useState<Company>(blankCompany());
@@ -81,7 +86,7 @@ export default function AdminCompaniesPage() {
     [companies, q, statusFilter, locFilter]
   );
 
-  const totalHeadcount = companies.reduce((n, c) => n + companyHeadcount(c.name), 0);
+  const totalHeadcount = countHeadcount(EMPLOYEES.filter((e) => companies.some((c) => c.name.trim().toLowerCase() === e.company.trim().toLowerCase())), statusOf);
 
   const toggleStatus = (c: Company) => updateCompany({ ...c, status: c.status === 'Active' ? 'Inactive' : 'Active' });
   const deptCount = (c: Company) => departments.filter((d) => d.companyId === c.id).length;
@@ -163,8 +168,9 @@ export default function AdminCompaniesPage() {
             <PeopleIcon />
           </span>
           <div>
-            <div className="rp-stat-n">{totalHeadcount}</div>
-            <div className="rp-stat-l">Total headcount</div>
+            <div className="rp-stat-n">{totalHeadcount.total}</div>
+            <div className="rp-stat-l">Total incl. joining</div>
+            <div className="rp-stat-h">{totalHeadcount.active} active · {totalHeadcount.joining} joining</div>
           </div>
         </div>
         <div className="rp-stat">
@@ -209,8 +215,8 @@ export default function AdminCompaniesPage() {
         <div className="co-grid">
           {shown.map((c, i) => {
             const col = PALETTE[companies.findIndex((x) => x.id === c.id) % PALETTE.length];
-            const heads = companyHeadcount(c.name);
-            const share = totalHeadcount ? Math.round((heads / totalHeadcount) * 100) : 0;
+            const heads = headcountByCompany(c.name, EMPLOYEES, statusOf).total;
+            const share = totalHeadcount.total ? Math.round((heads / totalHeadcount.total) * 100) : 0;
             const inactive = c.status !== 'Active';
             return (
               <div key={c.id} className={`co-card ${inactive ? 'off' : ''}`} style={{ animationDelay: `${i * 30}ms` }}>
@@ -365,7 +371,7 @@ export default function AdminCompaniesPage() {
           <div className="note-box" style={{ marginTop: 16 }}>
             <BuildingIcon style={{ color: 'var(--primary)' }} />
             <div>
-              {companyHeadcount(draft.name)} employee(s) are currently assigned to {draft.name || 'this company'}.
+              {headcountByCompany(draft.name, EMPLOYEES, statusOf).total} employee(s) are currently assigned to {draft.name || 'this company'}.
             </div>
           </div>
         )}

@@ -2,7 +2,10 @@
 
 import { useMemo, useState } from 'react';
 import Link from 'next/link';
-import { EMPLOYEES, companyHeadcount, departmentHeadcount } from '@/lib/data';
+import { EMPLOYEES } from '@/lib/data';
+import { useEmployeeVersion } from '@/lib/employeeStore';
+import { useSeparation } from '@/context/SeparationContext';
+import { departmentsMissingFromMaster, designationsMissingFromMaster, headcountByCompany, headcountByDepartment, headcountByDesignation, sameText } from '@/lib/headcount';
 import { useOrg } from '@/context/OrgContext';
 import { Department, Designation } from '@/lib/types';
 import { PageHeader } from '@/components/ui/PageHeader';
@@ -64,9 +67,14 @@ export default function AdminStructurePage() {
   const companyDepts = useMemo(() => (company ? departments.filter((d) => d.companyId === company.id) : []), [company, departments]);
   const companyDesigCount = designations.filter((x) => companyDepts.some((d) => d.id === x.departmentId)).length;
 
+  useEmployeeVersion();
+  const { statusOf } = useSeparation();
+  // Counted from the employee records (company + department + designation, ignoring case), never from the master list.
   const people = (dept: string, title?: string) =>
-    company ? EMPLOYEES.filter((e) => e.company === company.name && e.department === dept && e.employmentStatus !== 'Inactive' && (title === undefined || e.designation === title)).length : 0;
-  const headRec = (name: string) => (company ? EMPLOYEES.find((e) => e.company === company.name && e.name === name) : undefined);
+    company ? (title === undefined ? headcountByDepartment(company.name, dept, EMPLOYEES, statusOf) : headcountByDesignation(company.name, dept, title, EMPLOYEES, statusOf)).total : 0;
+  const companyHc = company ? headcountByCompany(company.name, EMPLOYEES, statusOf) : { active: 0, joining: 0, exiting: 0, inactive: 0, total: 0 };
+  const missingDepts = company ? departmentsMissingFromMaster(company.name, companyDepts, EMPLOYEES, statusOf) : [];
+  const headRec = (name: string) => (company ? EMPLOYEES.find((e) => sameText(e.company, company.name) && e.name === name) : undefined);
 
   const needle = q.trim().toLowerCase();
   const shown = companyDepts
@@ -185,7 +193,7 @@ export default function AdminStructurePage() {
                   <span style={{ textAlign: 'left' }}>
                     <span className="st-co-nm">{c.name}</span>
                     <span className="st-co-sub">
-                      {plural(departments.filter((d) => d.companyId === c.id).length, 'department')} · {plural(companyHeadcount(c.name), 'person', 'people')}
+                      {plural(departments.filter((d) => d.companyId === c.id).length, 'department')} · {plural(headcountByCompany(c.name, EMPLOYEES, statusOf).total, 'person', 'people')}
                     </span>
                   </span>
                 </button>
@@ -217,8 +225,11 @@ export default function AdminStructurePage() {
                 <PeopleIcon />
               </span>
               <div>
-                <div className="rp-stat-n">{companyHeadcount(company.name)}</div>
-                <div className="rp-stat-l">Employees</div>
+                <div className="rp-stat-n">{companyHc.total}</div>
+                <div className="rp-stat-l">Employees incl. joining</div>
+                <div className="rp-stat-h">
+                  {companyHc.active} active · {companyHc.joining} joining
+                </div>
               </div>
             </div>
             <div className="rp-stat">
@@ -272,6 +283,18 @@ export default function AdminStructurePage() {
             </Card>
           )}
 
+          {missingDepts.length > 0 && (
+            <Card className="row-gap">
+              <div className="note-box warn" style={{ margin: 12 }}>
+                <BuildingIcon />
+                <div>
+                  {missingDepts.map((m) => `${m.name} (${m.headcount.total})`).join(', ')} — employees of {company.name} sit in {missingDepts.length === 1 ? 'a department' : 'departments'} that {missingDepts.length === 1 ? 'is' : 'are'} not in this company&apos;s department list. Add{' '}
+                  {missingDepts.length === 1 ? 'it' : 'them'} with Add department.
+                </div>
+              </div>
+            </Card>
+          )}
+
           {shown.map(({ d, all, desigs }, idx) => {
             const col = PALETTE[idx % PALETTE.length];
             const closedNow = isClosed(d.id);
@@ -305,7 +328,7 @@ export default function AdminStructurePage() {
                   </div>
                   <div className="st-counts">
                     <span>
-                      <b>{departmentHeadcount(company.name, d.name)}</b> {departmentHeadcount(company.name, d.name) === 1 ? 'person' : 'people'}
+                      <b>{people(d.name)}</b> {people(d.name) === 1 ? 'person' : 'people'}
                     </span>
                     <span>
                       <b>{all.length}</b> {all.length === 1 ? 'designation' : 'designations'}
@@ -338,6 +361,23 @@ export default function AdminStructurePage() {
                           </button>
                           <button className="icon-act" onClick={() => deleteDesig(x)} title="Delete designation">
                             <XIcon />
+                          </button>
+                        </div>
+                      ))}
+                      {designationsMissingFromMaster(company.name, d.name, all.map((x) => x.title), EMPLOYEES, statusOf).map((m) => (
+                        <div key={`missing-${m.title}`} className="st-des">
+                          <span className="st-des-ic" style={{ background: '#fdf3df', color: '#c6851b' }}>
+                            <TagIcon />
+                          </span>
+                          <div style={{ minWidth: 0, flex: 1 }}>
+                            <div className="st-des-t">
+                              {m.title}
+                              <span className="rs-flag">not in master list</span>
+                            </div>
+                            <div className="st-des-s">{m.headcount.total} employee(s)</div>
+                          </div>
+                          <button className="icon-act" onClick={() => (setDesDraft({ ...blankDesig(d.id), title: m.title }), setDesMode('add'), setDesError(''), setDesOpen(true))} title="Add to the master list">
+                            <PlusIcon />
                           </button>
                         </div>
                       ))}

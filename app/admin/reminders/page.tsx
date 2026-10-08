@@ -1,19 +1,12 @@
 'use client';
 
 import { useState } from 'react';
+import { setScheduleOn, useReminderSchedules } from '@/lib/reminderRules';
 import { PageHeader } from '@/components/ui/PageHeader';
 import { Card, EmptyState } from '@/components/ui/Card';
 import { StatStrip, TONES, Tone } from '@/components/ui/StatStrip';
 import { Toggle } from '@/components/ui/Toggle';
 import { BellIcon, CheckIcon, ClockIcon, FileTextIcon, IdIcon, ShieldIcon, WarnIcon } from '@/components/icons';
-
-const SCHEDULES = [
-  { key: 'visa', title: 'Residence Visa / Emirates ID', rungs: [90, 60, 30, 7], on: true },
-  { key: 'passport', title: 'Passport', rungs: [90, 30], on: true },
-  { key: 'labour', title: 'Labour Card', rungs: [60, 30, 7], on: true },
-  { key: 'licence', title: 'Trade Licence', rungs: [90, 60, 30], on: true },
-  { key: 'contract', title: 'Employment Contract Renewal', rungs: [60, 30], on: false },
-];
 
 const META: Record<string, { icon: React.ReactNode; tone: Tone }> = {
   visa: { icon: <IdIcon />, tone: 'blue' },
@@ -21,12 +14,14 @@ const META: Record<string, { icon: React.ReactNode; tone: Tone }> = {
   labour: { icon: <ShieldIcon />, tone: 'green' },
   licence: { icon: <FileTextIcon />, tone: 'amber' },
   contract: { icon: <FileTextIcon />, tone: 'teal' },
+  general: { icon: <FileTextIcon />, tone: 'gray' },
 };
 
 type Filter = 'all' | 'on' | 'off';
 
 export default function AdminRemindersPage() {
-  const [schedules, setSchedules] = useState(SCHEDULES);
+  // Shared with the Expiry, Visa and Documents pages, which apply these schedules to each document type.
+  const schedules = useReminderSchedules();
   const [filter, setFilter] = useState<Filter>('all');
 
   const active = schedules.filter((s) => s.on);
@@ -81,9 +76,10 @@ export default function AdminRemindersPage() {
                 <div>
                   <h3>{s.title}</h3>
                   <div className="sub">{s.on ? `${s.rungs.length} notices · first at ${rungs[0]} days before expiry` : 'Disabled — no reminders are sent'}</div>
+                  <div className="sub">{s.types.length ? `Applies to: ${s.types.join(', ')}` : 'Applies to: any other dated document (medical insurance, driving licence and so on)'}</div>
                 </div>
               </div>
-              <Toggle checked={s.on} onChange={(v) => setSchedules((prev) => prev.map((x) => (x.key === s.key ? { ...x, on: v } : x)))} />
+              <Toggle checked={s.on} onChange={(v) => setScheduleOn(s.key, v)} />
             </div>
             {s.on ? (
               <div className="ad-tl">

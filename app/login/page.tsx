@@ -169,7 +169,7 @@ export default function LoginPage() {
               </i>
             </div>
             <h1>Sign in</h1>
-            <p className="sg-sub">to access GSIT ERP</p>
+            <p className="sg-sub">to access GS HRMS</p>
 
             <button type="button" className="sg-ms" onClick={() => setNotice('Microsoft sign-in isn’t connected in this prototype. Use your work email and password below.')}>
               <svg viewBox="0 0 21 21" width="16" height="16" aria-hidden="true">
@@ -294,7 +294,7 @@ export default function LoginPage() {
             )}
           </section>
 
-          <aside className="sg-right" aria-label="About GSIT ERP">
+          <aside className="sg-right" aria-label="About GS HRMS">
             <div className="sg-art" key={`art-${slide}`}>
               <span className="sg-bub b1">{s.bubbles[0]}</span>
               <span className="sg-bub b2">{s.bubbles[1]}</span>

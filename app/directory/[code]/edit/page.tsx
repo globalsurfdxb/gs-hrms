@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { useEffect, useId, useMemo, useRef, useState } from 'react';
 import Link from 'next/link';
 import { notFound, useParams, useRouter } from 'next/navigation';
 import { ASSETS, EMPLOYEES } from '@/lib/data';
@@ -11,26 +11,48 @@ import { useDocuments } from '@/context/DocumentsContext';
 import { Employee } from '@/lib/types';
 import { FIELDS, DocRow, EducationRow, EmergencyRow, EmployeeForm, ExperienceRow, FamilyRow, MoneyRow, canEditEmployees, canEditSensitive, diffForm, filled, filledContacts, saveEmployee, toForm, useEmployeeVersion } from '@/lib/employeeStore';
 import { SearchSelect } from '@/components/ui/SearchSelect';
+import { ConfirmDialog } from '@/components/ui/ConfirmDialog';
+import { todayISO } from '@/lib/dates';
+import { BLOOD_GROUPS, EMAIL_RE, EMPLOYMENT_TYPES, GENDERS, MARITAL_STATUSES, NATIONALITIES, WORK_MODES, ibanError, ifscError, indiaAccountError, phoneOk, withCurrent } from '@/lib/options';
 import { Button } from '@/components/ui/Card';
 import { ArrowLeftIcon, PlusIcon, ShieldIcon, UploadIcon, XIcon } from '@/components/icons';
 
 /* ---------- small form helpers ---------- */
 type Errs = Record<string, string>;
-const withCurrent = (options: string[], current: string) => (current && !options.includes(current) ? [current, ...options] : options);
-const GENDERS = ['Male', 'Female', 'Other'];
-const MARITAL = ['Single', 'Married', 'Divorced', 'Widowed'];
-const BLOOD = ['O+', 'O-', 'A+', 'A-', 'B+', 'B-', 'AB+', 'AB-'];
-const TYPES = ['Permanent', 'Contract', 'Probation'];
-const MODES = ['Onsite', 'Remote', 'Hybrid'];
+const MARITAL = MARITAL_STATUSES;
+const BLOOD = BLOOD_GROUPS;
+const TYPES = EMPLOYMENT_TYPES;
+const MODES = WORK_MODES;
 
+/** A labelled field. When it has an error the message is shown under it and the control inside is marked
+    aria-invalid and pointed at the message (set on the DOM node so it works for any control, SearchSelect included). */
 function Fg({ label, required, full, hint, error, children }: { label: string; required?: boolean; full?: boolean; hint?: string; error?: string; children: React.ReactNode }) {
+  const errId = useId();
+  const box = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    const el = box.current?.querySelector<HTMLElement>('input:not([type=hidden]), select, textarea');
+    if (!el) return;
+    if (error) {
+      el.setAttribute('aria-invalid', 'true');
+      el.setAttribute('aria-describedby', errId);
+    } else {
+      el.removeAttribute('aria-invalid');
+      el.removeAttribute('aria-describedby');
+    }
+  }, [error, errId]);
   return (
-    <div className={`fg ${full ? 'full' : ''}`}>
+    <div ref={box} className={`fg ${full ? 'full' : ''}`}>
       <label>
         {label} {required && <span className="req">*</span>}
       </label>
       {children}
-      {error ? <span className="hint" style={{ color: 'var(--danger)' }}>{error}</span> : hint ? <span className="hint">{hint}</span> : null}
+      {error ? (
+        <span id={errId} className="hint" style={{ color: 'var(--danger)' }}>
+          {error}
+        </span>
+      ) : hint ? (
+        <span className="hint">{hint}</span>
+      ) : null}
     </div>
   );
 }
@@ -75,15 +97,39 @@ function MoneyList({ rows, onChange, currency, addLabel, errs, prefix }: { rows:
       {rows.map((r, i) => (
         <div key={i} className="mrow">
           <div>
-            <input value={r.label} placeholder="Component, e.g. Basic salary" onChange={(e) => onChange(rows.map((x, j) => (j === i ? { ...x, label: e.target.value } : x)))} aria-label="Component name" />
-            {errs[`${prefix}.${i}.label`] && <span className="hint" style={{ color: 'var(--danger)' }}>{errs[`${prefix}.${i}.label`]}</span>}
+            <input
+              value={r.label}
+              placeholder="Component, e.g. Basic salary"
+              onChange={(e) => onChange(rows.map((x, j) => (j === i ? { ...x, label: e.target.value } : x)))}
+              aria-label="Component name"
+              aria-invalid={errs[`${prefix}.${i}.label`] ? true : undefined}
+              aria-describedby={errs[`${prefix}.${i}.label`] ? `${prefix}-${i}-label-err` : undefined}
+            />
+            {errs[`${prefix}.${i}.label`] && (
+              <span id={`${prefix}-${i}-label-err`} className="hint" style={{ color: 'var(--danger)' }}>
+                {errs[`${prefix}.${i}.label`]}
+              </span>
+            )}
           </div>
           <div>
             <div className="mamt">
               <span>{currency}</span>
-              <input type="number" min="0" value={r.amount} placeholder="0" onChange={(e) => onChange(rows.map((x, j) => (j === i ? { ...x, amount: e.target.value } : x)))} aria-label="Amount" />
+              <input
+                type="number"
+                min="0"
+                value={r.amount}
+                placeholder="0"
+                onChange={(e) => onChange(rows.map((x, j) => (j === i ? { ...x, amount: e.target.value } : x)))}
+                aria-label="Amount"
+                aria-invalid={errs[`${prefix}.${i}.amount`] ? true : undefined}
+                aria-describedby={errs[`${prefix}.${i}.amount`] ? `${prefix}-${i}-amount-err` : undefined}
+              />
             </div>
-            {errs[`${prefix}.${i}.amount`] && <span className="hint" style={{ color: 'var(--danger)' }}>{errs[`${prefix}.${i}.amount`]}</span>}
+            {errs[`${prefix}.${i}.amount`] && (
+              <span id={`${prefix}-${i}-amount-err`} className="hint" style={{ color: 'var(--danger)' }}>
+                {errs[`${prefix}.${i}.amount`]}
+              </span>
+            )}
           </div>
           <button type="button" className="icon-act" title="Remove line" aria-label="Remove line" onClick={() => onChange(rows.filter((_, j) => j !== i))}>
             <XIcon />
@@ -188,31 +234,42 @@ function RequiredDocRow({ empId, name, ticked, onTick }: { empId: string; name: 
 }
 
 /* ---------- validation ---------- */
-function validate(f: EmployeeForm, india: boolean): Errs {
+function validate(f: EmployeeForm, india: boolean, sensitive: boolean): Errs {
   const e: Errs = {};
   const v = f.v;
-  const today = new Date().toISOString().slice(0, 10);
+  const today = todayISO();
   if (!v.name.trim()) e.name = 'Name is required.';
   if (v.dob && v.dob > today) e.dob = 'Date of birth cannot be in the future.';
+  if (v.personalMobile.trim() && !phoneOk(v.personalMobile)) e.personalMobile = 'Enter a valid mobile number (7 to 15 digits, e.g. +971 50 123 4567).';
   if (!v.dateOfJoining) e.dateOfJoining = 'Joining date is required.';
-  if (v.personalEmail.trim() && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(v.personalEmail.trim())) e.personalEmail = 'That doesn’t look like an email address.';
+  if (v.personalEmail.trim() && !EMAIL_RE.test(v.personalEmail.trim())) e.personalEmail = 'That doesn’t look like an email address.';
   if (!v.company) e.company = 'Choose an organization.';
   if (!v.department) e.department = 'Choose a department.';
   if (!v.designation) e.designation = 'Choose a designation.';
+  if (v.phone.trim() && !phoneOk(v.phone)) e.phone = 'Enter a valid work phone number (7 to 15 digits).';
   if (!v.passportNumber.trim()) e.passportNumber = 'Passport number is required.';
   if (india) {
     if (v.aadhaar.trim() && !/^\d{12}$/.test(v.aadhaar.replace(/\s/g, ''))) e.aadhaar = 'Aadhaar is 12 digits.';
     if (v.pan.trim() && !/^[A-Z]{5}[0-9]{4}[A-Z]$/.test(v.pan.trim().toUpperCase())) e.pan = 'PAN looks like ABCDE1234F.';
-    if (v.uan.trim() && !/^\d{12}$/.test(v.uan.trim())) e.uan = 'UAN is 12 digits.';
+    if (sensitive && v.uan.trim() && !/^\d{12}$/.test(v.uan.replace(/\s/g, ''))) e.uan = 'UAN is 12 digits.';
   } else {
     if (v.emiratesId.trim() && !/^784-\d{4}-\d{7}-\d$/.test(v.emiratesId.trim())) e.emiratesId = 'Format: 784-YYYY-NNNNNNN-N.';
     if (v.labourCardIssue && v.labourCardExpiry && v.labourCardExpiry < v.labourCardIssue) e.labourCardExpiry = 'Expiry is before the issue date.';
   }
-  if (!v.bankName.trim()) e.bankName = 'Bank name is required.';
-  if (!v.accountNumber.trim()) e.accountNumber = india ? 'Account number is required.' : 'IBAN is required.';
+  // Bank details can only be changed by HR / Super Admin, so only they are asked to fix them.
+  if (sensitive) {
+    if (!v.bankName.trim()) e.bankName = 'Bank name is required.';
+    const acct = india ? indiaAccountError(v.accountNumber) : ibanError(v.accountNumber);
+    if (acct) e.accountNumber = acct;
+    if (india) {
+      const ifsc = ifscError(v.branchCode);
+      if (ifsc) e.branchCode = ifsc;
+    }
+  }
   f.emergency.forEach((r, i) => {
     if (filledContacts([r]).length && !r.name.trim()) e[`emergency.${i}.name`] = 'Name is required.';
     if (filledContacts([r]).length && !r.mobile.trim()) e[`emergency.${i}.mobile`] = 'Mobile number is required.';
+    else if (r.mobile.trim() && !phoneOk(r.mobile)) e[`emergency.${i}.mobile`] = 'Enter a valid mobile number (7 to 15 digits).';
   });
   f.experience.forEach((r, i) => {
     if (filled([r]).length && !r.company.trim()) e[`experience.${i}.company`] = 'Company is required.';
@@ -227,7 +284,7 @@ function validate(f: EmployeeForm, india: boolean): Errs {
   });
   (['earnings', 'deductions'] as const).forEach((k) =>
     f[k].forEach((r, i) => {
-      if (!filled([r]).length) return;
+      if (!sensitive || !filled([r]).length) return;
       if (!r.label.trim()) e[`${k}.${i}.label`] = 'Name the component.';
       if (r.amount === '' || Number(r.amount) < 0 || Number.isNaN(Number(r.amount))) e[`${k}.${i}.amount`] = 'Enter an amount of 0 or more.';
     }),
@@ -250,13 +307,13 @@ const fieldLabel = (k: string) => FIELDS.find((x) => x.key === k)?.label ?? k;
 /** Which tab an error belongs to. */
 const TAB_OF = (key: string, idTab: string): string => {
   const head = key.split('.')[0];
-  if (['name', 'dob', 'personalEmail'].includes(head)) return 'Personal';
-  if (['dateOfJoining', 'company', 'department', 'designation'].includes(head)) return 'Employment';
-  if (['passportNumber', 'aadhaar', 'pan', 'uan', 'emiratesId', 'labourCardExpiry'].includes(head)) return idTab;
+  if (['name', 'dob', 'personalEmail', 'personalMobile'].includes(head)) return 'Personal';
+  if (['dateOfJoining', 'company', 'department', 'designation', 'phone'].includes(head)) return 'Employment';
+  if (['passportNumber', 'aadhaar', 'pan', 'emiratesId', 'labourCardExpiry'].includes(head)) return idTab;
   if (head === 'emergency') return 'Emergency';
   if (['experience', 'education'].includes(head)) return 'Experience & Education';
   if (head === 'family') return 'Family';
-  if (['bankName', 'accountNumber'].includes(head)) return 'Bank & PF';
+  if (['bankName', 'accountNumber', 'branchCode', 'uan'].includes(head)) return 'Bank & PF';
   if (['earnings', 'deductions'].includes(head)) return 'Salary';
   if (head === 'documents') return 'Documents';
   return 'Personal';
@@ -311,8 +368,11 @@ function Editor({ e }: { e: Employee }) {
   const currency = v.currency || e.profile.salary.currency;
 
   const changes = diffForm(e, form);
-  const errors = useMemo(() => validate(form, isIndia), [form, isIndia]);
+  const errors = useMemo(() => validate(form, isIndia, sensitive), [form, isIndia, sensitive]);
   const errorTabs = new Set(Object.keys(errors).map((k) => TAB_OF(k, idTab)));
+  /** One line per error, which is exactly what the bar counts and what each tab shows inline. */
+  const errorList = Object.entries(errors).map(([key, msg]) => ({ key, msg, tab: TAB_OF(key, idTab) }));
+  const [leaveTo, setLeaveTo] = useState<string | null>(null);
   const err = (k: string) => (attempted ? errors[k] : undefined);
   const shownErrors = (key: string) => (attempted ? errors[key] : undefined);
 
@@ -419,14 +479,15 @@ function Editor({ e }: { e: Employee }) {
     }
     router.push(`/directory/${e.employeeCode}`);
   };
-  const cancel = () => {
-    if (changes.length && !window.confirm(`Discard ${changes.length} unsaved change${changes.length === 1 ? '' : 's'}?`)) return;
-    router.push(`/directory/${e.employeeCode}`);
-  };
+  const profileHref = `/directory/${e.employeeCode}`;
+  /** Leave the editor; with unsaved changes ask first, in the app's own dialog. */
+  const leave = (href: string) => (changes.length ? setLeaveTo(href) : router.push(href));
+  const cancel = () => leave(profileHref);
 
   const input = (k: string, props: React.InputHTMLAttributes<HTMLInputElement> = {}) => <input {...props} value={v[k] ?? ''} onChange={(ev) => set(k, ev.target.value)} />;
   const select = (k: string, options: string[]) => (
     <select value={v[k] ?? ''} onChange={(ev) => set(k, ev.target.value)}>
+      {!v[k] && <option value="">Select…</option>}
       {withCurrent(options, v[k] ?? '').map((o) => (
         <option key={o}>{o}</option>
       ))}
@@ -435,9 +496,32 @@ function Editor({ e }: { e: Employee }) {
 
   return (
     <div className="editpage">
-      <Link href={`/directory/${e.employeeCode}`} className="svc-back" onClick={(ev) => changes.length && !window.confirm('Discard your unsaved changes?') && ev.preventDefault()}>
+      <Link
+        href={profileHref}
+        className="svc-back"
+        onClick={(ev) => {
+          if (!changes.length) return;
+          ev.preventDefault();
+          setLeaveTo(profileHref);
+        }}
+      >
         <ArrowLeftIcon /> Back to profile
       </Link>
+
+      <ConfirmDialog
+        open={leaveTo !== null}
+        title="Discard unsaved changes?"
+        message={`You have ${changes.length} unsaved change${changes.length === 1 ? '' : 's'} on ${e.name}. Leaving now discards them.`}
+        confirmLabel="Discard changes"
+        cancelLabel="Keep editing"
+        danger
+        onCancel={() => setLeaveTo(null)}
+        onConfirm={() => {
+          const to = leaveTo;
+          setLeaveTo(null);
+          if (to) router.push(to);
+        }}
+      />
 
       {adapted.length > 0 && (
         <div className="note-box warn adapt-note">
@@ -453,6 +537,25 @@ function Editor({ e }: { e: Employee }) {
           <button className="icon-act" onClick={() => setAdapted([])} aria-label="Dismiss">
             <XIcon />
           </button>
+        </div>
+      )}
+
+      {attempted && errorList.length > 0 && (
+        <div className="fm-errsum" role="alert">
+          <div>
+            <b>
+              Fix {errorList.length} error{errorList.length === 1 ? '' : 's'} to save
+            </b>
+            <ul>
+              {errorList.map((x) => (
+                <li key={x.key}>
+                  <button type="button" onClick={() => setTab(x.tab)}>
+                    {x.tab}: {x.msg}
+                  </button>
+                </li>
+              ))}
+            </ul>
+          </div>
         </div>
       )}
 
@@ -499,14 +602,16 @@ function Editor({ e }: { e: Employee }) {
                 <Fg label="Date of birth" error={err('dob')}>
                   {input('dob', { type: 'date' })}
                 </Fg>
-                <Fg label="Nationality">{input('nationality')}</Fg>
+                <Fg label="Nationality">{select('nationality', NATIONALITIES)}</Fg>
                 <Fg label="Gender">{select('gender', GENDERS)}</Fg>
                 <Fg label="Marital status">{select('maritalStatus', MARITAL)}</Fg>
                 <Fg label="Blood group">{select('bloodGroup', BLOOD)}</Fg>
               </div>
               <Sub>Contact</Sub>
               <div className="form-grid">
-                <Fg label="Personal mobile">{input('personalMobile', { type: 'tel' })}</Fg>
+                <Fg label="Personal mobile" error={err('personalMobile')}>
+                  {input('personalMobile', { type: 'tel' })}
+                </Fg>
                 <Fg label="Personal email" error={err('personalEmail')}>
                   {input('personalEmail', { type: 'email' })}
                 </Fg>
@@ -594,7 +699,9 @@ function Editor({ e }: { e: Employee }) {
                     {seating.length ? seating.map((o) => <option key={o}>{o}</option>) : <option value="">No seating locations set</option>}
                   </select>
                 </Fg>
-                <Fg label="Work phone (official mobile)" hint={locationDef(v.location) ? `${locationDef(v.location)!.name} numbers start ${locationDef(v.location)!.phoneCode}, e.g. ${locationDef(v.location)!.phoneExample ?? ''}` : undefined}>{input('phone', { type: 'tel' })}</Fg>
+                <Fg label="Work phone (official mobile)" error={err('phone')} hint={locationDef(v.location) ? `${locationDef(v.location)!.name} numbers start ${locationDef(v.location)!.phoneCode}, e.g. ${locationDef(v.location)!.phoneExample ?? ''}` : undefined}>
+                  {input('phone', { type: 'tel' })}
+                </Fg>
                 <Fg label="Extension">{input('extension')}</Fg>
               </div>
             </div>
@@ -790,10 +897,12 @@ function Editor({ e }: { e: Employee }) {
                   {input('bankName')}
                 </Fg>
                 <Fg label="Account holder name">{input('accountName')}</Fg>
-                <Fg label={isIndia ? 'Account number' : 'IBAN number'} required error={err('accountNumber')}>
+                <Fg label={isIndia ? 'Account number' : 'IBAN number'} required error={err('accountNumber')} hint={isIndia ? '9 to 18 digits.' : 'AE + 21 digits (23 characters). Spaces are ignored.'}>
                   {input('accountNumber')}
                 </Fg>
-                <Fg label={isIndia ? 'IFSC' : 'Routing / bank code'}>{input('branchCode')}</Fg>
+                <Fg label={isIndia ? 'IFSC' : 'Routing / bank code'} required={isIndia} error={err('branchCode')}>
+                  {input('branchCode')}
+                </Fg>
                 <Fg label="Currency" hint="Set by the work location.">
                   <input value={v.currency} readOnly style={{ background: 'var(--bg)' }} />
                 </Fg>
@@ -954,9 +1063,9 @@ function Editor({ e }: { e: Employee }) {
 
       <div className="editbar">
         <div className="editbar-l">
-          {attempted && Object.keys(errors).length > 0 ? (
+          {attempted && errorList.length > 0 ? (
             <span style={{ color: 'var(--danger)', fontWeight: 600 }}>
-              Fix {Object.keys(errors).length} error{Object.keys(errors).length === 1 ? '' : 's'} to save
+              Fix {errorList.length} error{errorList.length === 1 ? '' : 's'} to save
             </span>
           ) : changes.length ? (
             <>

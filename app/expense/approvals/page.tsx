@@ -3,8 +3,9 @@
 import { useState } from 'react';
 import Link from 'next/link';
 import { useApp, useCurrentEmployee } from '@/context/AppContext';
-import { useExpense } from '@/context/ExpenseContext';
-import { employeeById, matchesEmployee } from '@/lib/data';
+import { useOrg } from '@/context/OrgContext';
+import { claimRoute, useExpense } from '@/context/ExpenseContext';
+import { defaultScope, employeeById, matchesEmployee } from '@/lib/data';
 import { PageHeader } from '@/components/ui/PageHeader';
 import { Card, CardHeader, EmptyState, Button } from '@/components/ui/Card';
 import { Badge } from '@/components/ui/Badge';
@@ -13,14 +14,36 @@ import { ClockIcon, InboxIcon, ReceiptIcon, SearchIcon, WarnIcon } from '@/compo
 import { EmpId } from '@/components/ui/EmployeeBits';
 
 export default function ExpenseApprovalsPage() {
-  const { location } = useApp();
-  const { categories, claims, decide } = useExpense();
+  const { role } = useApp();
   const me = useCurrentEmployee();
+  const { locations, locationName } = useOrg();
+  const { categories, claims, decide, canDecide } = useExpense();
   const [q, setQ] = useState('');
   const [category, setCategory] = useState('All');
+  const [pick, setPick] = useState<string | null>(null);
+  const loc = pick ?? defaultScope(role, me.location);
+  const scopeName = loc === 'All' ? 'all locations' : locationName(loc);
 
-  const allPending = claims.filter((c) => c.status === 'Pending' && employeeById(c.employeeId)?.location === location);
-  const pending = allPending.filter((c) => (category === 'All' || c.category === category) && matchesEmployee(employeeById(c.employeeId)!, q));
+  // Employees never open the approvals queue; nothing below is read or drawn for them.
+  if (role === 'Employee') {
+    return (
+      <div className="tx-page">
+        <PageHeader eyebrow="Expense Claims" title="Approvals" />
+        <Card>
+          <EmptyState icon={<WarnIcon />} title="Not available for your role" description="The approvals queue is for managers, HR and administrators. Your own claims are under All Claims." />
+        </Card>
+      </div>
+    );
+  }
+
+  // Counts match the dashboard: every pending claim in the chosen location. Your own claims are counted but never shown for action.
+  const allPending = claims.filter((c) => {
+    const l = employeeById(c.employeeId)?.location;
+    return c.status === 'Pending' && !!l && (loc === 'All' || l === loc);
+  });
+  const own = allPending.filter((c) => c.employeeId === me.id);
+  const queue = allPending.filter((c) => c.employeeId !== me.id);
+  const pending = queue.filter((c) => (category === 'All' || c.category === category) && matchesEmployee(employeeById(c.employeeId)!, q));
   const filtered = !!q.trim() || category !== 'All';
   const act = (id: string, status: 'Approved' | 'Rejected') => decide(id, status, me.name, '');
 
@@ -38,12 +61,12 @@ export default function ExpenseApprovalsPage() {
 
   return (
     <div className="tx-page">
-      <PageHeader eyebrow="Expense Claims" title="Approvals" description={`Claims awaiting management sign-off — ${location}.`} />
+      <PageHeader eyebrow="Expense Claims" title="Approvals" description={`Claims awaiting management sign-off — ${scopeName}.`} />
 
       <StatStrip
         items={[
           { label: 'Awaiting approval', value: allPending.length, icon: <InboxIcon />, tone: 'amber', hint: `From ${people} employee(s)` },
-          { label: 'Pending value', value: totalText || '—', icon: <ReceiptIcon />, tone: 'blue', hint: 'Across all pending claims' },
+          { label: 'Pending value', value: totalText || '—', icon: <ReceiptIcon />, tone: 'blue', hint: 'Per currency, not added together' },
           { label: 'Over policy limit', value: overCount, icon: <WarnIcon />, tone: overCount ? 'red' : 'gray', hint: overCount ? 'Need extra sign-off' : 'All within limits' },
           { label: 'Oldest submission', value: oldest ?? '—', icon: <ClockIcon />, tone: 'purple', hint: oldest ? 'Longest waiting' : 'Nothing waiting' },
         ]}
@@ -56,6 +79,14 @@ export default function ExpenseApprovalsPage() {
             <SearchIcon />
             <input value={q} onChange={(e) => setQ(e.target.value)} placeholder="Search by name or employee ID…" />
           </div>
+          <select value={loc} onChange={(e) => setPick(e.target.value)} className="chip" aria-label="Filter by location">
+            <option value="All">All locations</option>
+            {locations.map((l) => (
+              <option key={l.id} value={l.id}>
+                {l.name}
+              </option>
+            ))}
+          </select>
           <select value={category} onChange={(e) => setCategory(e.target.value)} className="chip">
             <option value="All">All categories</option>
             {categories.map((c) => (
@@ -67,8 +98,16 @@ export default function ExpenseApprovalsPage() {
             {pending.length} of {allPending.length}
           </span>
         </div>
+        {own.length > 0 && (
+          <div className="note-box warn" style={{ margin: '0 18px 10px' }}>
+            <WarnIcon />
+            <div>
+              {own.length} of your own claim{own.length === 1 ? ' is' : 's are'} not shown below. You cannot approve or reject your own claim; it is decided by {claimRoute(me).label}.
+            </div>
+          </div>
+        )}
         {!pending.length ? (
-          <EmptyState icon={<ReceiptIcon />} title={filtered ? 'No matches' : 'Inbox zero'} description={filtered ? 'No claims match your search or filter.' : `No claims awaiting approval for ${location}.`} />
+          <EmptyState icon={<ReceiptIcon />} title={filtered ? 'No matches' : 'Inbox zero'} description={filtered ? 'No claims match your search or filter.' : `No claims awaiting your approval for ${scopeName}.`} />
         ) : (
           <div className="tx-list">
             {pending.map((c) => {
@@ -76,6 +115,8 @@ export default function ExpenseApprovalsPage() {
               const cat = categories.find((x) => x.name === c.category);
               const limit = cat?.limits[c.currency] ?? Infinity;
               const overLimit = c.amount > limit;
+              const route = claimRoute(e);
+              const allowed = canDecide(c);
               return (
                 <div key={c.id} className="tx-grp">
                   <div className="tx-item">
@@ -90,7 +131,9 @@ export default function ExpenseApprovalsPage() {
                       <div className="tx-s">
                         {c.project} · {c.description}
                       </div>
-                      <div className="tx-s faint">Submitted {c.submittedOn ?? c.date}</div>
+                      <div className="tx-s faint">
+                        Submitted {c.submittedOn ?? c.date} · Approver: {route.label}
+                      </div>
                     </div>
                     <div style={{ textAlign: 'right' }}>
                       <div className="tx-t mono" style={{ fontSize: 14 }}>
@@ -101,12 +144,18 @@ export default function ExpenseApprovalsPage() {
                       </div>
                     </div>
                     <div className="tx-actions" style={{ marginLeft: 0 }}>
-                      <Button size="sm" variant="success" onClick={() => act(c.id, 'Approved')}>
-                        Approve
-                      </Button>
-                      <Button size="sm" variant="danger" onClick={() => act(c.id, 'Rejected')}>
-                        Reject
-                      </Button>
+                      {allowed ? (
+                        <>
+                          <Button size="sm" variant="success" onClick={() => act(c.id, 'Approved')}>
+                            Approve
+                          </Button>
+                          <Button size="sm" variant="danger" onClick={() => act(c.id, 'Rejected')}>
+                            Reject
+                          </Button>
+                        </>
+                      ) : (
+                        <span className="tx-s faint">Routed to {route.label}</span>
+                      )}
                     </div>
                   </div>
                   {overLimit && (

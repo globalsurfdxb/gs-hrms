@@ -3,7 +3,7 @@
 import { createContext, useContext, useMemo, useState } from 'react';
 import { EMPLOYEE_REQUESTS, REFERENCE_TODAY, employeeById } from '@/lib/data';
 import { EmployeeRequest, Role } from '@/lib/types';
-import { FIELDS, saveEmployee, toForm } from '@/lib/employeeStore';
+import { FIELDS, logAudit, saveEmployee, toForm } from '@/lib/employeeStore';
 import { useApp } from '@/context/AppContext';
 
 /** Who may decide a request. Nobody decides their own; management decides any; a manager decides a request routed to them. */
@@ -87,6 +87,7 @@ export function RequestsProvider({ children }: { children: React.ReactNode }) {
         }
         const d: Decision = { status, decidedBy: by, decidedOn: REFERENCE_TODAY };
         remember(id, d);
+        logAudit({ employeeId: `request:${id}`, field: `Request ${status === 'Approved' ? 'approved' : 'rejected'}`, from: 'Pending', to: status, changedBy: by, module: 'Approvals' });
         setRequests((prev) => prev.map((x) => (x.id === id ? { ...x, ...d } : x)));
       },
     }),

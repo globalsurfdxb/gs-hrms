@@ -28,9 +28,17 @@ const initials = (name: string) => {
   return (words.length === 1 ? words[0].slice(0, 2) : words.map((w) => w[0]).slice(0, 2).join('')).toUpperCase();
 };
 
+/** A structurally valid UAE IBAN (AE + check digits + 3-digit bank code 026 + 16-digit account) for the sample data. */
+const aeIban = (account16: string) => {
+  const bban = `026${account16.padStart(16, '0').slice(-16)}`;
+  const mod97 = (str: string) => str.split('').reduce((r, ch) => (r * 10 + Number(ch)) % 97, 0);
+  const check = String(98 - mod97(`${bban}101400`)).padStart(2, '0');
+  return `AE${check}${bban}`;
+};
+
 const dubaiBank = (accountName: string): Employee['bankDetails'] => ({
   accountName,
-  accountNumber: 'AE' + seedDigits(accountName, 15),
+  accountNumber: aeIban(seedDigits(accountName, 16)),
   bankName: 'Emirates NBD',
   branchCode: 'EBILAEAD',
   currency: 'AED',
@@ -407,7 +415,7 @@ export const COMPANIES: Company[] = [
   { id: 'co-1', name: 'GS IT', shortCode: 'GSIT', description: 'Managed IT services, cloud infrastructure and network engineering — the parent entity.', website: 'www.gs-it.ae', location: 'Both', established: '2015', status: 'Active' },
   { id: 'co-2', name: 'GS Digital', shortCode: 'GSD', description: 'Digital marketing, e-commerce platforms and software solutions.', website: 'www.gsdigital.ae', location: 'Dubai', established: '2019', status: 'Active' },
   { id: 'co-3', name: 'GS AV', shortCode: 'GSAV', description: 'Audio-visual systems integration and event technology.', website: 'www.gsav.ae', location: 'Dubai', established: '2017', status: 'Active' },
-  { id: 'co-4', name: 'GS Security', shortCode: 'GSS', description: 'Security systems, CCTV and access control solutions.', website: 'www.gssecurity.ae', location: 'Dubai', established: '2021', status: 'Active' },
+  { id: 'co-4', name: 'GS Security', shortCode: 'GSS', description: 'Security systems, CCTV and access control solutions.', website: 'www.gssecurity.ae', location: 'Both', established: '2021', status: 'Active' },
 ];
 
 export const companyHeadcount = (companyName: string) => EMPLOYEES.filter((e) => e.company === companyName && e.employmentStatus !== 'Inactive').length;
@@ -435,7 +443,7 @@ export const DEPARTMENTS: Department[] = [
   { id: 'dep-7', companyId: 'co-1', name: 'Finance', locations: ['Kochi'], head: 'Muneer' },
   { id: 'dep-8', companyId: 'co-2', name: 'Sales', locations: ['Dubai'], head: 'Unassigned' },
   { id: 'dep-9', companyId: 'co-3', name: 'Sales', locations: ['Dubai'], head: 'Unassigned' },
-  { id: 'dep-10', companyId: 'co-4', name: 'HR & Admin', locations: ['Dubai'], head: 'Unassigned' },
+  { id: 'dep-10', companyId: 'co-4', name: 'HR & Admin', locations: ['Dubai', 'Kochi'], head: 'Unassigned' },
 ];
 
 export const DESIGNATIONS: Designation[] = [
@@ -454,6 +462,7 @@ export const DESIGNATIONS: Designation[] = [
   { id: 'des-13', departmentId: 'dep-9', title: 'Senior Sales Executive' },
   { id: 'des-14', departmentId: 'dep-9', title: 'Account Manager' },
   { id: 'des-15', departmentId: 'dep-10', title: 'Admin Executive' },
+  { id: 'des-16', departmentId: 'dep-1', title: 'General Manager' },
 ];
 
 export const ONBOARDING_REQUESTS: OnboardingRequest[] = [

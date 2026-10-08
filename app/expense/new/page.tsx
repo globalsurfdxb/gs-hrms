@@ -4,9 +4,10 @@ import { useRef, useState } from 'react';
 import Link from 'next/link';
 import { useApp, useCurrentEmployee } from '@/context/AppContext';
 import { useOrg } from '@/context/OrgContext';
-import { useExpense } from '@/context/ExpenseContext';
+import { RECEIPT_DEFAULT, claimRoute, useExpense } from '@/context/ExpenseContext';
 import { useSeparation } from '@/context/SeparationContext';
-import { EMPLOYEES, REFERENCE_TODAY, employeeById, managerOf } from '@/lib/data';
+import { EMPLOYEES, REFERENCE_TODAY, employeeById } from '@/lib/data';
+import { addDays } from '@/lib/dates';
 import { PageHeader } from '@/components/ui/PageHeader';
 import { Card, Button } from '@/components/ui/Card';
 import { SearchSelect } from '@/components/ui/SearchSelect';
@@ -14,6 +15,9 @@ import { EmpId } from '@/components/ui/EmployeeBits';
 import { CheckIcon, ReceiptIcon, UploadIcon, WarnIcon, XIcon } from '@/components/icons';
 
 const MAX_RECEIPT_BYTES = 5 * 1024 * 1024;
+/** Claims older than this many days are not accepted. */
+const MAX_AGE_DAYS = 90;
+const OLDEST_DATE = addDays(REFERENCE_TODAY, -MAX_AGE_DAYS);
 
 type Field = 'category' | 'amount' | 'date' | 'project' | 'receipt';
 
@@ -65,13 +69,17 @@ export default function NewClaimPage() {
   const [submittedId, setSubmittedId] = useState<string | null>(null);
 
   const claimant = employeeById(claimantId) ?? me;
-  const approver = managerOf(claimant);
+  const route = claimRoute(claimant);
   const cur = locationDef(claimant.location)?.currency ?? 'AED';
   const category = activeCategories.some((c) => c.name === chosen) ? chosen : (activeCategories[0]?.name ?? '');
   const cat = activeCategories.find((c) => c.name === category);
   const limit = cat?.limits[cur] ?? Infinity;
   const amountNum = Number(amount);
   const overLimit = amountNum > limit;
+  // A receipt is needed above the category's policy limit, and above a default amount for any claim.
+  const receiptFrom = Math.min(limit, RECEIPT_DEFAULT[cur] ?? Infinity);
+  const receiptRequired = amountNum > receiptFrom;
+  const receiptWhy = overLimit ? `this claim exceeds the ${cur} ${limit.toLocaleString('en-US')} policy limit for ${category}` : `claims above ${cur} ${receiptFrom.toLocaleString('en-US')} need proof of purchase`;
   const duplicate = !!amount && claims.some((c) => c.employeeId === claimantId && c.category === category && c.amount === amountNum && c.date === date);
   const canPickClaimant = role !== 'Employee';
   const eligibleClaimants = EMPLOYEES.filter((e) => statusOf(e) === 'Active');
@@ -110,8 +118,11 @@ export default function NewClaimPage() {
   const submit = () => {
     if (!category) return fail('category', 'Choose a category — none are active right now.');
     if (!hasAmount) return fail('amount', 'Enter an amount greater than 0.');
-    if (!date || date > REFERENCE_TODAY) return fail('date', 'Choose the date of the expense (today or earlier).');
+    if (!date) return fail('date', 'Choose the date of the expense.');
+    if (date > REFERENCE_TODAY) return fail('date', `The expense date cannot be in the future. Choose ${REFERENCE_TODAY} or earlier.`);
+    if (date < OLDEST_DATE) return fail('date', `Claims must be submitted within ${MAX_AGE_DAYS} days of the expense. The earliest date accepted is ${OLDEST_DATE}.`);
     if (!project.trim()) return fail('project', 'Enter the project or cost centre.');
+    if (receiptRequired && !receipt) return fail('receipt', `Attach a receipt: ${receiptWhy}.`);
     clearError();
     const id = submitClaim({ employeeId: claimantId, category, amount: amountNum, currency: cur, date, project: project.trim(), description: description.trim(), receipt: receipt?.name });
     setSubmittedId(id);
@@ -129,7 +140,7 @@ export default function NewClaimPage() {
             <h3>Claim submitted</h3>
             <p>
               {cur} {amountNum.toLocaleString('en-US')} for {category} {claimant.id !== me.id ? `on behalf of ${claimant.name} (${claimant.employeeCode}) ` : ''}has been sent{' '}
-              {overLimit ? 'for additional management approval' : approver ? `to ${approver.name} (${approver.employeeCode}) for approval` : 'to your approver'}. Reference <b>{submittedId}</b>.
+              {overLimit ? 'for additional management approval' : `to ${route.label} for approval`}. Reference <b>{submittedId}</b>.
             </p>
             <div className="btns">
               <Link href="/expense/claims">
@@ -214,6 +225,7 @@ export default function NewClaimPage() {
               <Fg label="Expense date" required>
                 <input
                   type="date"
+                  min={OLDEST_DATE}
                   max={REFERENCE_TODAY}
                   value={date}
                   className={bad('date')}
@@ -252,7 +264,7 @@ export default function NewClaimPage() {
             </div>
           </Section>
 
-          <Section n={3} title="Receipt" desc="Optional, but attaching one speeds up approval.">
+          <Section n={3} title="Receipt" desc={receiptRequired ? `Required — ${receiptWhy}.` : `Required above ${cur} ${receiptFrom === Infinity ? 'the policy limit' : receiptFrom.toLocaleString('en-US')} or over the category limit; optional below.`}>
             <input ref={fileRef} type="file" accept="image/*,.pdf" hidden onChange={(e) => pickFile(e.target.files?.[0])} />
             {receipt ? (
               <div className="tx-file">
@@ -359,7 +371,7 @@ export default function NewClaimPage() {
               </div>
               <div className="tx-sum-row">
                 <span>Receipt</span>
-                <span>{receipt ? 'Attached' : 'None'}</span>
+                <span>{receipt ? 'Attached' : receiptRequired ? 'Required' : 'None'}</span>
               </div>
               <div className="tx-sum-row">
                 <span>Policy limit</span>
@@ -368,7 +380,7 @@ export default function NewClaimPage() {
               <div className="tx-sum-row">
                 <span>Approval route</span>
                 <span>
-                  {approver ? approver.name : 'HR'}
+                  {route.label}
                   {overLimit && amount ? <span style={{ color: '#B45309' }}> → management sign-off</span> : null}
                 </span>
               </div>

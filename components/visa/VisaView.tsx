@@ -4,10 +4,10 @@ import { useState } from 'react';
 import Link from 'next/link';
 import { useApp, useCurrentEmployee } from '@/context/AppContext';
 import { EMPLOYEES, REFERENCE_TODAY, directReports, employeeById, matchesEmployee } from '@/lib/data';
-import { addDays } from '@/lib/dates';
 import { useOrg } from '@/context/OrgContext';
 import { useSeparation } from '@/context/SeparationContext';
-import { RUNGS, useVisa } from '@/context/VisaContext';
+import { DocRow, useExpiry } from '@/context/ExpiryContext';
+import { EID, VISA } from '@/lib/expiryRegister';
 import { Employee, ExpiryState } from '@/lib/types';
 import { PageHeader } from '@/components/ui/PageHeader';
 import { Card, CardHeader, EmptyState, Button } from '@/components/ui/Card';
@@ -16,9 +16,9 @@ import { Drawer } from '@/components/ui/Drawer';
 import { EmpId } from '@/components/ui/EmployeeBits';
 import { Avatar } from '@/components/ui/Avatar';
 import { StatTiles } from '@/components/ui/StatTiles';
+import { DaysLeft, ReminderCell } from '@/components/expiry/ExpiryBits';
 import { BellIcon, CheckIcon, ClockIcon, PeopleIcon, SearchIcon, ShieldIcon, WarnIcon, XIcon } from '@/components/icons';
 
-const SORTED_RUNGS = [...RUNGS].sort((a, b) => b - a);
 const FILTERS: { key: 'All' | ExpiryState; label: string }[] = [
   { key: 'All', label: 'All statuses' },
   { key: 'ok', label: 'Valid' },
@@ -32,16 +32,11 @@ const addYears = (iso: string, n: number) => {
   return d.toISOString().slice(0, 10);
 };
 
-function inWindow(days: number | null, rung: number) {
-  if (days === null) return false;
-  const lower = [...RUNGS].sort((a, b) => a - b).filter((r) => r < rung).pop() ?? -1;
-  return days >= 0 && days <= rung && days > lower;
-}
-
-function DaysLeft({ days }: { days: number | null }) {
-  if (days === null) return <span style={{ color: 'var(--faint)' }}>—</span>;
-  if (days < 0) return <span style={{ color: '#B91C1C', fontWeight: 700 }}>Expired {-days}d ago</span>;
-  return <span style={{ color: days <= 30 ? '#C2410C' : days <= 90 ? '#B45309' : 'var(--muted)', fontWeight: days <= 90 ? 600 : 400 }}>{days} days</span>;
+/** One UAE employee with their residence-visa and Emirates ID rows from the shared expiry register. */
+interface Entry {
+  e: Employee;
+  visa: DocRow;
+  eid?: DocRow;
 }
 
 export function VisaView({ forceTeam = false }: { forceTeam?: boolean }) {
@@ -49,7 +44,7 @@ export function VisaView({ forceTeam = false }: { forceTeam?: boolean }) {
   const me = useCurrentEmployee();
   const { locations } = useOrg();
   const { statusOf } = useSeparation();
-  const { reminders, renewals, visaExpiryOf, eidExpiryOf, daysLeft, stateOf, dueRung, isReminded, lastReminder, sendReminder, sendDue, renew } = useVisa();
+  const { reminders, renewals, rowsFor, daysOf, stateOf, ladderOf, windowOf, dueRung, isReminded, reminderInfo, sendReminder, sendDue, renew } = useExpiry();
   const teamMode = forceTeam || role === 'Team Lead';
 
   const [q, setQ] = useState('');
@@ -65,33 +60,40 @@ export function VisaView({ forceTeam = false }: { forceTeam?: boolean }) {
 
   const uaeIds = new Set(locations.filter((l) => l.template === 'uae').map((l) => l.id));
   const base = teamMode ? directReports(me.id) : EMPLOYEES;
-  const scoped = base.filter((e) => uaeIds.has(e.location) && visaExpiryOf(e) && statusOf(e) !== 'Inactive');
+  const scoped: Entry[] = base
+    .filter((e) => uaeIds.has(e.location) && statusOf(e) !== 'Inactive')
+    .flatMap((e) => {
+      const rows = rowsFor([e]);
+      const visa = rows.find((r) => r.type === VISA);
+      return visa ? [{ e, visa, eid: rows.find((r) => r.type === EID) }] : [];
+    });
 
-  const count = (s: ExpiryState) => scoped.filter((e) => stateOf(e) === s).length;
-  const dueList = scoped.filter((e) => {
-    const r = dueRung(e);
-    return r !== null && !isReminded(e, r);
+  const visaLadder = [...new Set(scoped.flatMap((x) => ladderOf(x.visa)))].sort((a, b) => b - a);
+  const count = (s: ExpiryState) => scoped.filter((x) => stateOf(x.visa) === s).length;
+  const dueList = scoped.filter((x) => {
+    const r = dueRung(x.visa);
+    return r !== null && !isReminded(x.visa, r);
   });
 
   const rows = scoped
-    .filter((e) => (statusFilter === 'All' || stateOf(e) === statusFilter) && (rungFilter === null || inWindow(daysLeft(e), rungFilter)) && matchesEmployee(e, q))
-    .sort((a, b) => (daysLeft(a) ?? 9999) - (daysLeft(b) ?? 9999));
+    .filter((x) => (statusFilter === 'All' || stateOf(x.visa) === statusFilter) && (rungFilter === null || windowOf(x.visa) === rungFilter) && matchesEmployee(x.e, q))
+    .sort((a, b) => daysOf(a.visa) - daysOf(b.visa));
 
-  const renewing = renewId ? employeeById(renewId) : undefined;
+  const renewing = renewId ? scoped.find((x) => x.e.id === renewId) : undefined;
 
-  const remind = (e: Employee) => {
-    const r = dueRung(e);
-    sendReminder(e, r);
-    setNotice(`Reminder sent to ${e.name} (${e.employeeCode}) — ${r ? `${r}-day notice` : 'manual notice'} to ${(r === null || r <= 30 ? ['Employee', 'HR', 'Reporting manager'] : ['Employee', 'HR']).join(', ')}.`);
+  const remind = (x: Entry) => {
+    const r = dueRung(x.visa);
+    sendReminder(x.visa, r);
+    setNotice(`Reminder sent to ${x.e.name} (${x.e.employeeCode}) — ${r ? `${r}-day notice` : daysOf(x.visa) < 0 ? 'overdue follow-up' : 'manual notice'} to ${(r === null || r <= 30 ? ['Employee', 'HR', 'Reporting manager'] : ['Employee', 'HR']).join(', ')}.`);
   };
 
   const sendAllDue = () => {
-    const n = sendDue(dueList);
+    const n = sendDue(dueList.map((x) => x.visa));
     setNotice(n ? `Sent ${n} scheduled reminder${n > 1 ? 's' : ''} to the employees and HR.` : 'No reminders are due right now.');
   };
 
-  const openRenew = (e: Employee) => {
-    setRenewId(e.id);
+  const openRenew = (x: Entry) => {
+    setRenewId(x.e.id);
     setNewExpiry('');
     setEidExpiry('');
     setReference('');
@@ -100,7 +102,7 @@ export function VisaView({ forceTeam = false }: { forceTeam?: boolean }) {
 
   const submitRenew = () => {
     if (!renewing) return;
-    const current = visaExpiryOf(renewing) ?? REFERENCE_TODAY;
+    const current = renewing.visa.expiry;
     if (!newExpiry) {
       setRenewError('Enter the new visa expiry date.');
       return;
@@ -109,12 +111,18 @@ export function VisaView({ forceTeam = false }: { forceTeam?: boolean }) {
       setRenewError('The new expiry must be later than the current expiry and in the future.');
       return;
     }
-    renew(renewing, { newExpiry, eidExpiry, reference });
-    setNotice(`Visa renewed for ${renewing.name} (${renewing.employeeCode}) — now valid until ${newExpiry}.`);
+    if (eidExpiry && eidExpiry <= REFERENCE_TODAY) {
+      setRenewError('The new Emirates ID expiry must be in the future.');
+      return;
+    }
+    renew(renewing.visa, { newExpiry, eidExpiry: eidExpiry || undefined, reference });
+    setNotice(`Visa renewed for ${renewing.e.name} (${renewing.e.employeeCode}) — now valid until ${newExpiry}.`);
     setRenewId(null);
   };
 
-  const quickBase = renewing ? (visaExpiryOf(renewing) && visaExpiryOf(renewing)! > REFERENCE_TODAY ? visaExpiryOf(renewing)! : REFERENCE_TODAY) : REFERENCE_TODAY;
+  const quickBase = renewing && renewing.visa.expiry > REFERENCE_TODAY ? renewing.visa.expiry : REFERENCE_TODAY;
+  const visaReminders = reminders.filter((r) => r.type === VISA);
+  const visaRenewals = renewals.filter((r) => r.type === VISA);
 
   return (
     <div>
@@ -124,7 +132,7 @@ export function VisaView({ forceTeam = false }: { forceTeam?: boolean }) {
         description={
           teamMode
             ? 'Residence-visa and Emirates ID status for your UAE direct reports.'
-            : 'Residence-visa, work-permit and Emirates ID lifecycle for UAE staff — automated notification 90 / 60 / 30 / 7 days before expiry.'
+            : `Residence-visa, work-permit and Emirates ID lifecycle for UAE staff — automated notification ${visaLadder.length ? visaLadder.join(' / ') : 'on the configured schedule'} days before expiry, escalated to HR and the manager once expired.`
         }
         actions={
           !teamMode && (
@@ -158,11 +166,11 @@ export function VisaView({ forceTeam = false }: { forceTeam?: boolean }) {
 
       {!teamMode && (
         <Card className="row-gap">
-          <CardHeader title="Reminder ladder" sub="Click a notice window to filter the register. Green = every employee in the window has been reminded." />
+          <CardHeader title="Reminder ladder" sub="Follows the visa schedule in Administration → Reminders. Click a window to filter the register. Green = every employee in the window has been reminded." />
           <div className="ladder" style={{ padding: '18px 22px' }}>
-            {SORTED_RUNGS.map((r) => {
-              const inWin = scoped.filter((e) => inWindow(daysLeft(e), r));
-              const reminded = inWin.filter((e) => isReminded(e, r)).length;
+            {[...visaLadder, 0].map((r) => {
+              const inWin = scoped.filter((x) => windowOf(x.visa) === r);
+              const reminded = r === 0 ? inWin.length : inWin.filter((x) => isReminded(x.visa, r)).length;
               const cls = inWin.length && reminded === inWin.length ? 'sent' : inWin.length ? 'now' : '';
               return (
                 <button
@@ -172,11 +180,9 @@ export function VisaView({ forceTeam = false }: { forceTeam?: boolean }) {
                   onClick={() => setRungFilter(rungFilter === r ? null : r)}
                   style={{ cursor: 'pointer', font: 'inherit', background: rungFilter === r ? 'var(--primary-50)' : 'transparent', borderRadius: 10, paddingTop: 6, paddingBottom: 6 }}
                 >
-                  <div className="cap">{r}d</div>
-                  <div className="lt">{r} days notice</div>
-                  <div className="ls">
-                    {inWin.length ? `${inWin.length} employee(s) · ${reminded} reminded` : 'No one in this window'}
-                  </div>
+                  <div className="cap">{r === 0 ? 'Expired' : `${r}d`}</div>
+                  <div className="lt">{r === 0 ? 'Escalated' : `${r} days notice`}</div>
+                  <div className="ls">{inWin.length ? (r === 0 ? `${inWin.length} employee(s) · escalated to HR / manager` : `${inWin.length} employee(s) · ${reminded} reminded`) : 'No one in this window'}</div>
                 </button>
               );
             })}
@@ -200,7 +206,7 @@ export function VisaView({ forceTeam = false }: { forceTeam?: boolean }) {
           </select>
           {rungFilter !== null && (
             <button type="button" className="chip lc-chip-on" onClick={() => setRungFilter(null)}>
-              {rungFilter}-day window <XIcon />
+              {rungFilter === 0 ? 'Expired' : `${rungFilter}-day window`} <XIcon />
             </button>
           )}
           {(!!q.trim() || statusFilter !== 'All' || rungFilter !== null) && (
@@ -240,12 +246,10 @@ export function VisaView({ forceTeam = false }: { forceTeam?: boolean }) {
               </tr>
             </thead>
             <tbody>
-              {rows.map((e) => {
-                const st = stateOf(e);
-                const n = daysLeft(e);
-                const due = dueRung(e);
-                const last = lastReminder(e);
-                const lastCurrent = last && last.expiry === visaExpiryOf(e) ? last : undefined;
+              {rows.map((x) => {
+                const { e, visa, eid } = x;
+                const st = stateOf(visa);
+                const eidExpired = eid ? stateOf(eid) === 'expired' : false;
                 return (
                   <tr key={e.id} className={`lc-row ${st}`}>
                     <td>
@@ -264,38 +268,31 @@ export function VisaView({ forceTeam = false }: { forceTeam?: boolean }) {
                     </td>
                     <td>
                       <div className="mono">{e.emiratesId}</div>
-                      {eidExpiryOf(e) && <div className="sb">EID expires {eidExpiryOf(e)}</div>}
+                      {eid && (
+                        <div className="sb" style={eidExpired ? { color: '#B91C1C', fontWeight: 600 } : undefined}>
+                          {eidExpired ? `EID expired ${eid.expiry}` : `EID expires ${eid.expiry}`}
+                        </div>
+                      )}
                     </td>
-                    <td className="mono">{visaExpiryOf(e)}</td>
+                    <td className="mono">{visa.expiry}</td>
                     <td>
-                      <DaysLeft days={n} />
+                      <DaysLeft days={daysOf(visa)} />
                     </td>
                     <td>
                       <ExpiryBadge state={st} />
                     </td>
                     {!teamMode && (
-                      <td style={{ fontSize: 12 }}>
-                        {due !== null && !isReminded(e, due) ? (
-                          <span style={{ color: '#B45309', fontWeight: 600 }}>Due: {due}-day notice</span>
-                        ) : lastCurrent ? (
-                          <span style={{ color: 'var(--muted)' }}>
-                            Sent {lastCurrent.sentOn}
-                            {lastCurrent.rung ? ` · ${lastCurrent.rung}-day` : ' · manual'}
-                          </span>
-                        ) : n !== null && n > 90 ? (
-                          <span style={{ color: 'var(--faint)' }}>Next: 90-day on {addDays(visaExpiryOf(e)!, -90)}</span>
-                        ) : (
-                          <span style={{ color: 'var(--faint)' }}>—</span>
-                        )}
+                      <td>
+                        <ReminderCell info={reminderInfo(visa)} />
                       </td>
                     )}
                     {!teamMode && (
                       <td className="lc-right">
                         <span className="lc-acts">
-                          <Button size="sm" onClick={() => remind(e)} title="Send a reminder now">
+                          <Button size="sm" onClick={() => remind(x)} title="Send a reminder now">
                             <BellIcon /> Remind
                           </Button>
-                          <Button size="sm" variant={st === 'ok' ? 'ghost' : 'primary'} onClick={() => openRenew(e)}>
+                          <Button size="sm" variant={st === 'ok' ? 'ghost' : 'primary'} onClick={() => openRenew(x)}>
                             Renew
                           </Button>
                         </span>
@@ -320,12 +317,12 @@ export function VisaView({ forceTeam = false }: { forceTeam?: boolean }) {
       {!teamMode && (
         <div className="g2 row-gap">
           <Card>
-            <CardHeader title="Reminder log" sub={`${reminders.length} sent this session`} />
-            {!reminders.length ? (
+            <CardHeader title="Reminder log" sub={`${visaReminders.length} sent this session`} />
+            {!visaReminders.length ? (
               <div className="lc-hint">No reminders sent yet. Use “Send due reminders” or “Remind” on a row.</div>
             ) : (
               <div className="lc-list">
-                {[...reminders]
+                {[...visaReminders]
                   .reverse()
                   .slice(0, 8)
                   .map((r) => {
@@ -351,12 +348,12 @@ export function VisaView({ forceTeam = false }: { forceTeam?: boolean }) {
             )}
           </Card>
           <Card>
-            <CardHeader title="Renewal history" sub={`${renewals.length} renewal(s) this session`} />
-            {!renewals.length ? (
+            <CardHeader title="Renewal history" sub={`${visaRenewals.length} renewal(s) this session`} />
+            {!visaRenewals.length ? (
               <div className="lc-hint">No renewals recorded yet. Use “Renew” on a row to update a visa.</div>
             ) : (
               <div className="lc-list">
-                {[...renewals]
+                {[...visaRenewals]
                   .reverse()
                   .slice(0, 8)
                   .map((r) => {
@@ -389,7 +386,7 @@ export function VisaView({ forceTeam = false }: { forceTeam?: boolean }) {
         open={!!renewing}
         onClose={() => setRenewId(null)}
         title="Renew visa"
-        description={renewing ? `${renewing.name} · ${renewing.employeeCode}` : undefined}
+        description={renewing ? `${renewing.e.name} · ${renewing.e.employeeCode}` : undefined}
         footer={
           <>
             <Button variant="ghost" onClick={() => setRenewId(null)}>
@@ -405,12 +402,12 @@ export function VisaView({ forceTeam = false }: { forceTeam?: boolean }) {
           <>
             <div style={{ border: '1px solid var(--border)', borderRadius: 'var(--r-sm)', padding: 12, background: 'var(--bg)', marginBottom: 16, fontSize: 13 }}>
               <div style={{ fontWeight: 600 }}>
-                {renewing.designation} · {renewing.department}
+                {renewing.e.designation} · {renewing.e.department}
               </div>
               <div style={{ color: 'var(--muted)', marginTop: 4 }}>
-                Current visa expiry <b>{visaExpiryOf(renewing)}</b> · <DaysLeft days={daysLeft(renewing)} />
+                Current visa expiry <b>{renewing.visa.expiry}</b> · <DaysLeft days={daysOf(renewing.visa)} />
               </div>
-              <div style={{ color: 'var(--muted)', marginTop: 2 }}>Emirates ID {renewing.emiratesId}</div>
+              <div style={{ color: 'var(--muted)', marginTop: 2 }}>Emirates ID {renewing.e.emiratesId}</div>
             </div>
             <div className="form-grid">
               <div className="fg full">

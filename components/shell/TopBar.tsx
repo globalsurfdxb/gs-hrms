@@ -8,6 +8,7 @@ import { APP_MODULES, HOME_TABS, PERS, RAIL_LABEL, SCOPE_LABEL, resolveLocation 
 import { laCall, useLaChrome } from '@/lib/laStore';
 import { signOut, useAuth } from '@/lib/auth';
 import { useLocationName } from '@/components/shell/useLocationName';
+import { useNoticeCount } from '@/components/notifications/NotificationsView';
 import { BellIcon, GearIcon, MenuIcon, PlusIcon } from '@/components/icons';
 
 const LogoutIcon = () => (
@@ -35,6 +36,7 @@ export function TopBar({ onMenu }: { onMenu: () => void }) {
   const loc = resolveLocation(pathname);
   const scopes = PERS[role].scopes;
   const la = useLaChrome();
+  const bell = useNoticeCount();
 
   return (
     <>
@@ -70,7 +72,7 @@ export function TopBar({ onMenu }: { onMenu: () => void }) {
             <PlusIcon />
           </button>
           <button className="ztb" title="Alerts" onClick={la ? () => laCall('openNotifications') : undefined}>
-            {(la ? (la.alerts ?? 0) > 0 : true) && <span className="dot">{la ? la.alerts : 4}</span>}
+            {(la ? (la.alerts ?? 0) > 0 : bell > 0) && <span className="dot">{la ? la.alerts : bell}</span>}
             <BellIcon />
           </button>
           {la ? (

@@ -8,6 +8,7 @@ import { useApp, useCurrentEmployee } from '@/context/AppContext';
 import { Role } from '@/lib/types';
 import { useEmployeeVersion } from '@/lib/employeeStore';
 import { LaChrome, laCurrentPath, laPath, setLaChrome } from '@/lib/laStore';
+import { leaveOrgPayload } from '@/lib/leaveBridge';
 
 const BASE = '/modules/leave-attendance';
 
@@ -80,6 +81,8 @@ export function LaHost() {
   const org = useMemo(
     () => ({
       today: REFERENCE_TODAY,
+      // the app's own leave requests, balances, today's attendance, holidays and approver routing: one source for both sides
+      leave: leaveOrgPayload(locations),
       meId: me.employeeCode,
       persona: PERSONA_FOR[role] ?? 'employee',
       locations: locations.map((l) => ({ id: l.id, name: l.name, city: l.city, template: l.template, workingHours: l.workingHours, currency: l.currency })),

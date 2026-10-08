@@ -2,7 +2,8 @@
 
 import { useState } from 'react';
 import Link from 'next/link';
-import { useCurrentEmployee } from '@/context/AppContext';
+import { useApp, useCurrentEmployee } from '@/context/AppContext';
+import { PERS } from '@/lib/nav';
 import { useVisa } from '@/context/VisaContext';
 import { directReports, employeeById } from '@/lib/data';
 import { useRequests } from '@/context/RequestsContext';
@@ -14,7 +15,7 @@ import { BellIcon, ChevronRightIcon, ClockIcon, IdIcon, InboxIcon, SearchIcon, W
 
 type Kind = 'request' | 'visa';
 
-interface Notice {
+export interface Notice {
   id: string;
   kind: Kind;
   /** Drives the icon tile colour (matches the dashboard attention rows). */
@@ -25,12 +26,11 @@ interface Notice {
   href?: string;
 }
 
-export function NotificationsView({ forceTeam = false }: { forceTeam?: boolean }) {
+/** The alerts for one person (their own) or for their direct reports. The notification pages and the top-bar bell both read this. */
+export function useNotices(forceTeam: boolean) {
   const me = useCurrentEmployee();
   const { stateOf, visaExpiryOf } = useVisa();
   const { requests } = useRequests();
-  const [q, setQ] = useState('');
-  const [kind, setKind] = useState<'all' | Kind>('all');
   const people = forceTeam ? directReports(me.id) : [me];
   const peopleIds = new Set(people.map((p) => p.id));
 
@@ -50,7 +50,7 @@ export function NotificationsView({ forceTeam = false }: { forceTeam?: boolean }
   });
 
   people.forEach((e) => {
-    if (e.location === 'Dubai' && (stateOf(e) === 'soon' || stateOf(e) === 'expired')) {
+    if (stateOf(e) === 'soon' || stateOf(e) === 'expired') {
       const expired = stateOf(e) === 'expired';
       notices.push({
         id: `visa-${e.id}`,
@@ -64,6 +64,21 @@ export function NotificationsView({ forceTeam = false }: { forceTeam?: boolean }
     }
   });
 
+  return { notices, people };
+}
+
+/** Number on the bell: your own alerts, plus your team's when your role has a Team space. Zero hides the badge. */
+export function useNoticeCount() {
+  const { role } = useApp();
+  const mine = useNotices(false);
+  const team = useNotices(true);
+  return mine.notices.length + (PERS[role].scopes.includes('team') ? team.notices.length : 0);
+}
+
+export function NotificationsView({ forceTeam = false }: { forceTeam?: boolean }) {
+  const { notices, people } = useNotices(forceTeam);
+  const [q, setQ] = useState('');
+  const [kind, setKind] = useState<'all' | Kind>('all');
   const requestCount = notices.filter((n) => n.kind === 'request').length;
   const visaCount = notices.filter((n) => n.kind === 'visa').length;
   const expiredCount = notices.filter((n) => n.tone === 'expired').length;

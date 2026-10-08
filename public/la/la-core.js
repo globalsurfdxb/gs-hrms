@@ -5,11 +5,34 @@
    file/CSV helpers, location + filter helpers and an audit trail. Exposed as window.LA. */
 (function () {
   const LA = (window.LA = window.LA || {});
-  const KEY = 'la.db.v4';
+  const KEY = 'la.db.v5';
+  const LKEY = 'la.ledger.v1';
 
   /* ---------- organisation (published by the host page) ---------- */
   const ORG = () => window.__laOrg || { today: '2026-07-06', meId: 'GS-120', locations: [], companies: [], employees: [] };
   LA.org = ORG;
+
+  /* ---------- shared ledger: leave requests + today's attendance, one copy for this module AND the app's own screens
+     (dashboard, team leave/attendance, My Space read and write the same sessionStorage record via lib/leaveBridge.ts) ---------- */
+  const readLedgerStr = () => { try { return sessionStorage.getItem(LKEY); } catch { return null; } };
+  let LEDGER = null;
+  let ledgerSig = '';
+  function loadLedger() {
+    const day = ORG().today;
+    try {
+      const raw = readLedgerStr();
+      if (raw) { const l = JSON.parse(raw); if (l && l.v === 1 && l.day === day && Array.isArray(l.leaves)) { LEDGER = l; ledgerSig = raw; return; } }
+    } catch { /* unreadable — reseed */ }
+    const seedL = (ORG().leave || {}).ledger;
+    LEDGER = seedL ? JSON.parse(JSON.stringify(seedL)) : { v: 1, day, seq: 100, leaves: [], att: {} };
+    LEDGER.day = day;
+    ledgerSig = '';
+  }
+  LA.ledger = () => LEDGER;
+  /* app employee code → approver {code, name, via}: manager, else manager's manager, else HR, else Super Admin */
+  LA.approverOf = (code) => ((ORG().leave || {}).approvers || {})[code] || null;
+  /* the app's entitlement + days already taken for one employee and leave type (Annual | Sick | Casual) */
+  LA.baseBal = (code, app) => ((ORG().leave || {}).balances || []).find((b) => b.employeeId === code && b.type === app);
 
   /* ---------- date + format helpers ---------- */
   const TODAY = ORG().today;
@@ -71,17 +94,25 @@
     EMP.length = 0;
     o.employees.filter((e) => e.status === 'Active' || e.status === 'Offboarding').forEach((e) => {
       const w = parseWork((locDef(e.location) || {}).workingHours);
-      EMP.push({ n: e.name, id: e.code, dept: e.department, desig: e.designation, loc: e.location, mgr: e.managerId, company: e.company, email: e.email, phone: e.phone, in: '—', out: '—', st: 'Present', late: 0, early: 0, shiftFrom: w.from });
+      EMP.push({ n: e.name, id: e.code, dept: e.department, desig: e.designation, loc: e.location, mgr: e.managerId, company: e.company, email: e.email, phone: e.phone, doj: e.doj || '', in: '—', out: '—', st: 'Present', late: 0, early: 0, shiftFrom: w.from });
     });
-    // today's sample punches for everyone except the signed-in user (whose punches are live)
-    const specials = ['Unscheduled Late Login', 'Work from Home', 'Sick Leave'];
-    EMP.filter((e) => e.n !== ME_NAME()).forEach((e, i) => {
+    // today's punches for everyone except the signed-in user (whose punches are live) come from the shared ledger,
+    // i.e. the app's own attendance record for today, so both sides show the same status and check-in times
+    const att = (LEDGER && LEDGER.att) || {};
+    EMP.filter((e) => e.n !== ME_NAME()).forEach((e) => {
       const w = parseWork((locDef(e.loc) || {}).workingHours);
       if (LA.isOff(TODAY, e.loc)) { e.st = 'Weekly Off'; return; }
-      const k = hash(e.n + 'today') % 9;
+      const a = att[e.id];
+      if (!a) { e.st = 'Absent'; return; }
       const base = toMin(w.from);
-      if (k === 0) { e.st = specials[0]; e.late = 22; e.in = hm(base + 22); } else if (k === 1) { e.st = specials[1]; } else if (k === 2) { e.st = specials[2]; } else { e.in = hm(base - 4 + (hash(e.n) % 12)); }
-      void i;
+      if (a.status === 'Absent') e.st = 'Absent';
+      else if (a.status === 'Leave') e.st = 'Annual Leave';
+      else {
+        e.st = a.status === 'WFH' ? 'Work from Home' : 'Present';
+        e.in = a.checkIn || '—';
+        e.out = a.checkOut || '—';
+        e.late = a.checkIn && a.status !== 'WFH' && toMin(a.checkIn) > base ? toMin(a.checkIn) - base : 0;
+      }
     });
   }
   const ME_NAME = () => { const e = ORG().employees.find((x) => x.code === myCode()); return e ? e.name : 'Muneer'; };
@@ -90,8 +121,13 @@
   ['Casual Leave', 'Earned Leave', 'Paternity Leave', 'Marriage Leave', 'Bereavement Leave', 'Loss of Pay'].forEach((n) => { if (!ST[n]) ST[n] = ['s-b', n]; });
 
   /* ---------- database ---------- */
-  const NOW = Date.now();
-  const mkLeave = (id, emp, type, from, to, st, stage, applied, reason, extra) => ({ id, emp, type, from, to, days: daysBetween(from, to) + 1, st, stage, applied, reason, doc: '', ...extra });
+  /* today's punches for the signed-in user come from the app's attendance record (the shared ledger) */
+  const atMs = (hhmm) => { const d = new Date(); const [h, m] = String(hhmm).split(':').map(Number); d.setHours(h, m || 0, 0, 0); return d.getTime(); };
+  const seedSessions = () => {
+    const a = ((LEDGER && LEDGER.att) || {})[myCode()];
+    if (!a || !a.checkIn || (a.status !== 'Present' && a.status !== 'WFH')) return [];
+    return [{ in: atMs(a.checkIn), out: a.checkOut ? atMs(a.checkOut) : null, channel: a.status === 'WFH' ? 'Web (remote)' : 'Biometric', ip: '10.20.4.18' }];
+  };
 
   const UAE_TYPES = [
     { t: 'Annual Leave', code: 'AL', pay: 'Full', ent: '30 cal days/yr', accrual: '2.5/mo', probation: 'After probation', doc: '—' },
@@ -104,6 +140,7 @@
     { t: 'Study', code: 'ST', pay: 'Full', ent: '5 days/yr', accrual: 'Calendar year', probation: 'Min 2 yrs service', doc: 'Exam evidence' },
     { t: 'Restricted Festive', code: 'RF', pay: 'Full', ent: '1 day/yr', accrual: 'Calendar year', probation: 'Eligible', doc: '—' },
     { t: 'Unpaid Leave', code: 'UP', pay: 'Unpaid', ent: 'As approved', accrual: '—', probation: 'Eligible', doc: 'Reason' },
+    { t: 'Casual Leave', code: 'CS', pay: 'Full', ent: '7 days/yr', accrual: 'Calendar year', probation: 'After probation', doc: '—' },
   ].map((t, i) => ({ ...t, id: 'LU' + i, tpl: 'uae', active: true }));
   const INDIA_TYPES = [
     { t: 'Casual Leave', code: 'CL', pay: 'Full', ent: '12 days/yr', accrual: '1/mo', probation: 'After probation', doc: '—' },
@@ -127,6 +164,7 @@
       'Compassionate Leave': { avail: 5, booked: 0, pending: 0, cap: 5, note: 'Per bereavement event', card: 'Compassionate', ic: 'shield', bg: '#f0eafc', fg: '#7a4bd0' },
       'Study Leave': { avail: 5, booked: 0, pending: 0, cap: 5, note: 'Min 2 yrs service', card: 'Study Leave', ic: 'book', bg: '#e7f0fc', fg: '#2f6fd6' },
       'Restricted Festive': { avail: 1, booked: 0, pending: 0, cap: 1, note: '1 paid day / year', card: 'Restricted Festive', ic: 'gift', bg: '#fdf3df', fg: '#c6851b' },
+      'Casual Leave': { avail: 7, booked: 0, pending: 0, cap: 7, note: '7 days / year', card: 'Casual Leave', ic: 'sun', bg: '#e7f6ee', fg: '#1f9d63' },
     }),
     india: () => ({
       'Casual Leave': { avail: 8, booked: 4, pending: 0, cap: 12, note: '12 days / year · accrues 1 per month', card: 'Casual Leave', ic: 'sun', bg: '#e7f6ee', fg: '#1f9d63' },
@@ -205,7 +243,7 @@
     LOCS().filter((l) => l.template === 'uae').forEach((l) => { ramadan[l.id] = { start: `${y}-02-18`, end: `${y}-03-19`, reduction: '2 hours', scope: 'Company', from: '09:00', to: '15:00', brk: '30 min', revert: 'Enabled — restore standard schedule', saved: false }; });
     const lastRun = {};
     LOCS().forEach((l) => { lastRun[l.id] = { at: `${d(-1)} 06:00`, processed: EMP.filter((e) => e.loc === l.id).length, exceptions: 0, failed: 0, clean: 0 }; });
-    const holidays = [
+    const holidaysFallback = [
       mkHol('H1', `${y}-01-01`, '', 'New Year’s Day', 'Public', allIds),
       mkHol('H2', `${y}-03-20`, `${y}-03-22`, 'Eid Al Fitr', 'Public', dub),
       mkHol('H3', `${y}-05-26`, `${y}-05-29`, 'Arafat Day & Eid Al Adha', 'Public', dub),
@@ -223,27 +261,19 @@
       mkHol('H15', `${y}-11-08`, '', 'Diwali', 'Public', ind),
       mkHol('H16', `${y}-12-25`, '', 'Christmas', 'Public', ind),
     ];
+    // the app publishes the holiday list so the app and the module count working days the same way
+    const holidays = o.leave && o.leave.holidays && o.leave.holidays.length ? o.leave.holidays.map((h) => mkHol(h.id, h.d, h.to, h.n, h.type, h.tpl === 'all' ? allIds : h.tpl === 'uae' ? dub : ind)) : holidaysFallback;
     const companies = (o.companies || []).map((c) => ({ id: c.id, name: c.name, code: c.code, loc: c.location === 'Both' ? 'all' : c.location, status: c.status === 'Inactive' ? 'Suspended' : 'Active', branches: c.location === 'Both' ? Math.max(2, LOCS().length) : 1, policy: c.location === 'Both' ? '2024 · v3' : '2024 · v2' }));
     const memName = (loc) => EMP.filter((e) => e.loc === loc);
     void co; void memName; void sickK; void casualK; void earnedK;
 
     return {
-      v: 4,
+      v: 5,
       seq: { LV: 2050, RG: 990, OT: 120, PL: 10, EX: 10, DC: 43, AN: 3, TS: 1, CO: 4, ADJ: 4, ENC: 4, DEV: 4, RUN: 2, SCH: 1, FILE: 1, STA: 1, SHF: 1, MAT: 3 },
       me: { name: meN, id: myCode(), desig: (o.employees.find((x) => x.code === myCode()) || {}).designation || 'General Manager', dept: (o.employees.find((x) => x.code === myCode()) || {}).department || 'Management', mgr: '—' },
-      today: { sessions: [{ in: NOW - (2 * 3600 + 9 * 60 + 41) * 1000, out: null, channel: 'Web', ip: '10.20.4.18' }] },
+      today: { date: T, sessions: seedSessions() },
       bal: BALANCES[tplMine](),
-      leaves: [
-        mkLeave('LV-2041', meN, anLeave, d(19), d(27), 'Pending', 'Reporting Manager', d(-4), 'Family visit — planned segment 2 of 3'),
-        mkLeave('LV-2038', meN, 'Sick Leave', d(-27), d(-27), 'Approved', 'Completed', d(-27), 'Fever — prescription attached'),
-        mkLeave('LV-2033', meN, anLeave, `${y}-02-02`, `${y}-02-06`, 'Approved', 'Completed', `${Number(y) - 1}-12-20`, 'Personal'),
-        mkLeave('LV-2029', meN, tplMine === 'india' ? 'Bereavement Leave' : 'Compassionate Leave', `${Number(y) - 1}-11-14`, `${Number(y) - 1}-11-14`, 'Rejected', 'HR', `${Number(y) - 1}-11-11`, 'Document not eligible per policy'),
-        mkLeave('LV-2044', kn(0), 'Sick Leave', d(0), d(1), 'Pending', 'Reporting Manager', d(0), 'Flu (2 consecutive days)', { docNeeded: true }),
-        mkLeave('LV-2045', dn(3), tplOf(mine) === 'india' ? 'Earned Leave' : 'Annual Leave', d(18), d(23), 'Approved', 'Completed', d(-20), 'Vacation'),
-        mkLeave('LV-2047', dn(0), tplOf(mine) === 'india' ? 'Casual Leave' : 'Restricted Festive', d(30), d(30), 'Pending', 'Reporting Manager', d(-3), 'Festival'),
-        mkLeave('LV-2048', kn(2), 'Casual Leave', d(3), d(3), 'Pending', 'Reporting Manager', d(-1), 'Personal work'),
-        mkLeave('LV-2049', kn(3), 'Earned Leave', d(10), d(14), 'Approved', 'Completed', d(-12), 'Family function'),
-      ],
+      leaves: LEDGER.leaves,
       plans: [
         { id: 'PL-1', emp: meN, seg: 1, from: `${y}-02-02`, to: `${y}-02-06`, st: 'Approved' },
         { id: 'PL-2', emp: meN, seg: 2, from: d(19), to: d(27), st: 'Pending' },
@@ -293,7 +323,7 @@
         { id: 'DC-031', emp: dn(3), trigger: 'Pattern absence (probation)', rec: 'Verbal Warning', note: 'Under probation', st: 'Done', decision: 'Issue recommended warning', ref: 'WRN-2026-009' },
       ],
       med: [
-        { id: 'MD-1', emp: kn(0), inst: '1st', period: `${fmtS(d(0))}–${fmtS(d(1))}`, days: 2, req: 'Cert (≥2 days)', doc: 'Uploaded', st: 'Pending', leave: 'LV-2044' },
+        { id: 'MD-1', emp: kn(0), inst: '1st', period: `${fmtS(d(0))}–${fmtS(d(1))}`, days: 2, req: 'Cert (≥2 days)', doc: 'Uploaded', st: 'Pending', leave: '' },
         { id: 'MD-2', emp: dn(1), inst: '2nd', period: fmtS(d(-12)), days: 1, req: 'Prescription', doc: 'Uploaded', st: 'Pending', leave: '' },
         { id: 'MD-3', emp: kn(2), inst: '7th', period: fmtS(d(-15)), days: 1, req: 'Cert (>6 instances)', doc: 'Missing', st: 'Pending', leave: '' },
       ],
@@ -387,17 +417,79 @@
   }
 
   /* ---------- state + persistence ---------- */
+  loadLedger();
   syncRoster();
   let DB = seed();
   LA.db = () => DB;
+  // the per-user blob never carries leave requests: those live in the shared ledger
+  const persist = (d) => JSON.stringify(d, function (k, v) { return k === 'url' || (k === 'leaves' && this === d) ? undefined : v; });
   function load() {
+    loadLedger();
     syncRoster();
     try {
       const raw = sessionStorage.getItem(`${KEY}.${myCode()}`);
-      if (raw) { const s = JSON.parse(raw); if (s && s.v === 4) { DB = s; fillMissing(); return; } }
+      if (raw) {
+        const s = JSON.parse(raw);
+        if (s && s.v === 5) {
+          DB = s; DB.leaves = LEDGER.leaves;
+          if (!DB.today || DB.today.date !== TODAY) DB.today = { date: TODAY, sessions: seedSessions() };
+          fillMissing(); syncBal(); return;
+        }
+      }
     } catch { /* storage unavailable — start from the seed */ }
-    DB = seed();
+    DB = seed(); syncBal();
   }
+
+  /* balances for Annual / Sick / Casual are derived from the app's entitlement + the ledger, so approving or
+     rejecting a request anywhere moves them; direct adjustments made elsewhere (HR adjustments, carry-forward) are kept */
+  const R1x = (n) => Math.round(n * 10) / 10;
+  function syncBal() {
+    if (!LEDGER || !DB || !DB.bal) return;
+    const code = DB.me.id;
+    const keys = { Annual: LA.annualKey(), Sick: 'Sick Leave', Casual: 'Casual Leave' };
+    Object.keys(keys).forEach((app) => {
+      const b = DB.bal[keys[app]]; const base = LA.baseBal(code, app);
+      if (!b || !base) return;
+      let taken = base.taken; let pending = 0;
+      LEDGER.leaves.forEach((l) => {
+        if (l.code !== code || l.app !== app) return;
+        if (l.st === 'Approved' && !l.inBase) taken += l.days; else if (l.st === 'Cancelled' && l.inBase) taken -= l.days; else if (l.st === 'Pending') pending += l.days;
+      });
+      const d = R1x(base.entitled - taken);
+      const adj = b._d == null ? 0 : b.avail - b._d;
+      b.avail = R1x(d + adj); b._d = d; b.cap = base.entitled; b.booked = R1x(taken); b.pending = R1x(pending);
+    });
+  }
+  LA.syncBal = syncBal;
+  syncBal();
+  /* publish the ledger (leave requests + the signed-in user's live attendance) for the app's screens */
+  function writeLedger() {
+    if (!LEDGER) return;
+    const ss = DB.today && DB.today.sessions;
+    if (ss && ss.length) {
+      const prev = LEDGER.att[myCode()] || {}; const last = ss[ss.length - 1];
+      LEDGER.att[myCode()] = { status: prev.status === 'WFH' ? 'WFH' : 'Present', checkIn: clock(ss[0].in), checkOut: last.out == null ? undefined : clock(last.out) };
+    }
+    const str = JSON.stringify(LEDGER);
+    if (str === ledgerSig) return;
+    ledgerSig = str;
+    try { sessionStorage.setItem(LKEY, str); } catch { /* ignore */ }
+    window.dispatchEvent(new CustomEvent('la:ledger', { detail: { src: 'la' } }));
+  }
+  LA.writeLedger = writeLedger;
+  // a decision or request made in the app's own screens
+  window.addEventListener('la:ledger', (e) => {
+    if (e.detail && e.detail.src === 'la') return;
+    const raw = readLedgerStr();
+    if (!raw || raw === ledgerSig) return;
+    try {
+      const l = JSON.parse(raw);
+      if (!l || l.v !== 1) return;
+      LEDGER = l; ledgerSig = raw; DB.leaves = LEDGER.leaves;
+      syncRoster(); syncBal();
+      if (window.__laRoot) rr();
+    } catch { /* ignore */ }
+  });
   // organisation changes (e.g. a location added in Settings) after the DB was created
   function fillMissing() {
     const t = seed();
@@ -417,19 +509,20 @@
   LA.orgChanged = () => {
     if (!window.__laRoot) return;
     // A different person signed in: flush the previous user's data, then load (or seed) the new user's.
-    if (DB.me.id !== myCode()) { clearTimeout(saveT); try { sessionStorage.setItem(`${KEY}.${DB.me.id}`, JSON.stringify(DB, (k, v) => (k === 'url' ? undefined : v))); } catch { /* ignore */ } load(); }
-    syncRoster(); fillMissing();
+    if (DB.me.id !== myCode()) { clearTimeout(saveT); writeLedger(); try { sessionStorage.setItem(`${KEY}.${DB.me.id}`, persist(DB)); } catch { /* ignore */ } load(); }
+    syncRoster(); fillMissing(); syncBal();
     const p = ORG().persona;
     if (p && p !== PERSONA) setPersona(p); else renderAll();
   };
   let saveT = 0;
   function save() {
     clearTimeout(saveT);
-    saveT = setTimeout(() => { try { sessionStorage.setItem(`${KEY}.${DB.me.id}`, JSON.stringify(DB, (k, v) => (k === 'url' ? undefined : v))); } catch { /* ignore */ } }, 50);
+    writeLedger();
+    saveT = setTimeout(() => { try { sessionStorage.setItem(`${KEY}.${DB.me.id}`, persist(DB)); } catch { /* ignore */ } }, 50);
   }
   LA.save = save;
   LA.load = load;
-  LA.reset = () => { try { sessionStorage.removeItem(`${KEY}.${DB.me.id}`); } catch { /* ignore */ } DB = seed(); renderAll(); };
+  LA.reset = () => { try { sessionStorage.removeItem(`${KEY}.${DB.me.id}`); } catch { /* ignore */ } DB = seed(); syncBal(); renderAll(); };
   const nextId = (p) => { DB.seq[p] = (DB.seq[p] || 0) + 1; return `${p}-${DB.seq[p]}`; };
   LA.nextId = nextId;
   const meN = () => DB.me.name;
@@ -526,6 +619,7 @@
   };
   const baseRender = window.renderContent;
   window.renderContent = function () {
+    syncBal();
     baseRender();
     const v = __$('view');
     if (v) v.insertAdjacentHTML('afterbegin', LA.locBar());
@@ -630,18 +724,30 @@
 
   /* ---------- derived counters (respect the location filter) ---------- */
   const inScope = (n) => LA.inLoc(n);
-  LA.pendingApprovals = () => DB.leaves.filter((l) => l.st === 'Pending' && inScope(l.emp)).length + DB.regs.filter((r) => r.st === 'Pending' && inScope(r.emp)).length + DB.ots.filter((o) => o.st === 'Pending' && inScope(o.emp)).length + DB.plans.filter((p) => p.st === 'Pending' && inScope(p.emp) && !DB.leaves.some((l) => l.st === 'Pending' && l.emp === p.emp && l.from === p.from)).length;
+  /* What the signed-in persona may see: HR and Super Admin see everyone in scope, anyone who manages people sees
+     themselves and their direct reports, everyone else sees only themselves. The bell, the Approvals badge and the
+     Approvals inbox all use the same rule. */
+  const scopeSet = () => { const set = new Set(EMP.filter((e) => e.mgr === DB.me.id).map((e) => e.n)); set.add(meN()); return set; };
+  const seesAll = () => PERSONA === 'hr' || PERSONA === 'admin';
+  const vis = (n) => inScope(n) && (seesAll() || scopeSet().has(n));
+  LA.pendingApprovals = () => (LA.inbox ? LA.inbox() : []).filter((it) => inScope(it.emp)).length;
   LA.notifications = () => {
     const l = [];
+    const me = meN();
+    const opsGo = (k) => (PERSONAS[PERSONA].modules.includes('operations') ? ['operations', k] : ['attendance', 'my', 'summary']);
     const ap = LA.pendingApprovals();
-    const un = DB.exceptions.filter((e) => e.st === 'Open' && e.group === 'unauth' && inScope(e.emp)).length;
-    const ex = DB.exceptions.filter((e) => e.st === 'Open' && inScope(e.emp)).length;
-    const med = DB.med.filter((m) => m.st === 'Pending' && inScope(m.emp)).length;
-    const cf = DB.cf.filter((c) => c.st === 'Pending' && inScope(c.emp)).length;
-    const cs = DB.cases.filter((c) => c.st === 'Pending' && inScope(c.emp)).length;
-    if (un) l.push({ ic: 'alert', t: `${un} unauthorized absence${un > 1 ? 's' : ''}`, s: 'Create LOP + disciplinary case', c: 'r', go: ['operations', 'exceptions'] });
+    const un = DB.exceptions.filter((e) => e.st === 'Open' && e.group === 'unauth' && vis(e.emp)).length;
+    const ex = DB.exceptions.filter((e) => e.st === 'Open' && vis(e.emp)).length;
+    const med = seesAll() ? DB.med.filter((m) => m.st === 'Pending' && inScope(m.emp)).length : 0;
+    const cf = seesAll() ? DB.cf.filter((c) => c.st === 'Pending' && inScope(c.emp)).length : 0;
+    const cs = seesAll() ? DB.cases.filter((c) => c.st === 'Pending' && inScope(c.emp)).length : 0;
+    const own = DB.leaves.filter((x) => x.emp === me && x.st === 'Pending').length + DB.regs.filter((x) => x.emp === me && x.st === 'Pending').length + DB.ots.filter((x) => x.emp === me && x.st === 'Pending').length;
+    const decided = DB.leaves.filter((x) => x.emp === me && (x.st === 'Approved' || x.st === 'Rejected') && x.decidedOn && daysBetween(x.decidedOn, TODAY) <= 7);
+    if (un) l.push({ ic: 'alert', t: `${un} unauthorized absence${un > 1 ? 's' : ''}`, s: 'Create LOP + disciplinary case', c: 'r', go: opsGo('exceptions') });
     if (ap) l.push({ ic: 'inbox', t: `${ap} approval${ap > 1 ? 's' : ''} pending`, s: 'Leave, regularization & overtime', c: 'a', go: ['home', 'team', 'approvals'] });
-    if (ex) l.push({ ic: 'clock', t: `${ex} open attendance exception${ex > 1 ? 's' : ''}`, s: 'Missing punches & invalid records', c: 'a', go: ['operations', 'exceptions'] });
+    if (own) l.push({ ic: 'clock', t: `${own} of your request${own > 1 ? 's' : ''} awaiting a decision`, s: 'Leave, regularization & overtime', c: 'b', go: ['leave', 'my', 'requests'] });
+    decided.forEach((x) => l.push({ ic: x.st === 'Approved' ? 'check' : 'x', t: `Your ${x.type} (${x.id}) was ${x.st.toLowerCase()}`, s: `${fmt(x.from)} → ${fmt(x.to)}`, c: x.st === 'Approved' ? 'g' : 'r', go: ['leave', 'my', 'requests'] }));
+    if (ex) l.push({ ic: 'clock', t: `${ex} open attendance exception${ex > 1 ? 's' : ''}`, s: 'Missing punches & invalid records', c: 'a', go: opsGo('exceptions') });
     if (med) l.push({ ic: 'doc', t: `${med} medical certificate${med > 1 ? 's' : ''} awaiting verification`, s: 'Sick leave', c: 'b', go: ['operations', 'docverify'] });
     if (cf) l.push({ ic: 'wallet', t: `${cf} carry-forward request${cf > 1 ? 's' : ''} pending`, s: 'Expires within 90 days', c: 'a', go: ['operations', 'carryforward'] });
     if (cs) l.push({ ic: 'shield', t: `${cs} disciplinary case${cs > 1 ? 's' : ''} awaiting HR decision`, s: 'Recommendations only', c: 'r', go: ['operations', 'discipline'] });
@@ -678,5 +784,6 @@
     calState.y = parse(TODAY).getFullYear();
     calState.m = parse(TODAY).getMonth();
     baseInit(root, path);
+    writeLedger();
   };
 })();

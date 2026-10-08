@@ -8,6 +8,10 @@ import { PageHeader } from '@/components/ui/PageHeader';
 import { Card, CardHeader, EmptyState, Button } from '@/components/ui/Card';
 import { StatStrip } from '@/components/ui/StatStrip';
 import { Drawer } from '@/components/ui/Drawer';
+import { EMPLOYEES } from '@/lib/data';
+import { useEmployeeVersion } from '@/lib/employeeStore';
+import { useSeparation } from '@/context/SeparationContext';
+import { companiesInLocation, countHeadcount, departmentNamesInLocation, departmentsInLocation, headcountByLocation } from '@/lib/headcount';
 import { BuildingIcon, EditIcon, MapPinIcon, PeopleIcon, PlusIcon, ReceiptIcon, SearchIcon, ShieldIcon, XIcon } from '@/components/icons';
 
 const CURRENCIES = ['AED', 'INR', 'USD', 'SAR', 'QAR', 'OMR', 'KWD', 'BHD', 'GBP', 'EUR'];
@@ -43,7 +47,13 @@ function Fg({ label, required, children }: { label: string; required?: boolean; 
 
 export default function AdminSettingsPage() {
   const { location: currentLocation } = useApp();
-  const { locations, locationUsage, addLocation, updateLocation, removeLocation } = useOrg();
+  const { locations, companies, departments, locationUsage, addLocation, updateLocation, removeLocation } = useOrg();
+  useEmployeeVersion();
+  const { statusOf } = useSeparation();
+  const covered = countHeadcount(
+    EMPLOYEES.filter((e) => locations.some((l) => l.id === e.location)),
+    statusOf
+  );
 
   const [locOpen, setLocOpen] = useState(false);
   const [locMode, setLocMode] = useState<'add' | 'edit'>('add');
@@ -151,7 +161,7 @@ export default function AdminSettingsPage() {
             { label: 'Locations', value: locations.length, icon: <MapPinIcon />, tone: 'blue', hint: `${locations.filter((l) => l.system).length} built-in` },
             { label: 'Currencies', value: new Set(locations.map((l) => l.currency)).size, icon: <ReceiptIcon />, tone: 'green' },
             { label: 'Seating locations', value: locations.reduce((n, l) => n + l.seating.length, 0), icon: <BuildingIcon />, tone: 'purple' },
-            { label: 'Employees covered', value: locations.reduce((n, l) => n + locationUsage(l.id).employees, 0), icon: <PeopleIcon />, tone: 'amber' },
+            { label: 'Employees covered', value: covered.total, icon: <PeopleIcon />, tone: 'amber', hint: `${covered.active} active · ${covered.joining} joining` },
           ]}
         />
       </div>
@@ -193,7 +203,10 @@ export default function AdminSettingsPage() {
         ) : (
           <div className="ad-locs">
             {shownLocs.map((l) => {
-              const u = locationUsage(l.id);
+              const hc = headcountByLocation(l.id, EMPLOYEES, statusOf);
+              const nDepts = departmentNamesInLocation(l.id, departments);
+              const nUnits = departmentsInLocation(l.id, departments).length;
+              const nCos = companiesInLocation(l.id, companies, departments, EMPLOYEES).length;
               return (
                 <div key={l.id} className="ad-loc">
                   <div className="ad-loc-h">
@@ -246,8 +259,8 @@ export default function AdminSettingsPage() {
                     </div>
                   </div>
                   <div className="ad-loc-f">
-                    <span>
-                      {u.employees} employee{u.employees === 1 ? '' : 's'} · {u.departments} dept{u.departments === 1 ? '' : 's'} · {u.companies} compan{u.companies === 1 ? 'y' : 'ies'}
+                    <span title={`${hc.active} active · ${hc.joining} joining · ${hc.exiting} exiting. ${nUnits} company department${nUnits === 1 ? '' : 's'} share ${nDepts} department name${nDepts === 1 ? '' : 's'}. Inactive (left) people are not counted.`}>
+                      {hc.total} employee{hc.total === 1 ? '' : 's'} ({hc.active} active{hc.joining ? ` · ${hc.joining} joining` : ''}) · {nDepts} dept{nDepts === 1 ? '' : 's'} · {nCos} compan{nCos === 1 ? 'y' : 'ies'}
                     </span>
                     <div className="rt">
                       <button className="icon-act" onClick={() => openEditLoc(l)} title="Edit">

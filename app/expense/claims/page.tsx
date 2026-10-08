@@ -2,10 +2,10 @@
 
 import { useState } from 'react';
 import Link from 'next/link';
-import { useCurrentEmployee } from '@/context/AppContext';
-import { employeeById, matchesEmployee } from '@/lib/data';
+import { useApp, useCurrentEmployee } from '@/context/AppContext';
+import { defaultScope, employeeById, matchesEmployee } from '@/lib/data';
 import { useOrg } from '@/context/OrgContext';
-import { useExpense } from '@/context/ExpenseContext';
+import { claimRoute, useExpense } from '@/context/ExpenseContext';
 import { ExpenseClaim } from '@/lib/types';
 import { PageHeader } from '@/components/ui/PageHeader';
 import { Card, CardHeader, EmptyState, Button } from '@/components/ui/Card';
@@ -36,12 +36,16 @@ function ReadBlock({ label, children }: { label: string; children: React.ReactNo
 }
 
 export default function AllClaimsPage() {
+  const { role } = useApp();
   const me = useCurrentEmployee();
   const { locations, locationName } = useOrg();
-  const { categories, claims, decide, withdrawClaim } = useExpense();
+  const { categories, claims: allClaims, decide, canDecide, withdrawClaim } = useExpense();
+  // An employee sees only their own claims; managers and administrators see everyone's.
+  const claims = role === 'Employee' ? allClaims.filter((c) => c.employeeId === me.id) : allClaims;
 
   const [q, setQ] = useState('');
-  const [loc, setLoc] = useState('All');
+  const [pick, setPick] = useState<string | null>(null);
+  const loc = pick ?? defaultScope(role, me.location);
   const [status, setStatus] = useState<'All' | ExpenseClaim['status']>('All');
   const [category, setCategory] = useState('All');
   const [from, setFrom] = useState('');
@@ -65,6 +69,7 @@ export default function AllClaimsPage() {
   const openLimit = open ? categories.find((c) => c.name === open.category)?.limits[open.currency] : undefined;
   const overLimit = !!open && openLimit !== undefined && open.amount > openLimit;
   const isOwn = !!open && open.employeeId === me.id;
+  const mayDecide = !!open && canDecide(open);
 
   const openDetail = (c: ExpenseClaim) => {
     setOpenId(c.id);
@@ -166,7 +171,7 @@ export default function AllClaimsPage() {
           ))}
         </div>
         <div className="tbar">
-          <select value={loc} onChange={(e) => setLoc(e.target.value)} className="chip">
+          <select value={loc} onChange={(e) => setPick(e.target.value)} className="chip">
             <option value="All">All locations</option>
             {locations.map((l) => (
               <option key={l.id} value={l.id}>
@@ -299,12 +304,16 @@ export default function AllClaimsPage() {
               {open.status === 'Pending' && (
                 <>
                   {isOwn && <Button onClick={withdraw}>Withdraw claim</Button>}
-                  <Button variant="danger" onClick={reject}>
-                    Reject
-                  </Button>
-                  <Button variant="success" onClick={approve}>
-                    Approve
-                  </Button>
+                  {mayDecide && (
+                    <>
+                      <Button variant="danger" onClick={reject}>
+                        Reject
+                      </Button>
+                      <Button variant="success" onClick={approve}>
+                        Approve
+                      </Button>
+                    </>
+                  )}
                 </>
               )}
             </>
@@ -338,7 +347,13 @@ export default function AllClaimsPage() {
                 <ReadBlock label="Decision note">{open.note ?? '—'}</ReadBlock>
               </>
             )}
-            {open.status === 'Pending' && (
+            {open.status === 'Pending' && !mayDecide && (
+              <div className="note-box" style={{ marginTop: 6 }}>
+                <WarnIcon />
+                <div>{isOwn ? `You cannot approve or reject your own claim. It is decided by ${claimRoute(openEmp).label}.` : `This claim is routed to ${claimRoute(openEmp).label}; you cannot decide it.`}</div>
+              </div>
+            )}
+            {open.status === 'Pending' && mayDecide && (
               <div className="fg full">
                 <label>Decision note {note.trim() ? '' : <span style={{ fontWeight: 400, color: 'var(--faint)' }}>(required to reject)</span>}</label>
                 <textarea

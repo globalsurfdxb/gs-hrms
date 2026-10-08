@@ -9,6 +9,8 @@ import { useOrg } from '@/context/OrgContext';
 import { useSeparation } from '@/context/SeparationContext';
 import { EmploymentStatus } from '@/lib/types';
 import { canEditEmployees, useEmployeeVersion } from '@/lib/employeeStore';
+import { complianceIssues, complianceLabel, complianceShort, useExpiryVersion } from '@/lib/expiryRegister';
+import { ComplianceFlag } from '@/components/expiry/ExpiryBits';
 import { PageHeader } from '@/components/ui/PageHeader';
 import { Card, EmptyState } from '@/components/ui/Card';
 import { StatusBadge } from '@/components/ui/Badge';
@@ -30,6 +32,12 @@ export function DirectoryView({ forceTeam = false }: { forceTeam?: boolean }) {
   const [dept, setDept] = useState('All');
   const [status, setStatus] = useState<'All' | EmploymentStatus>('All');
   const version = useEmployeeVersion();
+  useExpiryVersion();
+  /** Expired passport, visa, Emirates ID or labour card: shown as a red flag next to the status. */
+  const flagFor = (e: (typeof EMPLOYEES)[number]) => {
+    const issues = statusOf(e) === 'Inactive' ? [] : complianceIssues(e);
+    return { short: complianceShort(issues), full: complianceLabel(issues) };
+  };
   const canEdit = canEditEmployees(role);
   const router = useRouter();
 
@@ -81,7 +89,7 @@ export function DirectoryView({ forceTeam = false }: { forceTeam?: boolean }) {
       <StatStrip
         items={[
           { label: teamMode ? 'Direct reports' : 'People', value: inLocation.length, icon: <PeopleIcon />, tone: 'blue', hint: `In ${scopeLabel}` },
-          { label: 'Active', value: activeN, icon: <CheckIcon />, tone: 'green', hint: inLocation.length ? `${Math.round((activeN / inLocation.length) * 100)}% of the directory` : 'No employees' },
+          { label: 'Active', value: activeN, icon: <CheckIcon />, tone: 'green', hint: inLocation.length ? `${Math.round((activeN / inLocation.length) * 100)}% of ${teamMode ? 'your team' : 'the directory'}` : 'No employees' },
           { label: 'Joining', value: joiningN, icon: <JoinIcon />, tone: 'amber', hint: `${leavingN} leaving · ${countStatus('Inactive')} inactive` },
           { label: 'Departments', value: deptN, icon: <BuildingIcon />, tone: 'purple', hint: deptN === 1 ? 'One team' : 'Teams represented' },
         ]}
@@ -201,7 +209,10 @@ export function DirectoryView({ forceTeam = false }: { forceTeam?: boolean }) {
                         )}
                       </td>
                       <td>
-                        <StatusBadge status={statusOf(e)} />
+                        <div className="ex-statuscell">
+                          <StatusBadge status={statusOf(e)} />
+                          <ComplianceFlag text={flagFor(e).short} title={flagFor(e).full} />
+                        </div>
                       </td>
                       {canEdit && (
                         <td>
@@ -255,6 +266,11 @@ export function DirectoryView({ forceTeam = false }: { forceTeam?: boolean }) {
                     </span>
                     <StatusBadge status={statusOf(e)} />
                   </div>
+                  {flagFor(e).short && (
+                    <div style={{ marginTop: 8 }}>
+                      <ComplianceFlag text={flagFor(e).short} title={flagFor(e).full} />
+                    </div>
+                  )}
                   <div className="meta">
                     <div>
                       <MapPinIcon /> {locationName(e.location)} · {e.seatingLocation}

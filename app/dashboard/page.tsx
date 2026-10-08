@@ -1,21 +1,22 @@
 'use client';
 
-import { useState, useSyncExternalStore } from 'react';
+import { useSyncExternalStore } from 'react';
 import Link from 'next/link';
 import { useApp, useCurrentEmployee } from '@/context/AppContext';
 import {
   ASSETS,
-  ATTENDANCE_TODAY,
   BUSINESS_RENEWALS,
   EMPLOYEES,
-  LEAVE_REQUESTS,
   ONBOARDING_REQUESTS,
   PAYROLL_TREND,
   REFERENCE_TODAY,
+  defaultScope,
   directReports,
   employeeById,
 } from '@/lib/data';
 import { EmployeeRequest } from '@/lib/types';
+import { complianceIssues } from '@/lib/expiryRegister';
+import { notYetJoined, useAttendanceToday, useLeaveRequests } from '@/lib/leaveBridge';
 import { Card, CardHeader, Button } from '@/components/ui/Card';
 import { Badge, StatusBadge } from '@/components/ui/Badge';
 import { RenewalCalendar } from '@/components/charts/RenewalCalendar';
@@ -31,6 +32,7 @@ import { usePerformance } from '@/context/PerformanceContext';
 import { useLearning } from '@/context/LearningContext';
 import { useExpense } from '@/context/ExpenseContext';
 import { useExpiry } from '@/context/ExpiryContext';
+import { countHeadcount, departmentTotals, inScope } from '@/lib/headcount';
 
 const daysUntil = (dateStr: string) => Math.round((new Date(dateStr).getTime() - new Date(REFERENCE_TODAY).getTime()) / 86400000);
 
@@ -163,8 +165,11 @@ function EmployeeHome({ now }: { now: number }) {
 
   const myRequests = requests.filter((r) => r.employeeId === me.id);
   const pending = myRequests.filter((r) => r.status === 'Pending');
-  const today = ATTENDANCE_TODAY.find((a) => a.employeeId === me.id);
-  const upcomingLeave = LEAVE_REQUESTS.filter((r) => r.employeeId === me.id && r.status !== 'Rejected' && r.toDate >= REFERENCE_TODAY).sort((a, b) => (a.fromDate < b.fromDate ? -1 : 1));
+  // leave and attendance come from the Leave & Attendance module, so both show the same numbers
+  const leaveAll = useLeaveRequests();
+  const attAll = useAttendanceToday();
+  const today = attAll.find((a) => a.employeeId === me.id);
+  const upcomingLeave = leaveAll.filter((r) => r.employeeId === me.id && (r.status === 'Pending' || r.status === 'Approved') && r.toDate >= REFERENCE_TODAY).sort((a, b) => (a.fromDate < b.fromDate ? -1 : 1));
   const docs = rowsFor([me])
     .map((r) => ({ r, days: daysOf(r) }))
     .sort((a, b) => a.days - b.days);
@@ -315,7 +320,7 @@ function EmployeeHome({ now }: { now: number }) {
                 <div key={r.id} className="at-leave">
                   <span className="at-av">{r.days}d</span>
                   <div style={{ minWidth: 0, flex: 1 }}>
-                    <div className="at-n">{r.type} leave</div>
+                    <div className="at-n">{r.typeLabel}</div>
                     <div className="at-d">
                       {fmtDay(r.fromDate)}
                       {r.toDate !== r.fromDate ? ` → ${fmtDay(r.toDate)}` : ''} · {r.status}
@@ -368,10 +373,14 @@ function TeamLeadHome({ now }: { now: number }) {
   const team = directReports(me.id).filter((t) => t.employmentStatus !== 'Inactive');
   const ids = new Set(team.map((t) => t.id));
   const awaiting = requests.filter((r) => r.status === 'Pending' && r.routedTo === 'Manager' && ids.has(r.employeeId));
-  const leavePending = LEAVE_REQUESTS.filter((r) => r.status === 'Pending' && ids.has(r.employeeId));
-  const todayRows = team.map((t) => ({ t, a: ATTENDANCE_TODAY.find((x) => x.employeeId === t.id) }));
-  const count = (k: string) => todayRows.filter((x) => x.a?.status === k).length;
-  const out = count('Leave') + count('Absent');
+  const leaveAll = useLeaveRequests();
+  const attAll = useAttendanceToday();
+  const leavePending = leaveAll.filter((r) => r.status === 'Pending' && ids.has(r.employeeId));
+  // people who have not joined yet are neither working nor absent
+  const todayRows = team.map((t) => ({ t, a: attAll.find((x) => x.employeeId === t.id), joined: !notYetJoined(t) }));
+  const count = (k: string) => todayRows.filter((x) => x.joined && x.a?.status === k).length;
+  const joinedCount = todayRows.filter((x) => x.joined).length;
+  const working = count('Present') + count('WFH');
   const renewals = rowsFor(team)
     .map((r) => ({ r, days: daysOf(r) }))
     .filter((d) => d.days <= 90)
@@ -424,7 +433,7 @@ function TeamLeadHome({ now }: { now: number }) {
       <div className="dk-grid">
         <Kpi href="/team/directory" icon={<PeopleIcon />} bg="#e7f0fc" fg="#2f6fd6" value={team.length} label="My team" foot={`in ${me.department}`} />
         <Kpi href="/modules/leave-attendance/home/team/approvals" icon={<InboxIcon />} bg="#fdf3df" fg="#c6851b" value={needs} label="Waiting for my decision" foot={`${awaiting.length} request${awaiting.length === 1 ? '' : 's'} · ${leavePending.length} leave`} />
-        <Kpi href="/modules/leave-attendance/attendance/team/summary" icon={<ClockIcon />} bg="#e7f6ee" fg="#1f9d63" value={`${team.length - out}/${team.length}`} label="Working today" foot={`${count('Leave')} on leave · ${count('Absent')} absent`} />
+        <Kpi href="/modules/leave-attendance/attendance/team/summary" icon={<ClockIcon />} bg="#e7f6ee" fg="#1f9d63" value={`${working}/${joinedCount}`} label="Working today" foot={`${count('Leave')} on leave · ${count('Absent')} absent${team.length - joinedCount ? ` · ${team.length - joinedCount} not yet joined` : ''}`} />
         <Kpi href="/team/expiry" icon={<RefreshIcon />} bg="#fce9e7" fg="#d5493f" value={renewals.length} label="Team renewals" foot={renewals.length ? `Next: ${renewals[0].r.type} · ${renewals[0].r.employee.name.split(' ')[0]}` : 'Nothing due in 90 days'} />
       </div>
 
@@ -444,7 +453,7 @@ function TeamLeadHome({ now }: { now: number }) {
                   </div>
                   <div>
                     <div className="nm">
-                      {e?.name} {e && <EmpId code={e.employeeCode} />} · {r.type} leave
+                      {e?.name} {e && <EmpId code={e.employeeCode} />} · {r.typeLabel}
                     </div>
                     <div className="mt">
                       {fmtDay(r.fromDate)}
@@ -475,7 +484,7 @@ function TeamLeadHome({ now }: { now: number }) {
                 <i key={k} style={{ width: `${(count(k) / total) * 100}%`, background: { Present: '#1f9d63', WFH: '#2f6fd6', Leave: '#c6851b', Absent: '#d5493f' }[k] }} title={`${ATT_LABEL[k]}: ${count(k)}`} />
               ))}
             </div>
-            {todayRows.map(({ t, a }) => (
+            {todayRows.map(({ t, a, joined }) => (
               <div key={t.id} className="at-leave">
                 <span className="at-av">{initialsOf(t.name)}</span>
                 <div style={{ minWidth: 0, flex: 1 }}>
@@ -485,7 +494,7 @@ function TeamLeadHome({ now }: { now: number }) {
                     {a?.checkIn ? ` · in ${a.checkIn}` : ''}
                   </div>
                 </div>
-                {a ? <Badge tone={ATT_TONE[a.status]}>{ATT_LABEL[a.status]}</Badge> : <Badge tone="inactive">No record</Badge>}
+                {!joined ? <Badge tone="inactive">Not yet joined</Badge> : a ? <Badge tone={ATT_TONE[a.status]}>{ATT_LABEL[a.status]}</Badge> : <Badge tone="inactive">No record</Badge>}
               </div>
             ))}
             {!team.length && <div className="at-d">No one reports to you yet.</div>}
@@ -550,7 +559,7 @@ function TeamLeadHome({ now }: { now: number }) {
 }
 
 export default function DashboardPage() {
-  const { role } = useApp();
+  const { role, location, setLocation } = useApp();
   const me = useCurrentEmployee();
   const { locations, locationName } = useOrg();
   const { requests, act } = useRequests();
@@ -559,25 +568,26 @@ export default function DashboardPage() {
   const { records } = useLearning();
   const { claims } = useExpense();
   const { rowsFor, daysOf, stateOf: docState } = useExpiry();
-  const [loc, setLoc] = useState('All');
+  // The location filter is the app-wide one, so every count here matches the page it links to.
+  const loc = location;
+  const allLoc = !loc || loc === 'All' || loc === 'all';
   const now = useNow();
+  const leaveAll = useLeaveRequests();
+  const attAll = useAttendanceToday();
 
   if (role === 'Employee') return <EmployeeHome now={now} />;
   if (role === 'Team Lead') return <TeamLeadHome now={now} />;
 
   // ---- Administrator / HR view: live across every module ----
-  const inLoc = (employeeLocation: string) => loc === 'All' || employeeLocation === loc;
-  const people = EMPLOYEES.filter((e) => statusOf(e) !== 'Inactive' && inLoc(e.location));
+  const inLoc = (employeeLocation: string) => inScope(loc, employeeLocation);
+  const inScopeAll = EMPLOYEES.filter((e) => inLoc(e.location));
+  const hc = countHeadcount(inScopeAll, statusOf);
+  const people = inScopeAll.filter((e) => statusOf(e) !== 'Inactive');
   const peopleIds = new Set(people.map((e) => e.id));
   const onboarding = people.filter((e) => statusOf(e) === 'Onboarding');
-  const scopeName = loc === 'All' ? 'all locations' : locationName(loc);
+  const scopeName = allLoc ? 'all locations' : locationName(loc);
 
-  const byDept = Object.entries(
-    people.reduce<Record<string, number>>((acc, e) => {
-      acc[e.department] = (acc[e.department] ?? 0) + 1;
-      return acc;
-    }, {})
-  ).sort((a, b) => b[1] - a[1]);
+  const byDept = departmentTotals(inScopeAll, statusOf);
   const maxDept = Math.max(1, ...byDept.map(([, n]) => n));
 
   const joinedThisQuarter = people.filter((e) => {
@@ -595,7 +605,7 @@ export default function DashboardPage() {
     sub: 'HR',
     offsetDays: daysOf(r),
   }));
-  const businessRenewals = BUSINESS_RENEWALS.filter((b) => loc === 'All' || b.location === 'Both' || b.location === loc).map((b) => ({
+  const businessRenewals = BUSINESS_RENEWALS.filter((b) => allLoc || b.location === 'Both' || b.location === loc).map((b) => ({
     id: b.id,
     label: b.label,
     sub: b.owner,
@@ -605,9 +615,13 @@ export default function DashboardPage() {
   const overdueCount = renewalPool.filter((it) => it.offsetDays < 0).length;
   const due30Count = renewalPool.filter((it) => it.offsetDays >= 0 && it.offsetDays <= 30).length;
 
-  const pendingRequests = requests.filter((r) => r.status === 'Pending' && peopleIds.has(r.employeeId));
-  const pendingClaims = claims.filter((c) => c.status === 'Pending' && inLoc(employeeById(c.employeeId)?.location ?? ''));
-  const openCases = cases.filter((c) => c.status !== 'Completed' && inLoc(employeeById(c.employeeId)?.location ?? ''));
+  // Decisions use the same scope the Requests and Expense approvals pages open with (all locations for HR and
+  // Super Admin, otherwise your own), so the numbers here match the lists they link to. Never your own items.
+  const decisionScope = defaultScope(role, me.location);
+  const inDecision = (employeeLocation: string) => inScope(decisionScope, employeeLocation);
+  const pendingRequests = requests.filter((r) => r.status === 'Pending' && r.employeeId !== me.id && inDecision(employeeById(r.employeeId)?.location ?? ''));
+  const pendingClaims = claims.filter((c) => c.status === 'Pending' && c.employeeId !== me.id && inDecision(employeeById(c.employeeId)?.location ?? ''));
+  const openCases = cases.filter((c) => c.status !== 'Completed' && inDecision(employeeById(c.employeeId)?.location ?? ''));
   const casesAwaiting = openCases.filter((c) => c.status === 'Pending Approval').length;
   const reviewsOpen = reviews.filter((r) => (r.status === 'Self Assessment' || r.status === 'Manager Review') && peopleIds.has(r.employeeId));
   const reviewsOverdue = reviews.filter((r) => r.status !== 'Completed' && r.dueDate < REFERENCE_TODAY && peopleIds.has(r.employeeId)).length;
@@ -626,14 +640,14 @@ export default function DashboardPage() {
 
 
   // attendance + leave (from the attendance and leave records)
-  const attToday = ATTENDANCE_TODAY.filter((a) => peopleIds.has(a.employeeId));
+  const attToday = attAll.filter((a) => peopleIds.has(a.employeeId));
   const attCount = (k: string) => attToday.filter((a) => a.status === k).length;
   const attPresent = attCount('Present');
   const attWfh = attCount('WFH');
   const attLeave = attCount('Leave');
   const attAbsent = attCount('Absent');
   const attTotal = attToday.length || 1;
-  const pendingLeave = LEAVE_REQUESTS.filter((r) => r.status === 'Pending' && peopleIds.has(r.employeeId));
+  const pendingLeave = leaveAll.filter((r) => r.status === 'Pending' && peopleIds.has(r.employeeId));
 
   // celebrations in the next 30 days
   const celebrations = people
@@ -649,7 +663,9 @@ export default function DashboardPage() {
     .sort((x, y) => x.in - y.in)
     .slice(0, 6);
 
+  const nonCompliant = people.filter((e) => complianceIssues(e).length > 0);
   const attention = [
+    { href: '/employee-expiry', icon: <IdIcon />, title: 'Non-compliant employees', sub: nonCompliant.length ? `${nonCompliant.slice(0, 2).map((e) => e.name.split(' ')[0]).join(', ')}${nonCompliant.length > 2 ? ' and others' : ''} — a visa, ID or card has expired` : 'No expired mandatory documents', count: nonCompliant.length, tone: 'expired' as const },
     { href: '/requests', icon: <InboxIcon />, title: 'Employee requests', sub: 'Pending HR / manager approval', count: pendingRequests.length, tone: 'pending' as const },
     { href: '/expense/approvals', icon: <ReceiptIcon />, title: 'Expense claims', sub: 'Awaiting approval', count: pendingClaims.length, tone: 'pending' as const },
     { href: '/offboarding', icon: <ExitIcon />, title: 'Offboarding cases', sub: `${casesAwaiting} awaiting final approval`, count: openCases.length, tone: 'soon' as const },
@@ -664,7 +680,10 @@ export default function DashboardPage() {
     const rows: [string, string | number][] = [
       ['Scope', scopeName],
       ['Date', REFERENCE_TODAY],
-      ['Total employees', people.length],
+      ['Active employees', hc.active],
+      ['Joining', hc.joining],
+      ['Exiting', hc.exiting],
+      ['Total incl. joining', hc.total],
       ['Joined this quarter', joinedThisQuarter],
       ['Pending onboarding', onboarding.length],
       ['Upcoming renewals (90 days)', renewalPool.length],
@@ -696,9 +715,24 @@ export default function DashboardPage() {
           <p className="dh-sub">
             {needsYou ? (
               <>
-                <Link href="/requests" className="dh-pill">
+                <span className="dh-pill">
                   <b>{needsYou}</b> item{needsYou === 1 ? '' : 's'} need your decision
-                </Link>
+                </span>
+                {pendingRequests.length > 0 && (
+                  <Link href="/requests" className="dh-pill">
+                    <b>{pendingRequests.length}</b> request{pendingRequests.length === 1 ? '' : 's'}
+                  </Link>
+                )}
+                {pendingClaims.length > 0 && (
+                  <Link href="/expense/approvals" className="dh-pill">
+                    <b>{pendingClaims.length}</b> expense claim{pendingClaims.length === 1 ? '' : 's'}
+                  </Link>
+                )}
+                {casesAwaiting > 0 && (
+                  <Link href="/offboarding" className="dh-pill">
+                    <b>{casesAwaiting}</b> offboarding approval{casesAwaiting === 1 ? '' : 's'}
+                  </Link>
+                )}
               </>
             ) : (
               <span className="dh-pill">Nothing is waiting for your decision</span>
@@ -709,14 +743,14 @@ export default function DashboardPage() {
               </Link>
             )}
             <span className="dh-pill">
-              <b>{people.length}</b> people · {scopeName}
+              <b>{hc.active}</b> active · <b>{hc.joining}</b> joining · {scopeName}
             </span>
           </p>
         </div>
         <div className="dh-side">
           <div className="dh-seg" role="tablist" aria-label="Location">
-            {['All', ...locations.map((l) => l.id)].map((id) => (
-              <button key={id} role="tab" aria-selected={loc === id} className={loc === id ? 'on' : ''} onClick={() => setLoc(id)}>
+            {[...(allLoc ? ['All'] : []), ...locations.map((l) => l.id)].map((id) => (
+              <button key={id} role="tab" aria-selected={loc === id} className={loc === id ? 'on' : ''} onClick={() => setLocation(id)}>
                 {id === 'All' ? 'All locations' : locationName(id)}
               </button>
             ))}
@@ -733,7 +767,7 @@ export default function DashboardPage() {
       </div>
 
       <div className="dk-grid">
-        <Kpi href="/directory" icon={<PeopleIcon />} bg="#e7f0fc" fg="#2f6fd6" value={people.length} label="Total employees" foot={joinedThisQuarter ? `▲ ${joinedThisQuarter} joined this quarter` : scopeName} />
+        <Kpi href="/directory" icon={<PeopleIcon />} bg="#e7f0fc" fg="#2f6fd6" value={hc.total} label="Total incl. joining" foot={`${hc.active} active · ${hc.joining} joining${hc.exiting ? ` · ${hc.exiting} exiting` : ''}${joinedThisQuarter ? ` · ▲ ${joinedThisQuarter} joined` : ''}`} />
         <Kpi
           href="/onboarding"
           icon={<JoinIcon />}
@@ -743,7 +777,7 @@ export default function DashboardPage() {
           label="Joining today"
           foot={joiningToday.length ? `${joiningToday[0].name} (${joiningToday[0].employeeCode}) · ${joiningToday[0].department}` : 'No new joiners today'}
         />
-        <Kpi href="/onboarding" icon={<PackageIcon />} bg="#fdf3df" fg="#c6851b" value={onboarding.length} label="Pending onboarding" foot={stepsRemaining ? `${stepsRemaining} step(s) remaining` : 'All steps complete'} />
+        <Kpi href="/onboarding" icon={<PackageIcon />} bg="#fdf3df" fg="#c6851b" value={onboarding.length} label="Joining (onboarding)" foot={stepsRemaining ? `${stepsRemaining} step(s) remaining` : 'All steps complete'} />
         <Kpi href="/employee-expiry" icon={<RefreshIcon />} bg="#fce9e7" fg="#d5493f" value={renewalPool.length} label="Upcoming renewals" foot={`${overdueCount} overdue · ${due30Count} due ≤30d`} />
       </div>
 
@@ -795,7 +829,7 @@ export default function DashboardPage() {
                     <div style={{ minWidth: 0, flex: 1 }}>
                       <div className="at-n">{e?.name}</div>
                       <div className="at-d">
-                        {r.type} · {r.fromDate}
+                        {r.typeLabel} · {r.fromDate}
                         {r.toDate !== r.fromDate ? ` → ${r.toDate}` : ''} · {r.days}d
                       </div>
                     </div>
@@ -886,7 +920,7 @@ export default function DashboardPage() {
 
         <Card>
           <CardHeader title="Payroll cost trend" sub="Last 6 months · UAE · AED" action={<Badge tone="active">July ready</Badge>} />
-          {loc === 'All' || loc === 'Dubai' ? (
+          {allLoc || loc === 'Dubai' ? (
             <LineChart data={PAYROLL_TREND} />
           ) : (
             <div className="empty">

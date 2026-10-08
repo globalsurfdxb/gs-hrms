@@ -126,27 +126,30 @@
     db().leaves.filter((l) => l.st === 'Pending').forEach((l) => {
       const clash = db().leaves.find((o) => o.id !== l.id && o.emp !== l.emp && L.locOf(o.emp) === L.locOf(l.emp) && (o.st === 'Approved' || o.st === 'Pending') && !(l.to < o.from || l.from > o.to));
       const med = l.type === 'Sick Leave' && l.days >= 2 && !l.doc;
-      out.push({ key: 'LV:' + l.id, id: l.id, emp: l.emp, kind: l.type, detail: `${fmtS(l.from)}–${fmtS(l.to)} · ${l.days} day${l.days > 1 ? 's' : ''}`, flag: clash ? `Conflict w/ ${clash.emp.split(' ')[0]}` : med ? 'Medical cert required' : '', group: 'leave' });
+      out.push({ key: 'LV:' + l.id, id: l.id, emp: l.emp, kind: l.type, detail: `${fmtS(l.from)}–${fmtS(l.to)} · ${l.days} day${l.days > 1 ? 's' : ''}`, flag: clash ? `Conflict w/ ${clash.emp.split(' ')[0]}` : med ? 'Medical cert required' : '', group: 'leave', appr: l.approver });
     });
     db().plans.filter((p) => p.st === 'Pending' && !db().leaves.some((l) => l.st === 'Pending' && l.emp === p.emp && l.from === p.from)).forEach((p) => out.push({ key: 'PL:' + p.id, id: p.id, emp: p.emp, kind: L.tplOf(L.locOf(p.emp)) === 'india' ? 'Earned Leave Plan' : 'Annual Leave Plan', detail: `Segment ${p.seg} · ${fmtS(p.from)}–${fmtS(p.to)} · ${daysBetween(p.from, p.to) + 1} days`, flag: '', group: 'leave' }));
     db().regs.filter((r) => r.st === 'Pending').forEach((r) => out.push({ key: 'RG:' + r.id, id: r.id, emp: r.emp, kind: r.kind, detail: r.kind === 'Regularization' ? `${r.reason} ${fmtS(r.date)}` : `${fmtS(r.date)} · ${r.detail}`, flag: '', group: 'att' }));
     db().ots.filter((o) => o.st === 'Pending').forEach((o) => out.push({ key: 'OT:' + o.id, id: o.id, emp: o.emp, kind: 'Overtime', detail: `${o.cat} · ${o.hours.toFixed(1)} h · ${fmtS(o.date)}`, flag: '', group: 'ot' }));
-    // Approvers only see what is theirs: nothing for an employee, direct reports for a team lead.
-    if (PERSONA === 'employee') return [];
-    if (PERSONA === 'lead') { const mine = new Set(directs().map((r) => r.n)); return out.filter((o) => mine.has(o.emp)); }
-    return out;
+    // Nobody decides their own request. HR and Super Admin see everyone else's; anyone else sees only their direct
+    // reports' requests and requests routed to them (an employee with no reports has an empty inbox).
+    const others = out.filter((o) => o.emp !== me());
+    if (PERSONA === 'hr' || PERSONA === 'admin') return others;
+    const reps = new Set(directs().map((r) => r.n));
+    return others.filter((o) => reps.has(o.emp) || (o.appr && o.appr === db().me.id));
   }
   L.inbox = inbox;
   const sel = () => L.ui('apprSel', []);
+  const refuseOwn = (emp) => { if (emp === me()) { toast('You cannot approve or reject your own request'); return true; } return false; };
   function settle(key, outcome, note, alt) {
     const [t, id] = key.split(':');
     const nt = alt ? `${note ? note + ' · ' : ''}Alternative dates proposed: ${alt}` : note;
     if (t === 'LV') { const l = db().leaves.find((x) => x.id === id); if (l && l.st === 'Pending') L.leaveSettle(l, outcome, nt); } else if (t === 'PL') {
       const p = db().plans.find((x) => x.id === id);
-      if (p) { p.st = outcome; L.audit(`Segment ${outcome.toLowerCase()}`, id, `Pending → ${outcome}`, nt || '—', L.locOf(p.emp)); }
+      if (p && !refuseOwn(p.emp)) { p.st = outcome; L.audit(`Segment ${outcome.toLowerCase()}`, id, `Pending → ${outcome}`, nt || '—', L.locOf(p.emp)); }
     } else if (t === 'RG') {
       const r = db().regs.find((x) => x.id === id);
-      if (!r || r.st !== 'Pending') return;
+      if (!r || r.st !== 'Pending' || refuseOwn(r.emp)) return;
       r.st = outcome; r.stage = outcome === 'Approved' ? 'Completed' : 'Reporting Manager'; r.decision = nt || '';
       if (outcome === 'Approved' && r.kind === 'Regularization') {
         if (mine(r.emp)) db().fixes[r.date] = { in: L.toMin(r.from), out: L.toMin(r.to) };
@@ -154,11 +157,11 @@
         db().exceptions.forEach((x) => { if (x.emp === r.emp && x.date === r.date && x.st === 'Open' && x.group !== 'unauth') x.st = 'Resolved'; });
       }
       L.audit(`${r.kind} ${outcome.toLowerCase()}`, id, `Pending → ${outcome}`, nt || '—', L.locOf(r.emp));
-    } else if (t === 'OT') { const o = db().ots.find((x) => x.id === id); if (o && o.st === 'Pending') L.otSettle(o, outcome, nt); }
+    } else if (t === 'OT') { const o = db().ots.find((x) => x.id === id); if (o && o.st === 'Pending' && !refuseOwn(o.emp)) L.otSettle(o, outcome, nt); }
   }
   L.decide = (key, action) => {
     const it = inbox().find((x) => x.key === key);
-    if (!it) return;
+    if (!it || refuseOwn(it.emp)) return;
     const rej = action === 'reject';
     L.form({
       title: `${rej ? 'Reject' : 'Approve'} — ${it.id}`, size: 'sm', submit: `${rej ? 'Reject' : 'Approve'} request`, danger: rej,

@@ -2,7 +2,7 @@
 
 import { useState } from 'react';
 import { useCurrentEmployee } from '@/context/AppContext';
-import { PAYSLIPS } from '@/lib/data';
+import { PAYSLIPS, payslipFigures } from '@/lib/data';
 import { Payslip } from '@/lib/types';
 import { PageHeader } from '@/components/ui/PageHeader';
 import { Card, CardHeader, EmptyState, Button } from '@/components/ui/Card';
@@ -12,14 +12,18 @@ import { FilterChips } from '@/components/ui/FilterChips';
 import { DownloadIcon, ListIcon, ReceiptIcon, SearchIcon, TagIcon, UserIcon } from '@/components/icons';
 
 type StatusFilter = 'all' | Payslip['status'];
+type Slip = Omit<Payslip, 'currency'> & { currency: string };
 
 export default function MyPayslipsPage() {
   const me = useCurrentEmployee();
   const [q, setQ] = useState('');
   const [status, setStatus] = useState<StatusFilter>('all');
-  const mine = PAYSLIPS.filter((p) => p.employeeId === me.id).slice().reverse();
+  // Months and status come from the payroll run; every figure comes from this employee's own salary structure (Salary tab).
+  const fig = payslipFigures(me);
+  const mine = PAYSLIPS.filter((p) => p.employeeId === me.id).map((p) => ({ ...p, ...fig })).reverse();
+  const structure = me.profile.salary.earnings.filter((x) => x.amount).map((x) => `${x.label} ${x.amount.toLocaleString('en-US')}`).join(' · ');
   const latest = mine[0];
-  const money = (p: Payslip, n: number) => `${p.currency} ${n.toLocaleString()}`;
+  const money = (p: Slip, n: number) => `${p.currency} ${n.toLocaleString()}`;
   const countOf = (s: Payslip['status']) => mine.filter((p) => p.status === s).length;
 
   const needle = q.trim().toLowerCase();
@@ -35,7 +39,7 @@ export default function MyPayslipsPage() {
             items={[
               { label: 'Latest net pay', value: money(latest, latest.net), icon: <ReceiptIcon />, tone: 'blue', hint: latest.month },
               { label: 'Gross', value: money(latest, latest.gross), icon: <UserIcon />, tone: 'green', hint: latest.month },
-              { label: 'Deductions', value: money(latest, latest.deductions), icon: <TagIcon />, tone: 'red', hint: `${Math.round((latest.deductions / latest.gross) * 100)}% of gross` },
+              { label: 'Deductions', value: money(latest, latest.deductions), icon: <TagIcon />, tone: 'red', hint: latest.deductions && latest.gross ? `${Math.round((latest.deductions / latest.gross) * 100)}% of gross` : 'None in your salary structure' },
               { label: 'Payslips on file', value: mine.length, icon: <ListIcon />, tone: 'purple', hint: `${countOf('Paid')} paid · ${countOf('Processing')} processing` },
             ]}
           />
@@ -75,6 +79,7 @@ export default function MyPayslipsPage() {
                     <div className="ss-mt">
                       Gross {money(p, p.gross)} · Deductions {money(p, p.deductions)}
                     </div>
+                    {structure && <div className="ss-sub">{structure}</div>}
                   </div>
                   <div className="rt" style={{ gap: 14 }}>
                     <div className="ss-amt">

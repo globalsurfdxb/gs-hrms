@@ -23,7 +23,7 @@ const RULES: Rule[] = [
   { key: 'request-stale', event: 'Request pending over 48 hours', email: true, inApp: false, recipients: ['Manager'], on: true },
   { key: 'document', event: 'Document expiring', email: false, inApp: true, recipients: ['Employee'], on: true },
   { key: 'expense', event: 'Expense claim submitted', email: true, inApp: false, recipients: ['Approver'], on: true },
-  { key: 'expense-over', event: 'Expense claim exceeds policy limit', email: true, inApp: true, recipients: ['HR', 'Approver'], on: false },
+  { key: 'expense-over', event: 'Expense claim exceeds policy limit', email: true, inApp: true, recipients: ['HR', 'Approver'], on: true },
 ];
 
 const META: Record<string, { icon: React.ReactNode; tone: Tone }> = {

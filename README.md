@@ -1,6 +1,6 @@
-# GSIT ERP — Employee Management (Frontend)
+# GS HRMS — Employee Management (Frontend)
 
-React (Next.js 16, App Router) + TypeScript + Tailwind CSS frontend for the Employee Management module of the GSIT ERP suite, for Global Surf IT Pvt Ltd (Kerala, India · Dubai, UAE).
+React (Next.js 16, App Router) + TypeScript + Tailwind CSS frontend for the Employee Management module of GS HRMS, for Global Surf IT Pvt Ltd (Kerala, India · Dubai, UAE).
 
 This is a **frontend-only prototype**: all data lives in an in-memory mock dataset (`lib/data.ts`) and location/role selection persists to `localStorage` for a consistent demo experience. There is no backend, authentication, or database yet — see "Next phase" below.
 

@@ -27,17 +27,36 @@
   L.balOf = bal;
   const BALANCE_MANAGED = (t) => { const b = bal(t); return !!b && b.avail != null && t !== 'Unpaid Leave'; };
 
+  /* ---------- calendar rules: count working days of the employee's location (weekly off + holidays are not leave days) ---------- */
+  const holFor = (d, loc) => db().hol.find((h) => d >= h.d && d <= (h.to || h.d) && (!h.locs || h.locs.includes('all') || h.locs.includes(loc)));
+  const isWorkDay = (d, loc) => !L.isOff(d, loc) && !holFor(d, loc);
+  L.workDays = (from, to, loc) => {
+    const out = { days: 0, cal: 0, off: 0, hol: 0 };
+    if (!from || !to || to < from) return out;
+    const l = loc || L.myLoc();
+    for (let d = from; d <= to; d = addD(d, 1)) { out.cal++; if (L.isOff(d, l)) out.off++; else if (holFor(d, l)) out.hol++; else out.days++; }
+    return out;
+  };
+  /* the app's four leave types, whatever the location template calls them */
+  const APP = { 'Annual Leave': 'Annual', 'Earned Leave': 'Annual', 'Sick Leave': 'Sick', 'Casual Leave': 'Casual', 'Unpaid Leave': 'Unpaid', 'Loss of Pay': 'Unpaid' };
+  const appOf = (t) => APP[t] || '';
+  L.appOf = appOf;
+  const unpaidName = () => (myTpl() === 'india' ? 'Loss of Pay' : 'Unpaid Leave');
+  const routeText = () => { const a = L.approverOf(db().me.id); return a ? `${a.name} (${a.via.toLowerCase()})` : ''; };
+
   /* ---------- validation engine ---------- */
   const ownActive = (excludeId) => db().leaves.filter((l) => l.emp === me() && (l.st === 'Pending' || l.st === 'Approved') && l.id !== excludeId);
   L.leaveCheck = (v, opts = {}) => {
     const checks = [];
     const errors = [];
     const type = v.type;
-    const days = v.from && v.to && v.to >= v.from ? daysBetween(v.from, v.to) + 1 : 0;
+    const wd = v.from && v.to && v.to >= v.from ? L.workDays(v.from, v.to) : { days: 0, cal: 0, off: 0, hol: 0 };
+    const days = wd.days; // working days of the employee's location
+    const cal = wd.cal;
     if (!type) return { checks, errors, days };
     checks.push(['Eligibility & probation', 'ok', 'Probation completed']);
     if (v.from && v.to) {
-      if (v.to < v.from) { checks.push(['Dates', 'bad', 'To date is before From date']); errors.push('To date cannot be before From date.'); } else checks.push(['Calendar-day calculation', 'ok', `${days} day${days > 1 ? 's' : ''} · ${fmt(v.from)} → ${fmt(v.to)}`]);
+      if (v.to < v.from) { checks.push(['Dates', 'bad', 'To date is before From date']); errors.push('To date cannot be before From date.'); } else if (!days) { checks.push(['Working-day calculation', 'bad', `${cal} calendar day${cal > 1 ? 's' : ''}, none is a working day (${wd.off} weekly off, ${wd.hol} holiday)`]); errors.push('The selected dates contain no working days (weekly off or public holiday).'); } else checks.push(['Working-day calculation', 'ok', `${days} working day${days > 1 ? 's' : ''} of ${cal} calendar · ${wd.off} weekly off · ${wd.hol} holiday · ${L.workLabel(L.myLoc()).split(' · ')[0]}`]);
       if (v.from < addD(TODAY, -30)) { checks.push(['Back-dating', 'bad', 'Older than 30 days']); errors.push('Leave cannot be applied more than 30 days after the fact.'); } else if (v.from < TODAY && type !== 'Sick Leave') checks.push(['Back-dating', 'warn', 'Start date is in the past — manager discretion']);
       const clash = ownActive(opts.exclude).find((l) => !(v.to < l.from || v.from > l.to));
       if (clash) { checks.push(['Overlap', 'bad', `Overlaps ${clash.id} (${fmt(clash.from)} → ${fmt(clash.to)})`]); errors.push(`These dates overlap ${clash.id}.`); } else checks.push(['Overlap check', 'ok', 'No clash with your other leave']);
@@ -45,7 +64,8 @@
     const b = bal(type);
     if (days && b && BALANCE_MANAGED(type)) {
       const a = availOf(b);
-      if (days > a) { checks.push(['Available balance', 'bad', `${a} available — ${days} requested`]); errors.push(`Insufficient balance: ${a} day(s) available, ${days} requested.`); } else checks.push(['Available balance', 'ok', `${a} → ${R1(a - days)} after this request`]);
+      if (days > a && v.ex === 'unpaid') checks.push(['Available balance', 'warn', `${a} available — ${R1(days - Math.max(0, a))} day(s) will be recorded as ${unpaidName()}`]);
+      else if (days > a) { checks.push(['Available balance', 'bad', `${a} available — ${days} working day(s) requested`]); errors.push(`Insufficient balance: ${a} day(s) available, ${days} working day(s) requested. Choose "Convert the excess to unpaid leave" to continue.`); } else checks.push(['Available balance', 'ok', `${a} → ${R1(a - days)} after this request`]);
     } else if (b && b.avail === null && type !== 'Work From Home') checks.push(['Balance', 'ok', 'Unpaid — no balance deducted']);
     if (days && CAPS[type] && days > CAPS[type]) { checks.push(['Maximum entitlement', 'bad', `Max ${CAPS[type]} day(s) per event`]); errors.push(`${type} allows a maximum of ${CAPS[type]} day(s).`); }
     if (days && type === 'Restricted Festive' && days !== 1) errors.push('Restricted festive holiday is exactly 1 day.');
@@ -60,7 +80,7 @@
       const segs = ownActive(opts.exclude).filter((l) => l.type === 'Annual Leave' && l.from.slice(0, 4) === yr).length + 1;
       checks.push(['Segment count (max 3)', segs > 3 ? 'bad' : 'ok', `Segment ${segs} of 3`]);
       if (segs > 3) errors.push('Annual leave allows a maximum of 3 segments per year.');
-      if (days && days < 7) checks.push(['Segment length', 'warn', 'Segments are normally ≥ 7 calendar days']);
+      if (cal && cal < 7) checks.push(['Segment length', 'warn', 'Segments are normally ≥ 7 calendar days']);
     }
     if (type === 'Sick Leave' && days) {
       const india = myTpl() === 'india';
@@ -71,21 +91,42 @@
       checks.push([DOCS[type], v.file ? 'ok' : 'bad', v.file ? 'Attached' : 'Mandatory']);
       if (!v.file) errors.push(`${DOCS[type]} is required for ${type}.`);
     }
+    if (days && !opts.extension) { const r = routeText(); checks.push(['Approval routing', 'ok', r ? 'Sent to ' + r : 'No reporting manager — sent to the HR queue']); }
     return { checks, errors, days };
   };
   const checklist = (c) => c.checks.map((r) => `<div class="lrow" style="padding:9px 0"><div class="li-ic" style="width:26px;height:26px;background:var(--${r[1] === 'ok' ? 'g' : r[1] === 'warn' ? 'a' : 'r'}-bg);color:var(--${r[1] === 'ok' ? 'g' : r[1] === 'warn' ? 'a' : 'r'})">${ic(r[1] === 'ok' ? 'check' : r[1] === 'warn' ? 'alert' : 'x')}</div><div><div class="li-t" style="font-size:12.5px">${esc(r[0])}</div><div class="li-s">${esc(r[2])}</div></div></div>`).join('');
 
   /* ---------- apply / create ---------- */
-  function createLeave(v, extra = {}) {
-    const id = L.nextId('LV');
-    const days = daysBetween(v.from, v.to) + 1;
-    const lv = { id, emp: me(), type: v.type, from: v.from, to: v.to, days, st: 'Pending', stage: 'Reporting Manager', applied: TODAY, reason: v.reason, doc: v.file ? v.file.name : '', cls: v.cls || 'Personal', ...extra };
-    db().leaves.unshift(lv);
-    const b = bal(v.type);
-    if (b && BALANCE_MANAGED(v.type)) b.pending = R1((b.pending || 0) + days);
-    L.audit('Leave applied', id, '— → Pending', `${v.type} · ${days}d`);
-    return lv;
+  function mkRec(v, type, from, to, days, extra) {
+    const a = L.approverOf(db().me.id);
+    const id = 'LV-' + (++L.ledger().seq);
+    return { id, emp: me(), code: db().me.id, type, app: appOf(type), from, to, days, st: 'Pending', stage: 'Reporting Manager', applied: TODAY, reason: v.reason, doc: v.file ? v.file.name : '', cls: v.cls || 'Personal', approver: a ? a.code : '', approverName: a ? a.name : 'HR queue', approverVia: a ? a.via : 'HR', ...extra };
   }
+  /* returns the records created: one, or two when the excess over the balance is converted to unpaid leave */
+  function createLeave(v, extra = {}) {
+    const wd = L.workDays(v.from, v.to);
+    const b = bal(v.type);
+    const out = [];
+    if (v.ex === 'unpaid' && b && BALANCE_MANAGED(v.type) && wd.days > availOf(b)) {
+      const paid = Math.max(0, Math.floor(availOf(b)));
+      if (paid <= 0) out.push(mkRec(v, unpaidName(), v.from, v.to, wd.days, extra));
+      else {
+        let n = 0; let cut = v.from;
+        for (let d = v.from; d <= v.to; d = addD(d, 1)) { if (isWorkDay(d, L.myLoc())) n++; cut = d; if (n >= paid) break; }
+        const first = mkRec(v, v.type, v.from, cut, paid, extra);
+        out.push(first, mkRec(v, unpaidName(), addD(cut, 1), v.to, wd.days - paid, { ...extra, linked: first.id }));
+      }
+    } else out.push(mkRec(v, v.type, v.from, v.to, wd.days, extra));
+    out.forEach((lv) => {
+      db().leaves.unshift(lv);
+      const lb = !lv.app ? bal(lv.type) : null; // mapped types are derived from the shared ledger; the rest keep their own counters
+      if (lb && BALANCE_MANAGED(lv.type)) lb.pending = R1((lb.pending || 0) + lv.days);
+      L.audit('Leave applied', lv.id, '— → Pending', `${lv.type} · ${lv.days}d · to ${lv.approverName}`);
+    });
+    L.syncBal();
+    return out;
+  }
+  const sentTo = (out) => `${out.map((x) => x.id).join(' + ')} submitted — sent to ${out[0].approverName} (${String(out[0].approverVia).toLowerCase()})`;
   L.applyLeave = (preset = {}) => L.form({
     title: 'Apply for leave', size: 'lg', submit: 'Submit application',
     fields: [
@@ -93,19 +134,21 @@
       { k: 'cls', label: 'Classification', type: 'select', options: ['Personal', 'Official'] },
       { k: 'from', label: 'From date', req: true, type: 'date', value: preset.from || '' },
       { k: 'to', label: 'To date', req: true, type: 'date', value: preset.to || '', hint: 'To Date = day before reporting back to work' },
+      { k: 'ex', label: 'If the balance is not enough', type: 'select', options: [{ v: 'block', l: 'Do not submit' }, { v: 'unpaid', l: 'Convert the excess to unpaid leave' }], full: true },
       { k: 'reason', label: 'Reason', req: true, type: 'textarea', full: true, ph: 'Provide a reason for the leave request' },
       { k: 'file', label: 'Supporting document', type: 'file', full: true, ph: 'Attach certificate / evidence (PDF or image)' },
     ],
     live: (v) => `<div style="border-top:1px solid var(--line-2);margin-top:14px;padding-top:6px"><div class="pc-lbl" style="margin:8px 0 2px">Live validation · FRS §17</div>${checklist(L.leaveCheck(v))}</div>`,
     validate: (v) => L.leaveCheck(v).errors,
-    onSubmit: (v) => { const lv = createLeave(v); toast(`${lv.id} submitted for approval`); L.rr(); },
+    onSubmit: (v) => { const out = createLeave(v); toast(sentTo(out)); L.rr(); },
   });
   window.openApplyLeave = () => L.applyLeave();
   window.openLeaveQuick = (type) => L.applyLeave({ type: type === 'Restricted Festive Holiday' ? 'Restricted Festive' : type });
 
   /* ---------- decisions (used by approvals + my requests) ---------- */
   L.leaveSettle = (lv, outcome, reason) => {
-    const b = lv.emp === me() ? bal(lv.type) : null; // balances are only tracked for the signed-in user
+    if ((outcome === 'Approved' || outcome === 'Rejected') && lv.emp === me()) { toast('You cannot approve or reject your own request'); return false; }
+    const b = !lv.app && lv.emp === me() ? bal(lv.type) : null; // mapped types are derived from the ledger; others keep a counter for the signed-in user
     const managed = b && BALANCE_MANAGED(lv.type);
     if (managed) b.pending = R1(Math.max(0, (b.pending || 0) - lv.days));
     if (outcome === 'Approved') {
@@ -114,7 +157,10 @@
     } else lv.stage = outcome === 'Rejected' ? 'Reporting Manager' : 'Employee';
     lv.st = outcome;
     lv.decision = reason || '';
+    if (outcome === 'Approved' || outcome === 'Rejected') { lv.decidedBy = db().me.id; lv.decidedOn = TODAY; }
+    L.syncBal();
     L.audit(`Leave ${outcome.toLowerCase()}`, lv.id, `Pending → ${outcome}`, reason || '—');
+    return true;
   };
   L.leaveWithdraw = (id) => L.confirm('Withdraw application', `Withdraw <b>${id}</b>? Any reserved balance is released.`, 'Withdraw', () => {
     const lv = db().leaves.find((x) => x.id === id);
@@ -127,9 +173,9 @@
     if (!lv) return;
     if (lv.from <= TODAY) { toast('Leave already started — ask HR for a recall via Balance Adjustment'); return; }
     L.confirm('Cancel approved leave', `Cancel <b>${id}</b> (${fmt(lv.from)} → ${fmt(lv.to)})? ${lv.days} day(s) return to your balance.`, 'Cancel leave', () => {
-      const b = bal(lv.type);
+      const b = !lv.app ? bal(lv.type) : null;
       if (b && BALANCE_MANAGED(lv.type)) { b.avail = R1(b.avail + lv.days); b.booked = R1(Math.max(0, (b.booked || 0) - lv.days)); } else if (b) b.booked = R1(Math.max(0, (b.booked || 0) - lv.days));
-      lv.st = 'Cancelled'; lv.stage = 'Employee';
+      lv.st = 'Cancelled'; lv.stage = 'Employee'; L.syncBal();
       L.audit('Leave cancelled', id, 'Approved → Cancelled', `${lv.days}d restored`);
       toast(`${id} cancelled — ${lv.days} day(s) restored`); L.rr();
     }, true);
@@ -143,7 +189,7 @@
       fields: [{ k: 'to', label: 'New end date', req: true, type: 'date', value: addD(lv.to, 1), min: addD(lv.to, 1), full: true }, { k: 'reason', label: 'Reason', req: true, type: 'textarea', full: true }],
       live: (v) => { const c = L.leaveCheck({ type: lv.type, from: addD(lv.to, 1), to: v.to }, { extension: true }); return `<div style="margin-top:10px">${checklist(c)}</div>`; },
       validate: (v) => (v.to <= lv.to ? ['New end date must be after the current end date.'] : L.leaveCheck({ type: lv.type, from: addD(lv.to, 1), to: v.to }, { extension: true }).errors.filter((e) => !/medical certificate|Evidence|certificate|required for/i.test(e))),
-      onSubmit: (v) => { const n = createLeave({ type: lv.type, from: addD(lv.to, 1), to: v.to, reason: `Extension of ${id} — ${v.reason}` }, { extOf: id }); toast(`${n.id} (extension) submitted`); L.rr(); },
+      onSubmit: (v) => { const n = createLeave({ type: lv.type, from: addD(lv.to, 1), to: v.to, reason: `Extension of ${id} — ${v.reason}` }, { extOf: id }); toast(`${n[0].id} (extension) submitted — sent to ${n[0].approverName}`); L.rr(); },
     });
   };
   L.leaveDetail = (id) => {
@@ -151,7 +197,7 @@
     if (!lv) return;
     const flow = [['Employee', 'Submitted ' + fmt(lv.applied), 'done'], ['Reporting Manager', lv.st === 'Pending' ? 'Awaiting decision' : lv.st === 'Rejected' ? 'Rejected' : lv.st === 'Approved' ? 'Approved' : lv.st, lv.st === 'Pending' ? 'active' : lv.st === 'Rejected' ? 'bad' : 'done'], ['HR', lv.st === 'Approved' ? 'Confirmed' : '—', lv.st === 'Approved' ? 'done' : '']];
     openModal(modalShell(`${lv.type} · ${lv.id}`,
-      `<div class="dl" style="margin-bottom:14px"><dt>Employee</dt><dd>${esc(lv.emp)}</dd><dt>Period</dt><dd>${fmt(lv.from)} → ${fmt(lv.to)} (${lv.days} day${lv.days > 1 ? 's' : ''})</dd><dt>Applied</dt><dd>${fmt(lv.applied)}</dd><dt>Reason</dt><dd>${esc(lv.reason)}</dd>${lv.doc ? `<dt>Document</dt><dd>${esc(lv.doc)}</dd>` : ''}${lv.decision ? `<dt>Decision note</dt><dd>${esc(lv.decision)}</dd>` : ''}<dt>Status</dt><dd>${L.statusPill(lv.st)}</dd></div>
+      `<div class="dl" style="margin-bottom:14px"><dt>Employee</dt><dd>${esc(lv.emp)}</dd><dt>Period</dt><dd>${fmt(lv.from)} → ${fmt(lv.to)} (${lv.days} day${lv.days > 1 ? 's' : ''})</dd><dt>Applied</dt><dd>${fmt(lv.applied)}</dd>${lv.approverName ? `<dt>Sent to</dt><dd>${esc(lv.approverName)} (${esc(String(lv.approverVia || '').toLowerCase())})</dd>` : ''}<dt>Reason</dt><dd>${esc(lv.reason)}</dd>${lv.doc ? `<dt>Document</dt><dd>${esc(lv.doc)}</dd>` : ''}${lv.decision ? `<dt>Decision note</dt><dd>${esc(lv.decision)}</dd>` : ''}<dt>Status</dt><dd>${L.statusPill(lv.st)}</dd></div>
        <div class="steps">${flow.map((s, i) => `<div class="step ${s[2] === 'bad' ? '' : s[2]}"><div class="sc" style="${s[2] === 'bad' ? 'background:var(--r);color:#fff' : ''}">${s[2] === 'done' ? ic('check') : s[2] === 'bad' ? ic('x') : i + 1}</div><div class="st">${s[0]}</div><div class="ss">${esc(s[1])}</div></div>`).join('')}</div>`,
       `<button class="btn" onclick="closeModal()">Close</button>`, 'sm'));
   };
@@ -295,6 +341,7 @@
   window.openOtModal = () => L.otNew();
   L.otWithdraw = (id) => { const o = db().ots.find((x) => x.id === id); if (!o) return; o.st = 'Withdrawn'; L.audit('Overtime withdrawn', id, 'Pending → Withdrawn', ''); toast(id + ' withdrawn'); L.rr(); };
   L.otSettle = (o, outcome, reason) => {
+    if ((outcome === 'Approved' || outcome === 'Rejected') && o.emp === me()) { toast('You cannot approve or reject your own request'); return false; }
     o.st = outcome; o.by = me(); o.decision = reason || '';
     if (outcome === 'Approved' && o.comp === 'Compensatory off' && o.emp === me()) {
       const b = db().bal['Compensatory Off']; const c = L.otCredit(o);

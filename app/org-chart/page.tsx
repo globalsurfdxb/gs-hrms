@@ -3,6 +3,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import Link from 'next/link';
 import { EMPLOYEES } from '@/lib/data';
+import { departmentsMissingFromMaster, designationsMissingFromMaster, sameText } from '@/lib/headcount';
 import { useOrg } from '@/context/OrgContext';
 import { useApp, useCurrentEmployee } from '@/context/AppContext';
 import { Employee } from '@/lib/types';
@@ -106,7 +107,7 @@ export default function OrgStructurePage() {
   };
 
   const headcount = (companyId: string, deptName: string, title?: string) =>
-    people.filter((e) => e.company === companyName(companyId) && e.department === deptName && (title === undefined || e.designation === title)).length;
+    people.filter((e) => sameText(e.company, companyName(companyId)) && sameText(e.department, deptName) && (title === undefined || sameText(e.designation, title))).length;
   const headRec = (name: string) => EMPLOYEES.find((e) => e.name === name);
 
   const emp = (id: string) => EMPLOYEES.find((x) => x.id === id);
@@ -216,7 +217,7 @@ export default function OrgStructurePage() {
   };
 
   const stats = [
-    { n: people.length, l: 'People', ic: <PeopleIcon />, c: { bg: '#e7f0fc', fg: '#2f6fd6' } },
+    { n: people.length, l: `People incl. joining · ${people.filter((e) => e.employmentStatus === 'Active').length} active`, ic: <PeopleIcon />, c: { bg: '#e7f0fc', fg: '#2f6fd6' } },
     { n: scopedDepts.length, l: 'Departments', ic: <BuildingIcon />, c: { bg: '#f0eafc', fg: '#7a4bd0' } },
     { n: scopedDesigs.length, l: 'Designations', ic: <TagIcon />, c: { bg: '#e7f6ee', fg: '#1f9d63' } },
     { n: levels, l: `Reporting level${levels === 1 ? '' : 's'} · ${plural(managers, 'manager')}`, ic: <TreeIcon />, c: { bg: '#fdf3df', fg: '#c6851b' } },
@@ -409,6 +410,26 @@ export default function OrgStructurePage() {
                   </div>
                 );
               })}
+            {companies
+              .flatMap((c) => departmentsMissingFromMaster(c.name, departments.filter((d) => d.companyId === c.id), people).map((m) => ({ company: c.name, ...m })))
+              .filter((m) => !needle || `${m.name} ${m.company}`.toLowerCase().includes(needle))
+              .map((m) => (
+                <div key={`missing-${m.company}-${m.name}`} className="oc-dept">
+                  <div className="oc-dept-h">
+                    <span className="oc-tile" style={{ background: '#fdf3df', color: '#c6851b' }}>
+                      <BuildingIcon />
+                    </span>
+                    <div style={{ minWidth: 0 }}>
+                      <div className="oc-dept-n">
+                        {m.name}
+                        <span className="rs-flag">not in master list</span>
+                      </div>
+                      <div className="oc-dept-s">{m.company}</div>
+                    </div>
+                    <span className="oc-count">{m.headcount.total}</span>
+                  </div>
+                </div>
+              ))}
             {!scopedDepts.length && <EmptyState icon={<BuildingIcon />} title="No departments" description={`None are set up for ${scopeLabel}.`} />}
           </div>
         )}
@@ -416,9 +437,20 @@ export default function OrgStructurePage() {
         {tab === 'desig' && (
           <div className="oc-groups">
             {scopedDepts
-              .map((d, i) => ({ d, i, list: scopedDesigs.filter((x) => x.departmentId === d.id && (!needle || x.title.toLowerCase().includes(needle) || d.name.toLowerCase().includes(needle))) }))
-              .filter((g) => g.list.length)
-              .map(({ d, i, list }) => {
+              .map((d, i) => ({
+                d,
+                i,
+                list: scopedDesigs.filter((x) => x.departmentId === d.id && (!needle || x.title.toLowerCase().includes(needle) || d.name.toLowerCase().includes(needle))),
+                // Titles people hold that the master list lacks: still counted, and flagged.
+                missing: designationsMissingFromMaster(
+                  companyName(d.companyId),
+                  d.name,
+                  designations.filter((x) => x.departmentId === d.id).map((x) => x.title),
+                  people
+                ).filter((m) => !needle || m.title.toLowerCase().includes(needle) || d.name.toLowerCase().includes(needle)),
+              }))
+              .filter((g) => g.list.length || g.missing.length)
+              .map(({ d, i, list, missing }) => {
                 const col = PALETTE[i % PALETTE.length];
                 return (
                   <div key={d.id} className="oc-group">
@@ -441,6 +473,13 @@ export default function OrgStructurePage() {
                           </span>
                         );
                       })}
+                      {missing.map((m) => (
+                        <span key={`missing-${m.title}`} className="oc-chip" title="Held by employees but missing from the designation master list">
+                          {m.title}
+                          <em>{m.headcount.total}</em>
+                          <span className="rs-flag">not in master list</span>
+                        </span>
+                      ))}
                     </div>
                   </div>
                 );

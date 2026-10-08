@@ -13,6 +13,9 @@ import { useSeparation } from '@/context/SeparationContext';
 import { useVisa } from '@/context/VisaContext';
 import { useDocuments } from '@/context/DocumentsContext';
 import { DocumentViewer, ViewableDoc, documentNumber } from '@/components/profile/DocumentViewer';
+import { EID, LABOUR, VISA, complianceIssues, complianceLabel, registerFor, stateOfDate, useExpiryVersion, vaultDocsFor } from '@/lib/expiryRegister';
+import { ComplianceFlag } from '@/components/expiry/ExpiryBits';
+import { VaultBadge } from '@/components/expiry/VaultTile';
 import { StatusBadge, ExpiryBadge, Badge } from '@/components/ui/Badge';
 import { Card } from '@/components/ui/Card';
 import { EmpId } from '@/components/ui/EmployeeBits';
@@ -50,6 +53,7 @@ export default function EmployeeProfilePage() {
   const { statusOf, isAssetReturned } = useSeparation();
   const { stateOf, visaExpiryOf, eidExpiryOf } = useVisa();
   useEmployeeVersion();
+  useExpiryVersion();
   const { role } = useApp();
   const e = EMPLOYEES.find((emp) => emp.employeeCode === params.code);
   const [tab, setTab] = useState('Overview');
@@ -81,8 +85,19 @@ export default function EmployeeProfilePage() {
   const requiredDocs = isIndia ? REQUIRED_DOCS.india : REQUIRED_DOCS.uae;
   const idTab = isIndia ? 'Passport / Aadhaar / PAN' : 'Passport / Visa / EID';
   const TABS = ['Overview', 'Personal', 'Employment', idTab, 'Emergency', 'Experience & Education', 'Family', 'Bank & PF', 'Salary', 'Documents', 'Assets'];
-  const eid = e.documents.find((d) => d.type === 'Emirates ID');
   const avTone = toneFor(e.department);
+
+  // Dates, states and compliance all come from the shared expiry register, so they match Visa Management and Expiry.
+  const regRows = registerFor([e]);
+  const rowState = (type: string) => {
+    const r = regRows.find((x) => x.type === type);
+    return r ? stateOfDate(r.expiry) : undefined;
+  };
+  const issues = statusOf(e) === 'Inactive' ? [] : complianceIssues(e);
+  const vault = vaultDocsFor(e, (n) => !!fileFor(e.id, n));
+  const CHECKLIST_TYPE: Record<string, string> = { 'Residence Visa': VISA, 'Emirates ID': EID, 'Labour Card': LABOUR };
+  const eidState = rowState(EID);
+  const labourState = rowState(LABOUR);
 
   return (
     <div>
@@ -122,6 +137,7 @@ export default function EmployeeProfilePage() {
             <div className="flags">
               <StatusBadge status={statusOf(e)} />
               <span className="roleflag">{locationName(e.location)}</span>
+              <ComplianceFlag text={complianceLabel(issues)} title={issues.map((i) => `${i.type} expired ${i.expiry} (${i.daysOverdue} days ago)`).join(' · ')} />
             </div>
           </div>
           {canEditEmployees(role) && (
@@ -314,14 +330,16 @@ export default function EmployeeProfilePage() {
                     </div>
                     <div className="compcard">
                       <div className="ttl">
-                        Emirates ID {eid && <ExpiryBadge state={eid.state} />}
+                        Emirates ID {eidState && <ExpiryBadge state={eidState} />}
                       </div>
                       <div className="num">{e.emiratesId ?? '—'}</div>
                       {eidExpiryOf(e) && <div className="dates">Expires {eidExpiryOf(e)}</div>}
                     </div>
                     <div className="compcard">
-                      <div className="ttl">Labour Card</div>
-                      <div className="num">On file</div>
+                      <div className="ttl">
+                        Labour Card {labourState && <ExpiryBadge state={labourState} />}
+                      </div>
+                      <div className="num">{labourState === 'expired' ? 'Expired' : 'On file'}</div>
                       <div className="dates">
                         Issued {p.labourCardIssue ?? '—'} · Expires {p.labourCardExpiry ?? '—'}
                       </div>
@@ -499,7 +517,11 @@ export default function EmployeeProfilePage() {
               </Sub>
               {requiredDocs.map((d) => {
                 const done = p.uploadedDocs.includes(d) || !!fileFor(e.id, d);
-                const open = () => setViewing({ name: d, number: documentNumber(e, d), onFile: done });
+                // An expired visa, Emirates ID or labour card is not "Uploaded" — it needs renewing.
+                const datedType = CHECKLIST_TYPE[d];
+                const lapsed = !!datedType && rowState(datedType) === 'expired';
+                const row = datedType ? regRows.find((x) => x.type === datedType) : undefined;
+                const open = () => setViewing({ name: d, number: documentNumber(e, d), onFile: done, ...(row ? { expiryDate: row.expiry, state: rowState(datedType) } : {}) });
                 return (
                   <div key={d} className="doc clickable" role="button" tabIndex={0} onClick={open} onKeyDown={(ev) => (ev.key === 'Enter' || ev.key === ' ') && (ev.preventDefault(), open())}>
                     <div className="fic">
@@ -512,20 +534,22 @@ export default function EmployeeProfilePage() {
                       <div className="nm">{d}</div>
                     </div>
                     <div className="rt">
-                      <Badge tone={done ? 'active' : 'pending'}>{done ? 'Uploaded' : 'Pending'}</Badge>
+                      {lapsed ? <Badge tone="expired">Expired</Badge> : <Badge tone={done ? 'active' : 'pending'}>{done ? 'Uploaded' : 'Pending'}</Badge>}
                     </div>
                   </div>
                 );
               })}
               <Sub>Dated documents</Sub>
-              {e.documents.map((d) => (
+              {vault.map((d) => {
+                const view: ViewableDoc = { name: d.type, expiryDate: d.expiry, state: d.expiry ? stateOfDate(d.expiry) : undefined, number: documentNumber(e, d.type), onFile: d.uploaded };
+                return (
                 <div
-                  key={d.id}
+                  key={d.key}
                   className="doc clickable"
                   role="button"
                   tabIndex={0}
-                  onClick={() => setViewing({ name: d.type, expiryDate: d.expiryDate, state: d.state, number: documentNumber(e, d.type), onFile: true })}
-                  onKeyDown={(ev) => (ev.key === 'Enter' || ev.key === ' ') && (ev.preventDefault(), setViewing({ name: d.type, expiryDate: d.expiryDate, state: d.state, number: documentNumber(e, d.type), onFile: true }))}
+                  onClick={() => setViewing(view)}
+                  onKeyDown={(ev) => (ev.key === 'Enter' || ev.key === ' ') && (ev.preventDefault(), setViewing(view))}
                 >
                   <div className="fic">
                     <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.7}>
@@ -535,13 +559,14 @@ export default function EmployeeProfilePage() {
                   </div>
                   <div>
                     <div className="nm">{d.type}</div>
-                    {d.expiryDate && <div className="mt">Expires {d.expiryDate}</div>}
+                    {d.expiry && <div className="mt">Expires {d.expiry}</div>}
                   </div>
                   <div className="rt">
-                    <ExpiryBadge state={d.state} />
+                    <VaultBadge status={d.status} />
                   </div>
                 </div>
-              ))}
+                );
+              })}
               <DocumentViewer
                 employee={e}
                 doc={viewing ? { ...viewing, onFile: viewing.onFile || !!fileFor(e.id, viewing.name) } : null}

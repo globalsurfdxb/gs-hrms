@@ -52,7 +52,7 @@ function specimenHtml(e: Employee, d: ViewableDoc) {
   ];
   return `<!doctype html><meta charset="utf-8"><title>${esc(d.name)} · ${esc(e.employeeCode)}</title>
 <body style="font-family:system-ui,sans-serif;max-width:640px;margin:40px auto;color:#1f2937">
-<h2 style="margin:0 0 4px">${esc(d.name)}</h2><p style="color:#6b7280;margin:0 0 20px">GSIT document record — copy on file</p>
+<h2 style="margin:0 0 4px">${esc(d.name)}</h2><p style="color:#6b7280;margin:0 0 20px">GS HRMS document record — copy on file</p>
 <table style="width:100%;border-collapse:collapse">${rows.map(([k, v]) => `<tr><td style="padding:8px;border-bottom:1px solid #e5e7eb;color:#6b7280;width:40%">${esc(k)}</td><td style="padding:8px;border-bottom:1px solid #e5e7eb;font-weight:600">${esc(v)}</td></tr>`).join('')}</table></body>`;
 }
 
@@ -100,7 +100,8 @@ export function DocumentViewer({
     a.click();
   };
 
-  const status = d?.state ? <ExpiryBadge state={d.state} /> : <Badge tone={d?.onFile ? 'active' : 'pending'}>{d?.onFile ? 'Uploaded' : 'Pending'}</Badge>;
+  // An expired or expiring document always shows that warning; "Valid" only applies to a document that is on file.
+  const status = d?.state && d.state !== 'na' && (d.onFile || d.state !== 'ok') ? <ExpiryBadge state={d.state} /> : <Badge tone={d?.onFile ? 'active' : 'pending'}>{d?.onFile ? 'Uploaded' : 'Pending'}</Badge>;
 
   return (
     <Drawer

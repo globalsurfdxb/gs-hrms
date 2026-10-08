@@ -1,26 +1,15 @@
 'use client';
 
 import { createContext, useContext, useMemo, useState } from 'react';
-import { REFERENCE_TODAY } from '@/lib/data';
-import { daysBetween } from '@/lib/dates';
-import { RUNGS, useVisa } from '@/context/VisaContext';
+import { REFERENCE_TODAY, employeeById } from '@/lib/data';
+import { addDays, daysBetween } from '@/lib/dates';
+import { useEmployeeVersion } from '@/lib/employeeStore';
+import { DocRow, EID, VISA, addDatedDocument, registerFor, setExpiry, useExpiryVersion } from '@/lib/expiryRegister';
+import { ladderFor, useReminderSchedules } from '@/lib/reminderRules';
 import { Employee, ExpiryState } from '@/lib/types';
 
-export interface DocRow {
-  key: string;
-  employee: Employee;
-  docId: string;
-  type: string;
-  expiry: string;
-  custom: boolean;
-}
-
-interface ExtraDoc {
-  id: string;
-  employeeId: string;
-  type: string;
-  expiryDate: string;
-}
+export type { DocRow };
+export { complianceIssues, complianceLabel, complianceShort } from '@/lib/expiryRegister';
 
 export interface DocReminder {
   id: string;
@@ -43,18 +32,31 @@ export interface DocRenewal {
   reference: string;
 }
 
+/** What the "Reminder" column says about a document. */
+export interface ReminderInfo {
+  tone: 'due' | 'sent' | 'next' | 'escalated' | 'off' | 'none';
+  text: string;
+  sub?: string;
+}
+
 interface ExpiryContextValue {
   reminders: DocReminder[];
   renewals: DocRenewal[];
   rowsFor: (employees: Employee[]) => DocRow[];
   daysOf: (r: DocRow) => number;
   stateOf: (r: DocRow) => ExpiryState;
+  /** This document type's notice windows from Administration → Reminders, smallest first (empty when switched off). */
+  ladderOf: (r: DocRow) => number[];
+  /** The notice window the document is in now, or null when it is outside its ladder or already expired. */
   dueRung: (r: DocRow) => number | null;
+  /** Window used for grouping: the notice window, or 0 once expired (escalated). */
+  windowOf: (r: DocRow) => number | null;
   isReminded: (r: DocRow, rung: number) => boolean;
   lastReminder: (r: DocRow) => DocReminder | undefined;
+  reminderInfo: (r: DocRow) => ReminderInfo;
   sendReminder: (r: DocRow, rung: number | null) => void;
   sendDue: (rows: DocRow[]) => number;
-  renew: (r: DocRow, input: { newExpiry: string; reference: string }) => void;
+  renew: (r: DocRow, input: { newExpiry: string; reference: string; eidExpiry?: string }) => void;
   addDoc: (input: { employeeId: string; type: string; expiryDate: string }) => void;
 }
 
@@ -63,45 +65,29 @@ const ExpiryContext = createContext<ExpiryContextValue | null>(null);
 const recipientsFor = (rung: number | null) => (rung === null || rung <= 30 ? ['Employee', 'HR', 'Reporting manager'] : ['Employee', 'HR']);
 
 export function ExpiryProvider({ children }: { children: React.ReactNode }) {
-  const visa = useVisa();
-  const [extra, setExtra] = useState<ExtraDoc[]>([]);
-  const [overrides, setOverrides] = useState<Record<string, string>>({});
+  const schedules = useReminderSchedules();
+  const registerVersion = useExpiryVersion();
+  const employeeVersion = useEmployeeVersion();
   const [reminders, setReminders] = useState<DocReminder[]>([]);
   const [renewals, setRenewals] = useState<DocRenewal[]>([]);
 
   const value = useMemo<ExpiryContextValue>(() => {
-    const keyOf = (employeeId: string, docId: string) => `${employeeId}:${docId}`;
-    const rowsFor = (employees: Employee[]): DocRow[] =>
-      employees.flatMap((e) => {
-        const base = e.documents
-          .filter((d) => d.expiryDate)
-          .map((d) => {
-            const key = keyOf(e.id, d.id);
-            const expiry = d.type === 'Residence Visa' ? visa.visaExpiryOf(e) : d.type === 'Emirates ID' ? visa.eidExpiryOf(e) : undefined;
-            return { key, employee: e, docId: d.id, type: d.type, expiry: expiry ?? overrides[key] ?? d.expiryDate!, custom: false };
-          });
-        const added = extra
-          .filter((x) => x.employeeId === e.id)
-          .map((x) => {
-            const key = keyOf(e.id, x.id);
-            return { key, employee: e, docId: x.id, type: x.type, expiry: overrides[key] ?? x.expiryDate, custom: true };
-          });
-        return [...base, ...added];
-      });
-
+    void registerVersion;
+    void employeeVersion;
     const daysOf = (r: DocRow) => daysBetween(REFERENCE_TODAY, r.expiry);
     const stateOf = (r: DocRow): ExpiryState => {
       const n = daysOf(r);
       return n < 0 ? 'expired' : n <= 90 ? 'soon' : 'ok';
     };
+    const ladderOf = (r: DocRow) => ladderFor(schedules, r.type);
     const dueRung = (r: DocRow) => {
       const n = daysOf(r);
-      if (n > 90) return null;
-      if (n < 0) return 7;
-      return [...RUNGS].sort((a, b) => a - b).find((x) => x >= n) ?? null;
+      if (n < 0) return null;
+      return ladderOf(r).find((x) => x >= n) ?? null;
     };
-    const isVisa = (r: DocRow) => !r.custom && r.type === 'Residence Visa';
-    const isReminded = (r: DocRow, rung: number) => (isVisa(r) ? visa.isReminded(r.employee, rung) : reminders.some((x) => x.key === r.key && x.rung === rung && x.expiry === r.expiry));
+    const windowOf = (r: DocRow) => (daysOf(r) < 0 ? 0 : dueRung(r));
+    const isReminded = (r: DocRow, rung: number) => reminders.some((x) => x.key === r.key && x.rung === rung && x.expiry === r.expiry);
+    const lastReminder = (r: DocRow) => [...reminders].reverse().find((x) => x.key === r.key && x.expiry === r.expiry);
     const entry = (r: DocRow, rung: number | null): DocReminder => ({
       id: `drem-${Date.now()}-${r.key}-${rung ?? 'm'}`,
       key: r.key,
@@ -112,50 +98,68 @@ export function ExpiryProvider({ children }: { children: React.ReactNode }) {
       to: recipientsFor(rung),
       expiry: r.expiry,
     });
-    const send = (r: DocRow, rung: number | null) => {
-      if (isVisa(r)) visa.sendReminder(r.employee, rung);
-      return entry(r, rung);
+
+    const reminderInfo = (r: DocRow): ReminderInfo => {
+      const n = daysOf(r);
+      const last = lastReminder(r);
+      const lastText = last ? `Last notice ${last.sentOn}${last.rung ? ` · ${last.rung}-day` : ' · manual'}` : undefined;
+      if (n < 0) return { tone: 'escalated', text: 'Expired — escalated to HR / manager', sub: `${-n} day${n === -1 ? '' : 's'} overdue${lastText ? ` · ${lastText.toLowerCase()}` : ''}` };
+      const ladder = ladderOf(r);
+      if (!ladder.length) return { tone: 'off', text: 'Reminders off', sub: 'Switched off in Administration → Reminders' };
+      const due = dueRung(r);
+      if (due !== null && !isReminded(r, due)) return { tone: 'due', text: `Due: ${due}-day notice` };
+      if (last) return { tone: 'sent', text: `Sent ${last.sentOn}${last.rung ? ` · ${last.rung}-day` : ' · manual'}` };
+      const first = ladder[ladder.length - 1];
+      if (n > first) return { tone: 'next', text: `Next: ${first}-day on ${addDays(r.expiry, -first)}` };
+      return { tone: 'none', text: '—' };
     };
 
     return {
       reminders,
       renewals,
-      rowsFor,
+      rowsFor: registerFor,
       daysOf,
       stateOf,
+      ladderOf,
       dueRung,
+      windowOf,
       isReminded,
-      lastReminder: (r) =>
-        [...reminders].reverse().find((x) => x.key === r.key && x.expiry === r.expiry) ??
-        (isVisa(r) ? (() => {
-          const v = visa.lastReminder(r.employee);
-          return v && v.expiry === r.expiry ? ({ id: v.id, key: r.key, employeeId: v.employeeId, type: r.type, rung: v.rung, sentOn: v.sentOn, to: v.to, expiry: v.expiry } as DocReminder) : undefined;
-        })() : undefined),
-      sendReminder: (r, rung) => {
-        const sent = send(r, rung);
-        setReminders((prev) => [...prev, sent]);
-      },
+      lastReminder,
+      reminderInfo,
+      sendReminder: (r, rung) => setReminders((prev) => [...prev, entry(r, rung)]),
       sendDue: (rows) => {
         const fresh = rows.filter((r) => {
           const rung = dueRung(r);
           return rung !== null && !isReminded(r, rung);
         });
-        const sent = fresh.map((r) => send(r, dueRung(r)));
-        setReminders((prev) => [...prev, ...sent]);
+        setReminders((prev) => [...prev, ...fresh.map((r) => entry(r, dueRung(r)))]);
         return fresh.length;
       },
-      renew: (r, { newExpiry, reference }) => {
-        if (!r.custom && r.type === 'Residence Visa') visa.renew(r.employee, { newExpiry, reference });
-        else if (!r.custom && r.type === 'Emirates ID') visa.renewEid(r.employee, newExpiry);
-        else setOverrides((prev) => ({ ...prev, [r.key]: newExpiry }));
-        setRenewals((prev) => [
-          ...prev,
-          { id: `dren-${Date.now()}-${r.key}`, employeeId: r.employee.id, type: r.type, previousExpiry: r.expiry, newExpiry, renewedOn: REFERENCE_TODAY, reference: reference.trim() },
-        ]);
+      renew: (r, { newExpiry, reference, eidExpiry }) => {
+        const log = (row: { key: string; type: string }, previousExpiry: string, expiry: string): DocRenewal => ({
+          id: `dren-${Date.now()}-${row.key}`,
+          employeeId: r.employee.id,
+          type: row.type,
+          previousExpiry,
+          newExpiry: expiry,
+          renewedOn: REFERENCE_TODAY,
+          reference: reference.trim(),
+        });
+        const logs = [log(r, r.expiry, newExpiry)];
+        if (r.type === VISA && eidExpiry) {
+          const eid = registerFor([r.employee]).find((x) => x.type === EID);
+          logs.push(log({ key: eid?.key ?? `${r.employee.id}:id-eid`, type: EID }, eid?.expiry ?? '—', eidExpiry));
+          setExpiry(r.employee, EID, eidExpiry);
+        }
+        setExpiry(r.employee, r.type, newExpiry, r.docId);
+        setRenewals((prev) => [...prev, ...logs]);
       },
-      addDoc: ({ employeeId, type, expiryDate }) => setExtra((prev) => [...prev, { id: `xd-${Date.now()}`, employeeId, type, expiryDate }]),
+      addDoc: ({ employeeId, type, expiryDate }) => {
+        const e = employeeById(employeeId);
+        if (e) addDatedDocument(e, type, expiryDate);
+      },
     };
-  }, [visa, extra, overrides, reminders, renewals]);
+  }, [schedules, registerVersion, employeeVersion, reminders, renewals]);
 
   return <ExpiryContext.Provider value={value}>{children}</ExpiryContext.Provider>;
 }

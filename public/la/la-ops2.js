@@ -189,7 +189,7 @@
     const done = (st, why) => { m.st = st; L.audit(`Medical ${st.toLowerCase()}`, `${m.emp} · SL`, `Pending → ${st}`, why, L.locOf(m.emp)); toast(`${m.emp}: ${st}`); L.rr(); };
     if (act === 'verify') return L.confirm('Verify certificate', `Mark ${esc(m.emp)}'s ${esc(m.req)} as valid?`, 'Verify', () => { if (lv) lv.doc = lv.doc || 'Verified certificate'; done('Verified', 'Cert valid'); });
     if (act === 'reject') return L.form({ title: 'Reject document — ' + m.emp, size: 'sm', submit: 'Reject', danger: true, fields: [{ k: 'r', label: 'Reason', req: true, type: 'textarea', full: true }], onSubmit: (v) => done('Rejected', v.r) });
-    return L.confirm('Convert to unpaid', `Convert ${esc(m.emp)}'s sick leave to <b>unpaid leave / loss of pay</b> because the certificate is missing/invalid? This is audited.`, 'Convert to unpaid', () => { if (lv) lv.type = L.tplOf(L.locOf(lv.emp)) === 'india' ? 'Loss of Pay' : 'Unpaid Leave'; done('Converted', 'Missing certificate — converted to unpaid'); }, true);
+    return L.confirm('Convert to unpaid', `Convert ${esc(m.emp)}'s sick leave to <b>unpaid leave / loss of pay</b> because the certificate is missing/invalid? This is audited.`, 'Convert to unpaid', () => { if (lv) { lv.type = L.tplOf(L.locOf(lv.emp)) === 'india' ? 'Loss of Pay' : 'Unpaid Leave'; lv.app = 'Unpaid'; L.syncBal(); } done('Converted', 'Missing certificate — converted to unpaid'); }, true);
   };
   function docVerify() {
     const st = L.ui('mdSt', 'Pending');
@@ -255,6 +255,7 @@
   /* ---------- carry forward ---------- */
   L.cfDo = (id, act) => {
     const c = db().cf.find((x) => x.id === id);
+    if (c && c.emp === me()) { toast('You cannot approve or reject your own request'); return; }
     const ok = act === 'approve';
     L.confirm(ok ? 'Approve carry-forward' : 'Reject carry-forward', `${ok ? 'Approve' : 'Reject'} <b>${c.days}</b> day(s) for ${esc(c.emp)} (expires ${fmt(c.expires)})?`, ok ? 'Approve' : 'Reject', () => {
       c.st = ok ? 'Approved' : 'Rejected';
@@ -294,6 +295,7 @@
   /* ---------- encashment ---------- */
   L.encDo = (id, stage) => {
     const e = db().enc.find((x) => x.id === id);
+    if (e && e.emp === me()) { toast('You cannot approve your own request'); return; }
     const msg = stage === 'mgr' ? 'Manager approval' : stage === 'hr' ? 'HR approval' : 'Queue to payroll';
     L.confirm(msg, `${msg} for <b>${esc(e.emp)}</b> — ${e.days} day(s)?`, 'Confirm', () => {
       if (stage === 'mgr') e.mgr = 'Approved'; else if (stage === 'hr') { e.hr = 'Approved'; if (e.emp === me() && db().bal[L.annualKey()]) { const b = db().bal[L.annualKey()]; b.avail = R1(Math.max(0, b.avail - e.days)); } } else e.payroll = 'Queued';

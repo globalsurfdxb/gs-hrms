@@ -2,7 +2,7 @@
 
 import { useState } from 'react';
 import { useCurrentEmployee } from '@/context/AppContext';
-import { useRequests } from '@/context/RequestsContext';
+import { proposedChanges, useRequests } from '@/context/RequestsContext';
 import { EmployeeRequest } from '@/lib/types';
 import { PageHeader } from '@/components/ui/PageHeader';
 import { Card, CardHeader, EmptyState } from '@/components/ui/Card';
@@ -76,7 +76,20 @@ export default function MyRequestsPage() {
                       <span className="ss-tag alt">Routed to {r.routedTo}</span>
                     </div>
                     <div className="ss-mt">{r.details}</div>
-                    <div className="ss-sub">Raised {r.raisedOn}</div>
+                    {r.changes && r.status !== 'Rejected' && (
+                      <div className="rq-prop">
+                        {proposedChanges(r).map((c) => (
+                          <div key={c.key}>
+                            <b>{c.label}</b>: {r.status === 'Pending' ? `${c.from} → ${c.to}` : c.to}
+                          </div>
+                        ))}
+                        <i>{r.status === 'Pending' ? 'Your profile keeps the current value until this is approved.' : 'Applied to your profile.'}</i>
+                      </div>
+                    )}
+                    <div className="ss-sub">
+                      Raised {r.raisedOn}
+                      {r.decidedBy ? ` · ${r.status} by ${r.decidedBy}` : ''}
+                    </div>
                   </div>
                   <div className="rt">
                     <StatusBadge status={r.status} />

@@ -4,7 +4,9 @@ import { useState } from 'react';
 import Link from 'next/link';
 import { useCurrentEmployee } from '@/context/AppContext';
 import { useVisa } from '@/context/VisaContext';
-import { ASSETS, LEAVE_BALANCES, REFERENCE_TODAY, managerOf } from '@/lib/data';
+import { ASSETS, REFERENCE_TODAY, managerOf } from '@/lib/data';
+import { useLeaveBalances } from '@/lib/leaveBridge';
+import { phoneOk } from '@/lib/options';
 import { PageHeader } from '@/components/ui/PageHeader';
 import { Card, CardHeader, Button } from '@/components/ui/Card';
 import { ExpiryBadge, StatusBadge } from '@/components/ui/Badge';
@@ -39,7 +41,10 @@ export default function ProfilePage() {
   const [editing, setEditing] = useState(false);
   const [submitted, setSubmitted] = useState(false);
 
-  const annual = LEAVE_BALANCES.find((b) => b.employeeId === e.id && b.type === 'Annual');
+  const phoneError = !phone.trim() ? 'Mobile number is required.' : !phoneOk(phone) ? 'Enter a valid mobile number (7 to 15 digits, e.g. +971 50 123 4567).' : '';
+
+  const balances = useLeaveBalances();
+  const annual = balances.find((b) => b.employeeId === e.id && b.type === 'Annual');
   const assets = ASSETS.filter((a) => a.assignedTo === e.id).length;
   const docAlerts = e.documents.filter((d) => d.state === 'soon' || d.state === 'expired').length;
 
@@ -69,7 +74,7 @@ export default function ProfilePage() {
         <StatStrip
           items={[
             { label: 'Tenure', value: tenureOf(e.dateOfJoining), icon: <UserIcon />, tone: 'blue', hint: `Joined ${e.dateOfJoining}` },
-            { label: 'Annual leave left', value: annual ? annual.entitled - annual.taken : '—', icon: <ClockIcon />, tone: 'green', hint: annual ? `of ${annual.entitled} days` : undefined, href: '/my/leave-attendance' },
+            { label: 'Annual leave left', value: annual ? annual.left : '—', icon: <ClockIcon />, tone: 'green', hint: annual ? `of ${annual.entitled} days` : undefined, href: '/my/leave-attendance' },
             { label: 'Documents on file', value: e.documents.length, icon: <FileTextIcon />, tone: docAlerts ? 'amber' : 'purple', hint: docAlerts ? `${docAlerts} need attention` : 'All up to date', href: '/my/files' },
             { label: 'Assets assigned', value: assets, icon: <PackageIcon />, tone: 'teal', hint: 'IT and office equipment', href: '/my/assets' },
           ]}
@@ -106,11 +111,27 @@ export default function ProfilePage() {
           <div style={{ padding: 18 }}>
             <div className="fg" style={{ marginBottom: 12 }}>
               <label>Mobile number</label>
-              {editing ? <input value={phone} onChange={(ev) => setPhone(ev.target.value)} /> : <div style={{ fontSize: 13, fontWeight: 500 }}>{phone}</div>}
+              {editing ? (
+                <input
+                  type="tel"
+                  value={phone}
+                  onChange={(ev) => setPhone(ev.target.value)}
+                  aria-invalid={phoneError ? true : undefined}
+                  aria-describedby={phoneError ? 'profile-phone-err' : undefined}
+                  style={phoneError ? { borderColor: 'var(--danger)' } : undefined}
+                />
+              ) : (
+                <div style={{ fontSize: 13, fontWeight: 500 }}>{phone}</div>
+              )}
+              {editing && phoneError && (
+                <span id="profile-phone-err" className="hint" style={{ color: 'var(--danger)' }}>
+                  {phoneError}
+                </span>
+              )}
             </div>
             {editing && (
               <div style={{ display: 'flex', gap: 8 }}>
-                <Button variant="primary" size="sm" onClick={() => setEditing(false)}>
+                <Button variant="primary" size="sm" disabled={!!phoneError} onClick={() => setEditing(false)}>
                   Save
                 </Button>
                 <Button

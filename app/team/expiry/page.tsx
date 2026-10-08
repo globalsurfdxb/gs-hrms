@@ -1,5 +1,5 @@
-import { PersonalExpiryView } from '@/components/expiry/PersonalExpiryView';
+import { ExpiryRegisterView } from '@/components/expiry/ExpiryRegisterView';
 
 export default function TeamExpiryPage() {
-  return <PersonalExpiryView forceTeam />;
+  return <ExpiryRegisterView forceTeam />;
 }

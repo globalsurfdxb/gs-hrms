@@ -3,11 +3,10 @@
 import { useState } from 'react';
 import Link from 'next/link';
 import { EMPLOYEES, REFERENCE_TODAY, employeeById, matchesEmployee } from '@/lib/data';
-import { addDays } from '@/lib/dates';
 import { useOrg } from '@/context/OrgContext';
 import { useSeparation } from '@/context/SeparationContext';
-import { RUNGS } from '@/context/VisaContext';
 import { DocRow, useExpiry } from '@/context/ExpiryContext';
+import { DATED_TYPES } from '@/lib/expiryRegister';
 import { ExpiryState } from '@/lib/types';
 import { PageHeader } from '@/components/ui/PageHeader';
 import { Card, CardHeader, EmptyState, Button } from '@/components/ui/Card';
@@ -17,9 +16,9 @@ import { SearchSelect } from '@/components/ui/SearchSelect';
 import { EmpId } from '@/components/ui/EmployeeBits';
 import { Avatar } from '@/components/ui/Avatar';
 import { StatTiles } from '@/components/ui/StatTiles';
+import { DaysLeft, ReminderCell } from '@/components/expiry/ExpiryBits';
 import { BellIcon, CheckIcon, ClockIcon, FileTextIcon, PlusIcon, SearchIcon, WarnIcon, XIcon } from '@/components/icons';
 
-const SORTED_RUNGS = [...RUNGS].sort((a, b) => b - a);
 const DOC_TYPES = ['Passport', 'Emirates ID', 'Residence Visa', 'Labour Card', 'UAE Driving Licence', 'Medical Insurance', 'Professional Licence', 'Insurance Document', 'Other'];
 const FILTERS: { key: 'All' | ExpiryState; label: string }[] = [
   { key: 'All', label: 'All statuses' },
@@ -34,20 +33,10 @@ const addYears = (iso: string, n: number) => {
   return d.toISOString().slice(0, 10);
 };
 
-function inWindow(days: number, rung: number) {
-  const lower = [...RUNGS].sort((a, b) => a - b).filter((r) => r < rung).pop() ?? -1;
-  return days >= 0 && days <= rung && days > lower;
-}
-
-function DaysLeft({ days }: { days: number }) {
-  if (days < 0) return <span style={{ color: '#B91C1C', fontWeight: 700 }}>Expired {-days}d ago</span>;
-  return <span style={{ color: days <= 30 ? '#C2410C' : days <= 90 ? '#B45309' : 'var(--muted)', fontWeight: days <= 90 ? 600 : 400 }}>{days} days</span>;
-}
-
 export default function EmployeeExpiryPage() {
   const { locations, locationName } = useOrg();
   const { statusOf } = useSeparation();
-  const { reminders, renewals, rowsFor, daysOf, stateOf, dueRung, isReminded, lastReminder, sendReminder, sendDue, renew, addDoc } = useExpiry();
+  const { reminders, renewals, rowsFor, daysOf, stateOf, dueRung, isReminded, sendReminder, sendDue, renew, addDoc, ladderOf, windowOf, reminderInfo } = useExpiry();
 
   const [q, setQ] = useState('');
   const [loc, setLoc] = useState('All');
@@ -70,7 +59,8 @@ export default function EmployeeExpiryPage() {
 
   const employees = EMPLOYEES.filter((e) => statusOf(e) !== 'Inactive');
   const all = rowsFor(employees).filter((r) => loc === 'All' || r.employee.location === loc);
-  const types = [...new Set(all.map((r) => r.type))];
+  const types = [...new Set([...DATED_TYPES, ...all.map((r) => r.type)])];
+  const steps = [...new Set(all.flatMap(ladderOf))].sort((a, b) => b - a);
 
   const count = (s: ExpiryState) => all.filter((r) => stateOf(r) === s).length;
   const dueList = all.filter((r) => {
@@ -79,7 +69,7 @@ export default function EmployeeExpiryPage() {
   });
 
   const rows = all
-    .filter((r) => (type === 'All' || r.type === type) && (statusFilter === 'All' || stateOf(r) === statusFilter) && (rungFilter === null || inWindow(daysOf(r), rungFilter)))
+    .filter((r) => (type === 'All' || r.type === type) && (statusFilter === 'All' || stateOf(r) === statusFilter) && (rungFilter === null || windowOf(r) === rungFilter))
     .filter((r) => matchesEmployee(r.employee, q) || r.type.toLowerCase().includes(q.trim().toLowerCase()))
     .sort((a, b) => daysOf(a) - daysOf(b));
 
@@ -91,7 +81,7 @@ export default function EmployeeExpiryPage() {
   const remind = (r: DocRow) => {
     const x = dueRung(r);
     sendReminder(r, x);
-    setNotice(`Reminder sent to ${r.employee.name} (${r.employee.employeeCode}) about the ${r.type}${x ? ` — ${x}-day notice` : ''}.`);
+    setNotice(`Reminder sent to ${r.employee.name} (${r.employee.employeeCode}) about the ${r.type}${x ? ` — ${x}-day notice` : daysOf(r) < 0 ? ' — overdue follow-up' : ''}.`);
   };
 
   const sendAll = () => {
@@ -192,11 +182,11 @@ export default function EmployeeExpiryPage() {
       />
 
       <Card className="row-gap">
-        <CardHeader title="Reminder ladder" sub="Click a notice window to filter the register. Green = every document in the window has been reminded." />
+        <CardHeader title="Reminder ladder" sub="Each document type follows its own schedule from Administration → Reminders. Click a window to filter the register. Green = every document in the window has been reminded." />
         <div className="ladder" style={{ padding: '18px 22px' }}>
-          {SORTED_RUNGS.map((r) => {
-            const inWin = all.filter((d) => inWindow(daysOf(d), r));
-            const reminded = inWin.filter((d) => isReminded(d, r)).length;
+          {[...steps.filter((s) => s !== 0), 0].map((r) => {
+            const inWin = all.filter((d) => windowOf(d) === r);
+            const reminded = r === 0 ? inWin.length : inWin.filter((d) => isReminded(d, r)).length;
             const cls = inWin.length && reminded === inWin.length ? 'sent' : inWin.length ? 'now' : '';
             return (
               <button
@@ -206,9 +196,9 @@ export default function EmployeeExpiryPage() {
                 onClick={() => setRungFilter(rungFilter === r ? null : r)}
                 style={{ cursor: 'pointer', font: 'inherit', background: rungFilter === r ? 'var(--primary-50)' : 'transparent', borderRadius: 10, paddingTop: 6, paddingBottom: 6 }}
               >
-                <div className="cap">{r}d</div>
-                <div className="lt">{r} days notice</div>
-                <div className="ls">{inWin.length ? `${inWin.length} document(s) · ${reminded} reminded` : 'Nothing in this window'}</div>
+                <div className="cap">{r === 0 ? 'Expired' : `${r}d`}</div>
+                <div className="lt">{r === 0 ? 'Escalated' : `${r} days notice`}</div>
+                <div className="ls">{inWin.length ? (r === 0 ? `${inWin.length} document(s) · escalated to HR / manager` : `${inWin.length} document(s) · ${reminded} reminded`) : 'Nothing in this window'}</div>
               </button>
             );
           })}
@@ -290,8 +280,6 @@ export default function EmployeeExpiryPage() {
               {rows.map((r) => {
                 const st = stateOf(r);
                 const n = daysOf(r);
-                const due = dueRung(r);
-                const last = lastReminder(r);
                 return (
                   <tr key={r.key} className={`lc-row ${st}`}>
                     <td>
@@ -326,19 +314,8 @@ export default function EmployeeExpiryPage() {
                     <td>
                       <ExpiryBadge state={st} />
                     </td>
-                    <td style={{ fontSize: 12 }}>
-                      {due !== null && !isReminded(r, due) ? (
-                        <span style={{ color: '#B45309', fontWeight: 600 }}>Due: {due}-day notice</span>
-                      ) : last ? (
-                        <span style={{ color: 'var(--muted)' }}>
-                          Sent {last.sentOn}
-                          {last.rung ? ` · ${last.rung}-day` : ' · manual'}
-                        </span>
-                      ) : n > 90 ? (
-                        <span style={{ color: 'var(--faint)' }}>Next: 90-day on {addDays(r.expiry, -90)}</span>
-                      ) : (
-                        <span style={{ color: 'var(--faint)' }}>—</span>
-                      )}
+                    <td>
+                      <ReminderCell info={reminderInfo(r)} />
                     </td>
                     <td className="lc-right">
                       <span className="lc-acts">
@@ -485,11 +462,9 @@ export default function EmployeeExpiryPage() {
                 <input value={reference} onChange={(e) => setReference(e.target.value)} placeholder="Optional" />
               </div>
             </div>
-            {!renewing.custom && (renewing.type === 'Residence Visa' || renewing.type === 'Emirates ID') && (
-              <div className="note-box" style={{ marginTop: 12 }}>
-                <div>This also updates the {renewing.type === 'Residence Visa' ? 'visa record on the Visa Management page' : 'Emirates ID date on the Visa Management page'}.</div>
-              </div>
-            )}
+            <div className="note-box" style={{ marginTop: 12 }}>
+              <div>This updates the employee record, so Visa Management, Documents and the profile show the same date.</div>
+            </div>
             {renewError && <div style={{ marginTop: 10, fontSize: 12, color: 'var(--danger)' }}>{renewError}</div>}
           </>
         )}

@@ -3,8 +3,10 @@
 import { useState } from 'react';
 import Link from 'next/link';
 import { useCurrentEmployee } from '@/context/AppContext';
-import { LEAVE_BALANCES, LEAVE_REQUESTS, directReports, employeeById, matchesEmployee } from '@/lib/data';
-import { LeaveRequest, LeaveType } from '@/lib/types';
+import { directReports, employeeById, matchesEmployee } from '@/lib/data';
+import { LeaveType } from '@/lib/types';
+import { useOrg } from '@/context/OrgContext';
+import { decideLeave, useLeaveBalances, useLeaveRequests } from '@/lib/leaveBridge';
 import { PageHeader } from '@/components/ui/PageHeader';
 import { Card, CardHeader, EmptyState, Button } from '@/components/ui/Card';
 import { StatusBadge } from '@/components/ui/Badge';
@@ -19,11 +21,15 @@ export default function TeamLeavePage() {
   const me = useCurrentEmployee();
   const team = directReports(me.id);
   const teamIds = new Set(team.map((t) => t.id));
-  const [requests, setRequests] = useState<LeaveRequest[]>(LEAVE_REQUESTS);
+  const { locations } = useOrg();
+  const requests = useLeaveRequests(); // the Leave & Attendance module's own requests: a decision here is a decision there
+  const balances = useLeaveBalances();
+  const [notice, setNotice] = useState('');
   const [q, setQ] = useState('');
   const [type, setType] = useState<'All' | LeaveType>('All');
 
-  const allTeamRequests = requests.filter((r) => teamIds.has(r.employeeId));
+  // direct reports' requests, plus requests the module routed to you because the requester has no manager
+  const allTeamRequests = requests.filter((r) => r.employeeId !== me.id && (teamIds.has(r.employeeId) || r.approverId === me.id) && r.status !== 'Withdrawn' && r.status !== 'Cancelled');
   const teamRequests = allTeamRequests.filter((r) => (type === 'All' || r.type === type) && matchesEmployee(employeeById(r.employeeId)!, q));
   const visibleTeam = team.filter((e) => matchesEmployee(e, q));
   const pending = teamRequests.filter((r) => r.status === 'Pending');
@@ -35,7 +41,10 @@ export default function TeamLeavePage() {
   const approved = allTeamRequests.filter((r) => r.status === 'Approved').length;
   const rejected = allTeamRequests.filter((r) => r.status === 'Rejected').length;
 
-  const act = (id: string, status: LeaveRequest['status']) => setRequests((prev) => prev.map((r) => (r.id === id ? { ...r, status } : r)));
+  const act = (id: string, status: 'Approved' | 'Rejected') => {
+    const res = decideLeave(id, status, me.id, locations);
+    setNotice(res.ok ? '' : (res.message ?? 'Could not record the decision.'));
+  };
 
   return (
     <div className="tx-page">
@@ -49,6 +58,12 @@ export default function TeamLeavePage() {
           { label: 'Rejected', value: rejected, icon: <UserXIcon />, tone: 'red', hint: 'Requests declined' },
         ]}
       />
+
+      {notice && (
+        <div className="tx-count" role="alert" style={{ color: '#b91c1c', margin: '0 0 10px' }}>
+          {notice}
+        </div>
+      )}
 
       <Card>
         <div className="tbar">
@@ -92,10 +107,11 @@ export default function TeamLeavePage() {
                     </div>
                     <div className="tx-s">
                       {r.fromDate} → {r.toDate} · {r.reason}
+                      {!teamIds.has(r.employeeId) && r.approverVia ? ` · routed to you as ${r.approverVia}` : ''}
                     </div>
                   </div>
                   <span className="tx-pill">
-                    {r.type} · {r.days} day(s)
+                    {r.typeLabel} · {r.days} day(s)
                   </span>
                   <div className="tx-actions">
                     <Button size="sm" variant="success" onClick={() => act(r.id, 'Approved')}>
@@ -126,7 +142,7 @@ export default function TeamLeavePage() {
                   <div className="tx-main">
                     <div className="tx-t">
                       {e.name}
-                      <EmpId code={e.employeeCode} /> · {r.type} leave
+                      <EmpId code={e.employeeCode} /> · {r.typeLabel}
                     </div>
                     <div className="tx-s">
                       {r.fromDate} → {r.toDate} · {r.days} day(s)
@@ -157,7 +173,7 @@ export default function TeamLeavePage() {
               </thead>
               <tbody>
                 {visibleTeam.map((e) => {
-                  const bal = LEAVE_BALANCES.filter((b) => b.employeeId === e.id);
+                  const bal = balances.filter((b) => b.employeeId === e.id);
                   return (
                     <tr key={e.id}>
                       <td>
@@ -177,13 +193,16 @@ export default function TeamLeavePage() {
                       {BALANCE_TYPES.map((t) => {
                         const b = bal.find((x) => x.type === t);
                         if (!b) return <td key={t} className="mono">—</td>;
-                        const left = b.entitled - b.taken;
-                        const usedPct = b.entitled > 0 ? Math.min(100, Math.round((b.taken / b.entitled) * 100)) : 0;
+                        const left = b.left;
+                        const usedPct = b.entitled > 0 ? Math.min(100, Math.round(((b.taken + b.pending) / b.entitled) * 100)) : 0;
                         return (
                           <td key={t}>
                             <div className="tx-bal">
                               <b>{left}</b>
-                              <small>left of {b.entitled}</small>
+                              <small>
+                                left of {b.entitled}
+                                {b.pending ? ` · ${b.pending} pending` : ''}
+                              </small>
                               <div className="tx-bar">
                                 <i className={usedPct >= 90 ? 'red' : usedPct >= 70 ? 'amber' : undefined} style={{ width: `${usedPct}%` }} />
                               </div>

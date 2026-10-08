@@ -29,8 +29,8 @@ const shift = (iso: string, years: number, months = 0) => {
 };
 
 export const REQUIRED_DOCS = {
-  uae: ['Passport Copy', 'Signed Company Offer Letter', 'Attested Educational Certificate', 'Labour Card', 'Residence Visa', 'Emirates ID', 'Signed NDA', 'UAE Driving Licence', 'Medical Insurance E-Card', 'KPI', 'Passport Size Photo', 'Casual Photo'],
-  india: ['Passport Copy', 'Signed Company Offer Letter', 'Highest Educational Certificate', 'PAN Card', 'Aadhaar Card', 'Passbook / Bank Statement', 'Signed NDA', 'Signed Employment Contract', 'Insurance Document', 'KPI', 'Passport Size Photo', 'Casual Photo'],
+  uae: ['Passport Copy', 'Signed Company Offer Letter', 'Attested Educational Certificate', 'Labour Card', 'Residence Visa', 'Emirates ID', 'Signed NDA', 'UAE Driving Licence', 'Medical Insurance E-Card', 'Passport Size Photo', 'Casual Photo'],
+  india: ['Passport Copy', 'Signed Company Offer Letter', 'Highest Educational Certificate', 'PAN Card', 'Aadhaar Card', 'Passbook / Bank Statement', 'Signed NDA', 'Signed Employment Contract', 'Insurance Document', 'Passport Size Photo', 'Casual Photo'],
 };
 
 const PERSONAL: Record<string, { gender: string; marital: string; blood: string }> = {

@@ -18,7 +18,7 @@ export default function AdministrationPage() {
         <StatStrip
           items={[
             { label: 'Companies', value: companies.length, icon: <BuildingIcon />, tone: 'blue', href: '/admin/companies' },
-            { label: 'Departments', value: departments.length, icon: <TreeIcon />, tone: 'purple', href: '/admin/structure' },
+            { label: 'Departments', value: departments.length, icon: <TreeIcon />, tone: 'purple', hint: `${new Set(departments.map((d) => d.name.trim().toLowerCase())).size} distinct names across ${companies.length} companies`, href: '/admin/structure' },
             { label: 'Locations', value: locations.length, icon: <MapPinIcon />, tone: 'green', href: '/admin/settings' },
             { label: 'Admin tools', value: tools, icon: <GearIcon />, tone: 'gray', hint: `${ADMIN.length} sections` },
           ]}

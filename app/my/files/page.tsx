@@ -3,16 +3,16 @@
 import { useRef, useState } from 'react';
 import { useCurrentEmployee } from '@/context/AppContext';
 import { useDocuments } from '@/context/DocumentsContext';
-import { ExpiryState } from '@/lib/types';
+import { VaultDoc, VaultStatus, stateOfDate, useExpiryVersion, vaultDocsFor } from '@/lib/expiryRegister';
 import { PageHeader } from '@/components/ui/PageHeader';
 import { Card, CardHeader, EmptyState } from '@/components/ui/Card';
 import { StatStrip } from '@/components/ui/StatStrip';
 import { FilterChips } from '@/components/ui/FilterChips';
-import { DocTile } from '@/components/ui/DocTile';
+import { VaultTile } from '@/components/expiry/VaultTile';
 import { DocumentViewer, ViewableDoc, documentNumber } from '@/components/profile/DocumentViewer';
 import { CheckIcon, ClockIcon, FileTextIcon, FolderIcon, SearchIcon, UploadIcon, WarnIcon } from '@/components/icons';
 
-type DocFilter = 'all' | Extract<ExpiryState, 'ok' | 'soon' | 'expired'>;
+type DocFilter = 'all' | Extract<VaultStatus, 'ok' | 'soon' | 'expired'>;
 
 export default function MyFilesPage() {
   const me = useCurrentEmployee();
@@ -22,11 +22,14 @@ export default function MyFilesPage() {
   const [filter, setFilter] = useState<DocFilter>('all');
   const picker = useRef<HTMLInputElement>(null);
 
-  const open = (d: (typeof me.documents)[number]) => setViewing({ name: d.type, expiryDate: d.expiryDate, state: d.state, number: documentNumber(me, d.type), onFile: true });
-  const count = (s: ExpiryState) => me.documents.filter((d) => d.state === s).length;
+  useExpiryVersion();
+  // Dated items come from the shared expiry register; a document is Valid only while it is on file and not expired.
+  const docs = vaultDocsFor(me, (n) => !!fileFor(me.id, n));
+  const open = (d: VaultDoc) => setViewing({ name: d.type, expiryDate: d.expiry, state: d.expiry ? stateOfDate(d.expiry) : undefined, number: documentNumber(me, d.type), onFile: d.uploaded });
+  const count = (s: VaultStatus) => docs.filter((d) => d.status === s).length;
 
   const needle = q.trim().toLowerCase();
-  const shown = me.documents.filter((d) => (filter === 'all' || d.state === filter) && (!needle || d.type.toLowerCase().includes(needle)));
+  const shown = docs.filter((d) => (filter === 'all' || d.status === filter) && (!needle || d.type.toLowerCase().includes(needle)));
 
   return (
     <div>
@@ -35,7 +38,7 @@ export default function MyFilesPage() {
       <div className="ss-strip">
         <StatStrip
           items={[
-            { label: 'Documents on file', value: me.documents.length, icon: <FileTextIcon />, tone: 'blue', hint: 'Passport, IDs, certificates' },
+            { label: 'Documents on file', value: docs.length, icon: <FileTextIcon />, tone: 'blue', hint: 'Passport, IDs, certificates' },
             { label: 'Valid', value: count('ok'), icon: <CheckIcon />, tone: 'green' },
             { label: 'Expiring soon', value: count('soon'), icon: <ClockIcon />, tone: 'amber', hint: 'Renew in advance' },
             { label: 'Expired', value: count('expired'), icon: <WarnIcon />, tone: 'red', hint: 'Needs action' },
@@ -46,7 +49,7 @@ export default function MyFilesPage() {
       <Card>
         <CardHeader
           title="Document vault"
-          sub={`${me.documents.length} document(s)`}
+          sub={`${docs.length} document(s)`}
           action={
             <button className="chip" onClick={() => picker.current?.click()}>
               <UploadIcon /> Upload
@@ -67,7 +70,7 @@ export default function MyFilesPage() {
             ev.target.value = '';
           }}
         />
-        {!me.documents.length ? (
+        {!docs.length ? (
           <EmptyState icon={<FolderIcon />} title="No documents yet" description="Upload your passport, ID proofs or certificates to keep them on file." />
         ) : (
           <>
@@ -80,7 +83,7 @@ export default function MyFilesPage() {
                 value={filter}
                 onChange={setFilter}
                 options={[
-                  { key: 'all', label: 'All', count: me.documents.length },
+                  { key: 'all', label: 'All', count: docs.length },
                   { key: 'ok', label: 'Valid', count: count('ok') },
                   { key: 'soon', label: 'Expiring soon', count: count('soon') },
                   { key: 'expired', label: 'Expired', count: count('expired') },
@@ -91,7 +94,7 @@ export default function MyFilesPage() {
               {shown.length ? (
                 <div className="ss-docgrid">
                   {shown.map((d) => (
-                    <DocTile key={d.id} name={d.type} expiryDate={d.expiryDate} state={d.state} onOpen={() => open(d)} />
+                    <VaultTile key={d.key} name={d.type} expiryDate={d.expiry} status={d.status} onOpen={() => open(d)} />
                   ))}
                 </div>
               ) : (
@@ -100,7 +103,7 @@ export default function MyFilesPage() {
             </div>
             <div className="ss-foot">
               <span>
-                Showing {shown.length} of {me.documents.length} document(s)
+                Showing {shown.length} of {docs.length} document(s)
               </span>
               <span>Click a document to view or replace it</span>
             </div>
