@@ -4,11 +4,31 @@ import { Role } from '@/lib/types';
 /* Permission catalogue shared by every module: Module → Category → Feature.
    Roles & Permissions reads this to build its accordions; each module can check a grant by feature id. */
 
+/** What a role may do with a feature. "view" is the feature id itself; the others are stored as `<id>#add` etc. */
+export type AccessAction = 'view' | 'add' | 'edit' | 'delete';
+export type ExtraAction = Exclude<AccessAction, 'view'>;
+export const ACTIONS: { key: AccessAction; label: string; short: string; hint: string }[] = [
+  { key: 'view', label: 'View', short: 'V', hint: 'Open and read' },
+  { key: 'add', label: 'Add', short: 'A', hint: 'Create new records' },
+  { key: 'edit', label: 'Edit', short: 'E', hint: 'Change existing records' },
+  { key: 'delete', label: 'Delete', short: 'D', hint: 'Remove records' },
+];
+export const EXTRA_ACTIONS: ExtraAction[] = ['add', 'edit', 'delete'];
+
 export interface AccessFeature {
   id: string;
   label: string;
   custom?: boolean;
+  /** Actions beyond View that make sense here. Empty = a read-only screen. */
+  actions?: ExtraAction[];
 }
+
+export const permKey = (id: string, a: AccessAction) => (a === 'view' ? id : `${id}#${a}`);
+/** Whether a role's permission list allows an action on a feature (Add/Edit/Delete also need View). */
+export const can = (perms: string[], id: string, a: AccessAction = 'view') => perms.includes(id) && (a === 'view' || perms.includes(permKey(id, a)));
+
+const READ_ONLY = /overview|dashboard|calendar|summary|report|analytic|audit|log|payslips|reportees|ex-employees|new hires|notification/i;
+const extraFor = (label: string): ExtraAction[] => (READ_ONLY.test(label) ? [] : ['add', 'edit', 'delete']);
 
 export interface AccessCategory {
   id: string;
@@ -113,7 +133,19 @@ export function buildCatalog(): AccessModule[] {
       features: s.items.map((i) => ({ id: `administration:${i.key}`, label: i.label })),
     })),
   };
-  return [admin, employee, leave, asset, payroll, renewals];
+  const all = [admin, employee, leave, asset, payroll, renewals];
+  all.forEach((m) => m.categories.forEach((c) => c.features.forEach((f) => (f.actions ??= extraFor(f.label)))));
+  return all;
+}
+
+/** Extra actions a built-in role gets by default on a feature it can see. */
+function defaultActions(role: Role, moduleId: string, c: AccessCategory, f: AccessFeature): ExtraAction[] {
+  const have = f.actions ?? [];
+  if (role === 'Super Admin') return have;
+  if (role === 'HR') return moduleId === 'administration' ? have.filter((a) => a !== 'delete') : have;
+  if (role === 'Office Admin') return have.filter((a) => a !== 'delete');
+  if (c.rank <= 2) return have.filter((a) => (role === 'Team Lead' ? a !== 'delete' : a === 'add'));
+  return [];
 }
 
 /** Default grants for the built-in roles, so the matrix starts from sensible access. */
@@ -129,7 +161,7 @@ export function defaultGrants(role: Role, catalog: AccessModule[]): string[] {
         else allowed = p.modules.includes('operations' as RailModule);
       } else if (m.id === 'administration') allowed = p.modules.includes('administration' as RailModule);
       else allowed = RANK[role] >= c.rank;
-      if (allowed) c.features.forEach((f) => out.push(f.id));
+      if (allowed) c.features.forEach((f) => out.push(f.id, ...defaultActions(role, m.id, c, f).map((a) => permKey(f.id, a))));
     });
   });
   return out;

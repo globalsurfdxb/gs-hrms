@@ -412,6 +412,8 @@
     (ORG().companies || []).forEach((c) => { if (!DB.companies.some((x) => x.id === c.id)) DB.companies.push(t.companies.find((x) => x.id === c.id)); });
     DB.companies = DB.companies.filter(Boolean);
   }
+  LA.opsFilter = (v) => opsFilter(v);
+  LA.statStrip = (items) => statStrip(items);
   LA.orgChanged = () => {
     if (!window.__laRoot) return;
     // A different person signed in: flush the previous user's data, then load (or seed) the new user's.
@@ -467,6 +469,24 @@
   LA.ui = (k, d) => (DB.ui[k] === undefined ? d : DB.ui[k]);
   LA.setUi = (k, v) => { DB.ui[k] = v; rr(); };
   LA.setUiRaw = (k, v) => { DB.ui[k] = v; };
+  /* search box that keeps focus while the list re-renders; read the value with LA.ui(key, '') */
+  let searchT = 0;
+  LA.searchBox = (key, placeholder) => `<label class="lbar-s">${ic('search')}<input id="sb-${key}" value="${esc(LA.ui(key, ''))}" placeholder="${esc(placeholder || 'Search…')}" oninput="LA.searchInput('${key}',this)"></label>`;
+  LA.searchInput = (key, el) => {
+    const pos = el.selectionStart;
+    LA.setUiRaw(key, el.value);
+    clearTimeout(searchT);
+    searchT = setTimeout(() => {
+      rr();
+      const n = window.__laRoot && window.__laRoot.getElementById('sb-' + key);
+      if (n) { n.focus(); try { n.setSelectionRange(pos, pos); } catch { /* ignore */ } }
+    }, 180);
+  };
+  /* filter chips: options [{v, l, n}] (n = optional count); the chosen value is LA.ui(key, def) */
+  LA.chips = (key, options, def) => {
+    const cur = LA.ui(key, def === undefined ? options[0].v : def);
+    return `<span class="chips">${options.map((o) => `<span class="chip ${String(o.v) === String(cur) ? 'on' : ''}" onclick="LA.setUi('${key}','${esc(o.v)}')">${esc(o.l)}${o.n !== undefined ? ` <b>${o.n}</b>` : ''}</span>`).join('')}</span>`;
+  };
   LA.resetUi = (keys) => { keys.forEach((k) => { delete DB.ui[k]; }); rr(); };
 
   /* ---------- location scope ---------- */
@@ -602,7 +622,6 @@
   };
 
   /* ---------- shared UI snippets ---------- */
-  LA.searchBox = (key, ph, extra) => `<div class="fld" style="min-width:200px"><label>Search</label><input id="s_${key}" type="text" value="${esc(LA.ui(key, ''))}" placeholder="${esc(ph || 'Search…')}" oninput="LA.setUiRaw('${key}',this.value);LA.rr()" ${extra || ''}></div>`;
   LA.empty = (msg) => `<div class="empty"><div class="ei">${ic('inbox')}</div>${esc(msg || 'Nothing to show')}</div>`;
   LA.matches = (q, ...vals) => !q || vals.some((v) => String(v == null ? '' : v).toLowerCase().includes(q.toLowerCase()));
   LA.statusPill = (st) => ({ Approved: bdg('s-g', 'Approved'), Pending: bdg('s-a', 'Pending'), Rejected: bdg('s-r', 'Rejected'), Withdrawn: bdg('s-gray', 'Withdrawn'), Cancelled: bdg('s-gray', 'Cancelled') }[st] || bdg('s-gray', esc(st)));

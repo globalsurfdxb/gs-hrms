@@ -11,9 +11,11 @@ import { PageHeader } from '@/components/ui/PageHeader';
 import { Card, Button } from '@/components/ui/Card';
 import { SearchSelect } from '@/components/ui/SearchSelect';
 import { EmpId } from '@/components/ui/EmployeeBits';
-import { CheckIcon, UploadIcon, XIcon } from '@/components/icons';
+import { CheckIcon, ReceiptIcon, UploadIcon, WarnIcon, XIcon } from '@/components/icons';
 
 const MAX_RECEIPT_BYTES = 5 * 1024 * 1024;
+
+type Field = 'category' | 'amount' | 'date' | 'project' | 'receipt';
 
 function Fg({ label, required, full, children }: { label: string; required?: boolean; full?: boolean; children: React.ReactNode }) {
   return (
@@ -21,6 +23,21 @@ function Fg({ label, required, full, children }: { label: string; required?: boo
       <label>
         {label} {required && <span className="req">*</span>}
       </label>
+      {children}
+    </div>
+  );
+}
+
+function Section({ n, title, desc, children }: { n: number; title: string; desc: string; children: React.ReactNode }) {
+  return (
+    <div className="tx-sec">
+      <div className="tx-sec-h">
+        <span className="n">{n}</span>
+        <div>
+          <h3>{title}</h3>
+          <span className="d">{desc}</span>
+        </div>
+      </div>
       {children}
     </div>
   );
@@ -44,6 +61,7 @@ export default function NewClaimPage() {
   const [description, setDescription] = useState('');
   const [receipt, setReceipt] = useState<{ name: string; size: number } | null>(null);
   const [formError, setFormError] = useState('');
+  const [errField, setErrField] = useState<Field | null>(null);
   const [submittedId, setSubmittedId] = useState<string | null>(null);
 
   const claimant = employeeById(claimantId) ?? me;
@@ -58,6 +76,16 @@ export default function NewClaimPage() {
   const canPickClaimant = role !== 'Employee';
   const eligibleClaimants = EMPLOYEES.filter((e) => statusOf(e) === 'Active');
   const projects = [...new Set(claims.map((c) => c.project))];
+  const hasAmount = Number.isFinite(amountNum) && amountNum > 0;
+  const bad = (f: Field) => (errField === f ? 'tx-input-err' : undefined);
+  const clearError = () => {
+    setFormError('');
+    setErrField(null);
+  };
+  const fail = (field: Field, msg: string) => {
+    setErrField(field);
+    setFormError(msg);
+  };
 
   const reset = () => {
     setSubmittedId(null);
@@ -66,44 +94,44 @@ export default function NewClaimPage() {
     setDescription('');
     setReceipt(null);
     setDate(REFERENCE_TODAY);
-    setFormError('');
+    clearError();
   };
 
   const pickFile = (file: File | undefined) => {
     if (!file) return;
     if (file.size > MAX_RECEIPT_BYTES) {
-      setFormError('The receipt is larger than 5 MB. Choose a smaller file or compress it.');
+      fail('receipt', 'The receipt is larger than 5 MB. Choose a smaller file or compress it.');
       return;
     }
-    setFormError('');
+    clearError();
     setReceipt({ name: file.name, size: file.size });
   };
 
   const submit = () => {
-    if (!category) return setFormError('Choose a category — none are active right now.');
-    if (!Number.isFinite(amountNum) || amountNum <= 0) return setFormError('Enter an amount greater than 0.');
-    if (!date || date > REFERENCE_TODAY) return setFormError('Choose the date of the expense (today or earlier).');
-    if (!project.trim()) return setFormError('Enter the project or cost centre.');
-    setFormError('');
+    if (!category) return fail('category', 'Choose a category — none are active right now.');
+    if (!hasAmount) return fail('amount', 'Enter an amount greater than 0.');
+    if (!date || date > REFERENCE_TODAY) return fail('date', 'Choose the date of the expense (today or earlier).');
+    if (!project.trim()) return fail('project', 'Enter the project or cost centre.');
+    clearError();
     const id = submitClaim({ employeeId: claimantId, category, amount: amountNum, currency: cur, date, project: project.trim(), description: description.trim(), receipt: receipt?.name });
     setSubmittedId(id);
   };
 
   if (submittedId) {
     return (
-      <div>
+      <div className="tx-page">
         <PageHeader eyebrow="Expense Claims" title="New Claim" />
         <Card>
-          <div style={{ textAlign: 'center', padding: '48px 24px' }}>
-            <div style={{ width: 56, height: 56, borderRadius: '50%', background: 'var(--success-50)', color: '#15803D', display: 'grid', placeItems: 'center', margin: '0 auto' }}>
+          <div className="tx-done">
+            <div className="ok">
               <CheckIcon style={{ width: 28, height: 28 }} />
             </div>
-            <h3 style={{ marginTop: 16 }}>Claim submitted</h3>
-            <p style={{ marginTop: 4, color: 'var(--muted)', maxWidth: 420, marginLeft: 'auto', marginRight: 'auto' }}>
+            <h3>Claim submitted</h3>
+            <p>
               {cur} {amountNum.toLocaleString('en-US')} for {category} {claimant.id !== me.id ? `on behalf of ${claimant.name} (${claimant.employeeCode}) ` : ''}has been sent{' '}
               {overLimit ? 'for additional management approval' : approver ? `to ${approver.name} (${approver.employeeCode}) for approval` : 'to your approver'}. Reference <b>{submittedId}</b>.
             </p>
-            <div style={{ display: 'flex', gap: 8, justifyContent: 'center', marginTop: 18 }}>
+            <div className="btns">
               <Link href="/expense/claims">
                 <Button variant="ghost">View all claims</Button>
               </Link>
@@ -117,169 +145,243 @@ export default function NewClaimPage() {
     );
   }
 
+  const missing = [!hasAmount && 'an amount', !project.trim() && 'a project or cost centre'].filter(Boolean) as string[];
+
   return (
-    <div>
-      <PageHeader eyebrow="Expense Claims" title="New Claim" />
-      <Card>
-        <div className="wizbody">
-          <div className="form-grid">
-            <Fg label="Claimant" full={canPickClaimant}>
-              {canPickClaimant ? (
-                <SearchSelect
-                  options={eligibleClaimants.map((e) => ({ value: e.id, label: e.name, meta: `${e.employeeCode} · ${e.department}` }))}
-                  value={claimantId}
-                  onChange={(v) => {
-                    setClaimantId(v);
-                    setFormError('');
-                  }}
-                  placeholder="Search by name or employee ID…"
-                  emptyText="No employees found"
-                />
-              ) : (
-                <input value={`${me.name} · ${me.employeeCode}`} readOnly />
-              )}
-              {canPickClaimant && <span className="hint">Submitting on behalf of another employee is available to HR and administrators. Currency and policy follow the claimant&apos;s location.</span>}
-            </Fg>
-            <Fg label="Category" required>
-              <select value={category} onChange={(e) => setCategory(e.target.value)}>
-                {activeCategories.map((c) => (
-                  <option key={c.id}>{c.name}</option>
-                ))}
-              </select>
-            </Fg>
-            <Fg label="Amount" required>
-              <div style={{ display: 'flex' }}>
-                <span
-                  style={{ display: 'grid', placeItems: 'center', padding: '0 12px', border: '1px solid var(--border)', borderRight: 'none', borderRadius: 'var(--r-sm) 0 0 var(--r-sm)', background: 'var(--bg)', fontSize: 13, fontWeight: 700, color: 'var(--text-2)' }}
-                >
-                  {cur}
-                </span>
-                <input
-                  type="number"
-                  min={0}
-                  value={amount}
-                  onChange={(e) => {
-                    setAmount(e.target.value);
-                    setFormError('');
-                  }}
-                  placeholder="0"
-                  style={{ flex: 1, minWidth: 0, borderTopLeftRadius: 0, borderBottomLeftRadius: 0 }}
-                />
-              </div>
-              <span className="hint">
-                Paid in {cur} — set by {claimant.name.split(' ')[0]}&apos;s location ({locationName(claimant.location)}).
-              </span>
-            </Fg>
-            <Fg label="Expense date" required>
-              <input type="date" max={REFERENCE_TODAY} value={date} onChange={(e) => setDate(e.target.value)} />
-            </Fg>
-            <Fg label="Project / cost centre" required>
-              <input
-                list="claim-projects"
-                value={project}
-                onChange={(e) => {
-                  setProject(e.target.value);
-                  setFormError('');
-                }}
-                placeholder="e.g. Client onsite — Sales"
-              />
-              <datalist id="claim-projects">
-                {projects.map((p) => (
-                  <option key={p} value={p} />
-                ))}
-              </datalist>
-            </Fg>
-            <div className="fg">
-              <label>Policy limit for {category || 'category'}</label>
-              <div style={{ fontSize: 13, fontWeight: 500, paddingTop: 8 }}>{limit === Infinity ? 'No limit configured' : `${cur} ${limit.toLocaleString('en-US')}`}</div>
-            </div>
-            <div className="fg">
-              <label>Approval route</label>
-              <div style={{ fontSize: 13, fontWeight: 500, paddingTop: 8 }}>
-                {approver ? (
-                  <>
-                    {approver.name}
-                    <EmpId code={approver.employeeCode} />
-                  </>
-                ) : (
-                  'HR'
-                )}
-                {overLimit && amount ? <span style={{ color: '#B45309' }}> → management sign-off</span> : null}
-              </div>
-            </div>
-            <Fg label="Description" full>
-              <textarea
-                value={description}
-                onChange={(e) => setDescription(e.target.value)}
-                rows={3}
-                placeholder="What was this expense for?"
-                style={{ padding: '9px 12px', border: '1px solid var(--border)', borderRadius: 'var(--r-sm)', fontSize: 13, fontFamily: 'inherit', resize: 'vertical' }}
-              />
-            </Fg>
-            <Fg label="Receipt" full>
-              <input ref={fileRef} type="file" accept="image/*,.pdf" hidden onChange={(e) => pickFile(e.target.files?.[0])} />
-              {receipt ? (
-                <div style={{ display: 'flex', alignItems: 'center', gap: 10, border: '1px solid var(--border)', borderRadius: 'var(--r-sm)', padding: '10px 12px' }}>
-                  <UploadIcon style={{ width: 16, height: 16, color: 'var(--primary)' }} />
-                  <div style={{ flex: 1, fontSize: 13 }}>
-                    <b>{receipt.name}</b> <span style={{ color: 'var(--muted)' }}>· {kb(receipt.size)}</span>
-                  </div>
-                  <button
-                    type="button"
-                    className="icon-act"
-                    title="Remove receipt"
-                    onClick={() => {
-                      setReceipt(null);
-                      if (fileRef.current) fileRef.current.value = '';
+    <div className="tx-page">
+      <PageHeader eyebrow="Expense Claims" title="New Claim" description="Fill in the details of the expense. The claim is routed for approval as soon as you submit it." />
+
+      <div className="tx-layout">
+        <Card>
+          <Section n={1} title="Claimant" desc="Who is this expense for?">
+            <div className="form-grid">
+              <Fg label="Claimant" full>
+                {canPickClaimant ? (
+                  <SearchSelect
+                    options={eligibleClaimants.map((e) => ({ value: e.id, label: e.name, meta: `${e.employeeCode} · ${e.department}` }))}
+                    value={claimantId}
+                    onChange={(v) => {
+                      setClaimantId(v);
+                      clearError();
                     }}
-                  >
-                    <XIcon />
-                  </button>
-                </div>
-              ) : (
-                <div
-                  className="uploader"
-                  role="button"
-                  tabIndex={0}
-                  style={{ cursor: 'pointer' }}
-                  onClick={() => fileRef.current?.click()}
-                  onKeyDown={(e) => (e.key === 'Enter' || e.key === ' ') && fileRef.current?.click()}
-                  onDragOver={(e) => e.preventDefault()}
-                  onDrop={(e) => {
-                    e.preventDefault();
-                    pickFile(e.dataTransfer.files?.[0]);
+                    placeholder="Search by name or employee ID…"
+                    emptyText="No employees found"
+                  />
+                ) : (
+                  <input value={`${me.name} · ${me.employeeCode}`} readOnly />
+                )}
+                {canPickClaimant && <span className="hint">Submitting on behalf of another employee is available to HR and administrators. Currency and policy follow the claimant&apos;s location.</span>}
+              </Fg>
+            </div>
+          </Section>
+
+          <Section n={2} title="Expense details" desc="What was spent, how much and when.">
+            <div className="form-grid">
+              <Fg label="Category" required>
+                <select
+                  value={category}
+                  className={bad('category')}
+                  onChange={(e) => {
+                    setCategory(e.target.value);
+                    clearError();
                   }}
                 >
-                  <UploadIcon style={{ margin: '0 auto 8px' }} />
-                  Drop a file or click to upload
-                  <div style={{ fontSize: 11, color: 'var(--faint)', marginTop: 2 }}>Image or PDF, up to 5 MB · attaching a receipt speeds up approval</div>
+                  {activeCategories.map((c) => (
+                    <option key={c.id}>{c.name}</option>
+                  ))}
+                </select>
+                {cat?.description && <span className="hint">{cat.description}</span>}
+              </Fg>
+              <Fg label="Amount" required>
+                <div className="tx-amt-wrap">
+                  <span className="tx-amt-cur">{cur}</span>
+                  <input
+                    type="number"
+                    min={0}
+                    value={amount}
+                    className={bad('amount')}
+                    onChange={(e) => {
+                      setAmount(e.target.value);
+                      clearError();
+                    }}
+                    placeholder="0"
+                  />
+                </div>
+                <span className="hint">
+                  Paid in {cur} — set by {claimant.name.split(' ')[0]}&apos;s location ({locationName(claimant.location)}).
+                </span>
+              </Fg>
+              <Fg label="Expense date" required>
+                <input
+                  type="date"
+                  max={REFERENCE_TODAY}
+                  value={date}
+                  className={bad('date')}
+                  onChange={(e) => {
+                    setDate(e.target.value);
+                    clearError();
+                  }}
+                />
+              </Fg>
+              <Fg label="Project / cost centre" required>
+                <input
+                  list="claim-projects"
+                  value={project}
+                  className={bad('project')}
+                  onChange={(e) => {
+                    setProject(e.target.value);
+                    clearError();
+                  }}
+                  placeholder="e.g. Client onsite — Sales"
+                />
+                <datalist id="claim-projects">
+                  {projects.map((p) => (
+                    <option key={p} value={p} />
+                  ))}
+                </datalist>
+              </Fg>
+              <Fg label="Description" full>
+                <textarea
+                  value={description}
+                  onChange={(e) => setDescription(e.target.value)}
+                  rows={3}
+                  placeholder="What was this expense for?"
+                  style={{ padding: '9px 12px', border: '1px solid var(--border)', borderRadius: 'var(--r-sm)', fontSize: 13, fontFamily: 'inherit', resize: 'vertical' }}
+                />
+              </Fg>
+            </div>
+          </Section>
+
+          <Section n={3} title="Receipt" desc="Optional, but attaching one speeds up approval.">
+            <input ref={fileRef} type="file" accept="image/*,.pdf" hidden onChange={(e) => pickFile(e.target.files?.[0])} />
+            {receipt ? (
+              <div className="tx-file">
+                <span className="tx-av sm">
+                  <UploadIcon />
+                </span>
+                <div style={{ flex: 1, fontSize: 13, minWidth: 0, overflowWrap: 'anywhere' }}>
+                  <b>{receipt.name}</b> <span style={{ color: 'var(--muted)' }}>· {kb(receipt.size)}</span>
+                </div>
+                <button
+                  type="button"
+                  className="icon-act"
+                  title="Remove receipt"
+                  onClick={() => {
+                    setReceipt(null);
+                    if (fileRef.current) fileRef.current.value = '';
+                  }}
+                >
+                  <XIcon />
+                </button>
+              </div>
+            ) : (
+              <div
+                className="uploader"
+                role="button"
+                tabIndex={0}
+                style={{ cursor: 'pointer', ...(errField === 'receipt' ? { borderColor: 'var(--danger)' } : {}) }}
+                onClick={() => fileRef.current?.click()}
+                onKeyDown={(e) => (e.key === 'Enter' || e.key === ' ') && fileRef.current?.click()}
+                onDragOver={(e) => e.preventDefault()}
+                onDrop={(e) => {
+                  e.preventDefault();
+                  pickFile(e.dataTransfer.files?.[0]);
+                }}
+              >
+                <UploadIcon style={{ margin: '0 auto 8px' }} />
+                Drop a file or click to upload
+                <div style={{ fontSize: 11, color: 'var(--faint)', marginTop: 2 }}>Image or PDF, up to 5 MB</div>
+              </div>
+            )}
+          </Section>
+
+          {(duplicate || (overLimit && !!amount) || formError) && (
+            <div className="tx-sec" style={{ display: 'grid', gap: 10 }}>
+              {duplicate && (
+                <div className="note-box warn">
+                  <WarnIcon />
+                  <div>A claim for the same category, amount and date already exists for {claimant.name}. Check it isn&apos;t a duplicate before submitting.</div>
                 </div>
               )}
-            </Fg>
-            {duplicate && (
-              <div className="fg full note-box warn">
-                <div>A claim for the same category, amount and date already exists for {claimant.name}. Check it isn&apos;t a duplicate before submitting.</div>
-              </div>
-            )}
-            {overLimit && amount && (
-              <div className="fg full note-box warn">
-                <div>
-                  This claim exceeds the {cur} {limit.toLocaleString('en-US')} policy limit for {category} and will require an additional management approval step.
+              {overLimit && !!amount && (
+                <div className="note-box warn">
+                  <WarnIcon />
+                  <div>
+                    This claim exceeds the {cur} {limit.toLocaleString('en-US')} policy limit for {category} and will require an additional management approval step.
+                  </div>
                 </div>
-              </div>
-            )}
-            {formError && <div className="fg full" style={{ color: 'var(--danger)', fontSize: 12 }}>{formError}</div>}
+              )}
+              {formError && (
+                <div className="tx-err" role="alert">
+                  <WarnIcon />
+                  {formError}
+                </div>
+              )}
+            </div>
+          )}
+
+          <div className="wizfoot">
+            <Link href="/expense/claims">
+              <Button variant="ghost">Cancel</Button>
+            </Link>
+            <Button variant="primary" disabled={!amount || !project.trim()} onClick={submit}>
+              Submit claim
+            </Button>
           </div>
+        </Card>
+
+        <div className="tx-side">
+          <Card>
+            <div className="tx-sum">
+              <h3>Claim summary</h3>
+              <div className="tx-sum-amt">
+                <small>{cur}</small>
+                {hasAmount ? amountNum.toLocaleString('en-US') : '0'}
+              </div>
+              <div className="tx-sum-row">
+                <span>Claimant</span>
+                <span>
+                  {claimant.name}
+                  <EmpId code={claimant.employeeCode} />
+                </span>
+              </div>
+              <div className="tx-sum-row">
+                <span>Category</span>
+                <span>{category || '—'}</span>
+              </div>
+              <div className="tx-sum-row">
+                <span>Expense date</span>
+                <span>{date || '—'}</span>
+              </div>
+              <div className="tx-sum-row">
+                <span>Project</span>
+                <span>{project.trim() || '—'}</span>
+              </div>
+              <div className="tx-sum-row">
+                <span>Receipt</span>
+                <span>{receipt ? 'Attached' : 'None'}</span>
+              </div>
+              <div className="tx-sum-row">
+                <span>Policy limit</span>
+                <span>{limit === Infinity ? 'No limit configured' : `${cur} ${limit.toLocaleString('en-US')}`}</span>
+              </div>
+              <div className="tx-sum-row">
+                <span>Approval route</span>
+                <span>
+                  {approver ? approver.name : 'HR'}
+                  {overLimit && amount ? <span style={{ color: '#B45309' }}> → management sign-off</span> : null}
+                </span>
+              </div>
+            </div>
+          </Card>
+          {missing.length > 0 && (
+            <div className="note-box" style={{ marginTop: 12 }}>
+              <ReceiptIcon />
+              <div>To submit, add {missing.join(' and ')}.</div>
+            </div>
+          )}
         </div>
-        <div className="wizfoot">
-          <Link href="/expense/claims">
-            <Button variant="ghost">Cancel</Button>
-          </Link>
-          <Button variant="primary" disabled={!amount || !project.trim()} onClick={submit}>
-            Submit claim
-          </Button>
-        </div>
-      </Card>
+      </div>
     </div>
   );
 }

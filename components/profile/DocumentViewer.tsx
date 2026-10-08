@@ -3,7 +3,7 @@
 import { useRef, useState } from 'react';
 import { Drawer } from '@/components/ui/Drawer';
 import { Badge, ExpiryBadge } from '@/components/ui/Badge';
-import { DownloadIcon, UploadIcon } from '@/components/icons';
+import { DownloadIcon, FileTextIcon, UploadIcon } from '@/components/icons';
 import { Employee, ExpiryState } from '@/lib/types';
 
 export interface UploadedFile {
@@ -127,17 +127,19 @@ export function DocumentViewer({
     >
       {d && (
         <div>
-          <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 14 }}>
+          <div className="lc-dv-bar">
+            <span className="lc-ic">
+              <FileTextIcon />
+            </span>
+            <div style={{ minWidth: 0, flex: 1 }}>
+              <div className="lc-dv-t">{d.name}</div>
+              <div className="lc-dv-s">{file ? `${file.name} · ${kb(file.size)} · added ${file.uploadedOn}` : d.onFile ? 'Copy held by HR' : 'No file on record'}</div>
+            </div>
             {status}
-            {file && (
-              <span style={{ fontSize: 12, color: 'var(--muted)' }}>
-                {file.name} · {kb(file.size)} · added {file.uploadedOn}
-              </span>
-            )}
           </div>
-          {error && <div style={{ color: 'var(--danger, #b91c1c)', fontSize: 12.5, marginBottom: 10 }}>{error}</div>}
+          {error && <div className="lc-dv-err">{error}</div>}
 
-          <div style={{ border: '1px solid var(--border)', borderRadius: 10, overflow: 'hidden', background: '#f8fafc', minHeight: 260 }}>
+          <div className="lc-dv-frame">
             {file && file.mime.startsWith('image/') ? (
               // eslint-disable-next-line @next/next/no-img-element
               <img src={file.url} alt={d.name} style={{ display: 'block', width: '100%', height: 'auto' }} />
@@ -162,7 +164,14 @@ export function DocumentViewer({
                 <p style={{ fontSize: 12, color: 'var(--muted)', marginTop: 14 }}>The scanned copy is held by HR. Upload a file to preview it here.</p>
               </div>
             ) : (
-              <div style={{ padding: 40, textAlign: 'center', color: 'var(--muted)' }}>
+              <div
+                className="uploader lc-dv-drop"
+                role="button"
+                tabIndex={0}
+                onClick={() => input.current?.click()}
+                onKeyDown={(ev) => (ev.key === 'Enter' || ev.key === ' ') && (ev.preventDefault(), input.current?.click())}
+              >
+                <UploadIcon />
                 <div style={{ fontWeight: 600, color: 'var(--text-2)', marginBottom: 4 }}>Not uploaded yet</div>
                 <div style={{ fontSize: 13 }}>Use “Upload file” to add a PDF or image of this document.</div>
               </div>
@@ -170,7 +179,7 @@ export function DocumentViewer({
           </div>
 
           {file && (d.number || d.expiryDate) && (
-            <div style={{ marginTop: 16 }}>
+            <div className="lc-dv-meta">
               {d.number && (
                 <div className="field">
                   <span className="k">Document number</span>

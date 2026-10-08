@@ -6,6 +6,7 @@ import { EMPLOYEES, REFERENCE_TODAY } from '@/lib/data';
 import { useOrg } from '@/context/OrgContext';
 import { useApp, useCurrentEmployee } from '@/context/AppContext';
 import { Role } from '@/lib/types';
+import { useEmployeeVersion } from '@/lib/employeeStore';
 import { LaChrome, laCurrentPath, laPath, setLaChrome } from '@/lib/laStore';
 
 const BASE = '/modules/leave-attendance';
@@ -72,6 +73,7 @@ export function LaHost() {
   const { locations, companies } = useOrg();
   const me = useCurrentEmployee();
   const { role } = useApp();
+  const empVersion = useEmployeeVersion();
 
   /* The module works on the app's own organisation: its locations (with the working week and hours
      set in Administration → Settings), companies, employees and "today". */
@@ -84,7 +86,8 @@ export function LaHost() {
       companies: companies.map((c) => ({ id: c.id, name: c.name, code: c.shortCode, location: c.location, status: c.status })),
       employees: EMPLOYEES.map((e) => ({ id: e.id, code: e.employeeCode, name: e.name, company: e.company, department: e.department, designation: e.designation, location: e.location, managerId: e.reportingManagerId, status: e.employmentStatus, email: e.email, phone: e.phone, doj: e.dateOfJoining, exitDate: e.exitDate, exitReason: e.exitReason })),
     }),
-    [locations, companies, me.employeeCode, role],
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [locations, companies, me.employeeCode, role, empVersion],
   );
   // Declared before the mount effect below so the organisation is published before the runtime loads.
   useEffect(() => {

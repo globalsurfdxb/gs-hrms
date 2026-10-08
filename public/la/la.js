@@ -11,6 +11,7 @@ const __$$ = (sel) => (window.__laRoot ? window.__laRoot.querySelectorAll(sel) :
 
 /* ---------- ICONS ---------- */
 const IC = {
+  search:'M11 19a8 8 0 100-16 8 8 0 000 16zM21 21l-4.3-4.3',
   grid:'M3 3h8v8H3zM13 3h8v8h-8zM13 13h8v8h-8zM3 13h8v8H3z',
   calendar:'M3 4h18v18H3zM16 2v4M8 2v4M3 10h18',
   clock:'M12 22a10 10 0 100-20 10 10 0 000 20zM12 6v6l4 2',
@@ -156,9 +157,20 @@ function tableCard(title,head,rows,opts={}){
 }
 function note(kind,html){return `<div class="note ${kind}">${ic(kind==='warn'?'alert':'shield')}<div>${html}</div></div>`}
 function phFlag(txt){return `<span class="ph-flag">${ic('alert')} ${txt}</span>`}
-function pageHead(title,sub,actions,crumb){return `<div class="page-head"><div>
-  ${crumb?`<div class="crumb">${crumb}</div>`:''}<h1>${title}</h1>${sub?`<div class="sub">${sub}</div>`:''}</div>
+function pageHead(title,sub,actions,crumb){
+  const inOps=(typeof MODULE!=='undefined'&&MODULE==='operations');
+  const eyebrow=inOps?`<a class="eb-link" onclick="backOps()">Operations</a>${crumb?' · '+crumb:''}`:(crumb||'');
+  return `<div class="page-head ph2"><div>
+  ${eyebrow?`<div class="eyebrow">${eyebrow}</div>`:''}<h1>${title}</h1>${sub?`<div class="sub">${sub}</div>`:''}</div>
   ${actions?`<div class="ph-actions">${actions}</div>`:''}</div>`}
+/* A row of summary tiles under the page header. items: [{lbl, val, icon, tone:'b|g|a|r|p', hint}] */
+function statStrip(items){
+  return `<div class="sst">${items.map(i=>`<div class="sst-i"><span class="sst-ic t-${i.tone||'b'}">${ic(i.icon||'grid')}</span><div class="sst-tx"><div class="sst-n">${i.val}</div><div class="sst-l">${i.lbl}</div>${i.hint?`<div class="sst-h">${i.hint}</div>`:''}</div></div>`).join('')}</div>`;
+}
+/* Small search + filter bar that sits above a table inside a card (same look as the app lists). */
+function listBar(inner,count){
+  return `<div class="lbar">${inner}${count!==undefined?`<span class="lbar-n">${count}</span>`:''}</div>`;
+}
 function bar(pct,color){return `<div class="bar"><i style="width:${Math.min(100,pct)}%;${color?'background:'+color:''}"></i></div>`}
 function tabs(items,active,fn){return `<div class="tabs">${items.map(t=>`<div class="tab ${t.k===active?'active':''}" onclick="${fn}('${t.k}')">${t.l}</div>`).join('')}</div>`}
 
@@ -1274,8 +1286,8 @@ function orgOverview(){
     <div class="card-b" style="display:flex;gap:20px;flex-wrap:wrap;margin-top:-46px">
       <div class="pcard" style="width:290px;flex:none">
         <div class="pc-top"><div class="pc-av" style="background:#fff;color:var(--brand);border:1px solid var(--line)">GS</div>
-          <div class="pc-name">GLOBAL SURF IT PVT LTD</div><div class="pc-desig">Kerala, India</div>
-          <div style="margin-top:10px" class="muted">${ic('plug')} globalsurf.in</div></div>
+          <div class="pc-name">Global Surf IT</div><div class="pc-desig">Kerala, India · Dubai, UAE</div>
+          <div style="margin-top:10px" class="muted">${ic('plug')} www.gs-it.ae</div></div>
         <div class="pc-block"><div class="pc-lbl">Quick Links</div><div class="hb muted">${ic('users')} Employees Contact Information</div></div>
       </div>
       <div style="flex:1;min-width:260px;background:#fff;border:1px solid var(--line);border-radius:14px;padding:18px">
@@ -1371,17 +1383,57 @@ function attSummary(){
 function attReg(){return VIEWS['regularization']();}
 function attTeam(){return VIEWS['team-attendance']();}
 /* ---- OPERATIONS ---- */
+const OPS_DESC={
+  processing:'Run and review the daily calculation pipeline',exceptions:'Missing punches, duplicates and invalid records',statuses:'Status master and payroll behaviour',
+  shift:'Working schedules, breaks and patterns',ramadan:'Reduced-hours schedule with automatic revert',leavetypes:'Entitlement, accrual and pay tiers',
+  docverify:'Verify sick-leave medical certificates',balanceadj:'Manual adjustments with an audit trail',carryforward:'Approve and track carry-forward expiry',
+  encashment:'Operational-reason leave encashment',maternity:'Maternity and parental leave cases',holidayset:'Public holidays by company and location',
+  occurrences:'Create, waive and monitor occurrences',discipline:'Recommendations for HR confirmation',workflows:'Per-request approval routing',
+  overtime:'Approve overtime and compensatory off',finalization:'Lock the period before payroll export',payroll:'Payroll-ready attendance and leave output',
+  reports:'Operational reports and CSV exports',audit:'Immutable trail of edits, locks and changes',policy:'Attendance and leave policy settings',
+  companies:'Multi-company structure and branches',roles:'Role-based access across the module',biometric:'Device registry and punch logs',
+  integrations:'Punch API, sync and webhooks',sysaudit:'Cross-company audit and security'
+};
+function opsHubStats(){
+  const L=window.LA||{};let d={};try{d=L.db?L.db():{};}catch(e){}
+  const inLoc=(emp)=>{try{return L.inLoc?L.inLoc(emp):true}catch(e){return true}};
+  const exc=(d.exceptions||[]).filter(x=>x.st==='Open'&&inLoc(x.emp)).length;
+  const failed=(d.rawPunches||[]).filter(p=>String(p.st).startsWith('Failed')).length;
+  let pending=0;try{pending=L.inbox?L.inbox().length:0}catch(e){}
+  const periods=d.periods?Object.values(d.periods):[];
+  const locked=periods.filter(p=>p&&(p.locked||p.st==='Locked')).length;
+  return [
+    {lbl:'Open exceptions',val:exc,icon:'alert',tone:exc?'a':'g',hint:exc?'Need review before processing':'Nothing to review'},
+    {lbl:'Failed punches',val:failed,icon:'device',tone:failed?'r':'g',hint:failed?'Can be reprocessed':'All punches processed'},
+    {lbl:'Pending approvals',val:pending,icon:'check',tone:pending?'b':'g',hint:'Leave, regularization, overtime'},
+    {lbl:'Locked periods',val:locked,icon:'lock',tone:'p',hint:periods.length?`of ${periods.length} location period(s)`:'Lock before payroll export'}
+  ];
+}
 function opsHub(){
   const isAdmin=PERSONAS[PERSONA].admin;
   const secs=OPS_SERVICES.filter(s=>!s.admin||isAdmin);
-  return `<div style="margin-bottom:18px"><h1 style="font-size:22px;font-weight:600">Operations</h1><div class="muted" style="font-size:13.5px;margin-top:3px">Management hub — configuration, processing, compliance and payroll output</div></div>
-    ${secs.map(s=>`<div class="ops-sec">${s.sec}</div><div class="ops-grid">${s.items.map(it=>`<div class="ops-card" onclick="openService('${it[0]}')"><div class="ops-ic" style="background:${it[3]}18;color:${it[3]}">${ic(it[2])}</div><div class="ops-t">${it[1]}</div></div>`).join('')}</div>`).join('')}`;
+  const total=secs.reduce((n,s)=>n+s.items.length,0);
+  return `<div class="page-head ph2"><div><div class="eyebrow">Management hub</div><h1>Operations</h1><div class="sub">Configuration, processing, compliance and payroll output for attendance and leave</div></div></div>
+    ${statStrip(opsHubStats())}
+    <div class="oh-bar"><div class="oh-search">${ic('search')}<input id="opsQ" placeholder="Search tools…" oninput="LA.opsFilter(this.value)" aria-label="Search tools"></div><span class="oh-count" id="opsCount">${total} tools</span></div>
+    <div id="opsNone" class="oh-none" style="display:none">No tools match your search.</div>
+    ${secs.map(s=>`<div class="oh-sec" data-sec><div class="oh-sh"><h2>${s.sec}</h2><span>${s.items.length} tool${s.items.length===1?'':'s'}</span></div><div class="oh-grid">${s.items.map(it=>`<div class="oh-card" role="button" tabindex="0" data-t="${(it[1]+' '+(OPS_DESC[it[0]]||'')+' '+s.sec).toLowerCase()}" onclick="openService('${it[0]}')" onkeydown="if(event.key==='Enter'||event.key===' '){event.preventDefault();openService('${it[0]}')}"><div class="oh-ic" style="background:${it[3]}18;color:${it[3]}">${ic(it[2])}</div><div class="oh-tx"><div class="oh-t">${it[1]}</div><div class="oh-d">${OPS_DESC[it[0]]||''}</div></div><span class="oh-go">${ic('chevR')}</span></div>`).join('')}</div></div>`).join('')}`;
+}
+function opsFilter(v){
+  const root=window.__laRoot;if(!root)return;
+  const q=String(v||'').trim().toLowerCase();let shown=0,total=0;
+  root.querySelectorAll('[data-sec]').forEach(sec=>{
+    let n=0;sec.querySelectorAll('.oh-card').forEach(c=>{total++;const hit=!q||c.getAttribute('data-t').includes(q);c.style.display=hit?'':'none';if(hit){n++;shown++;}});
+    sec.style.display=n?'':'none';
+  });
+  const c=root.getElementById?root.getElementById('opsCount'):root.querySelector('#opsCount');
+  if(c)c.textContent=q?shown+' of '+total+' tools':total+' tools';
+  const none=root.querySelector('#opsNone');if(none)none.style.display=shown?'none':'';
 }
 function opsService(key){
   const svc=SVC_INDEX[key]; if(!svc)return opsHub();
   const view=VIEWS[svc.view]?VIEWS[svc.view]():`<div class="empty">Service unavailable</div>`;
-  const inner=typeof view==='string'?view:view.html;
-  return `<div style="margin-bottom:14px"><button class="btn sm ghost" onclick="backOps()">${ic('chevL')} Operations</button></div>${inner}`;
+  return typeof view==='string'?view:view.html;
 }
 
 /* ---- DISPATCH ---- */

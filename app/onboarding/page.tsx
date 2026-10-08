@@ -2,14 +2,18 @@
 
 import { useMemo, useState } from 'react';
 import { useApp } from '@/context/AppContext';
-import { EMPLOYEES, ONBOARDING_REQUESTS, REFERENCE_TODAY, nextEmployeeCode } from '@/lib/data';
+import { EMPLOYEES, ONBOARDING_REQUESTS, REFERENCE_TODAY, ROLE_SCOPE, nextEmployeeCode } from '@/lib/data';
+import { SYSTEM_ROLES } from '@/lib/access';
 import { useOrg } from '@/context/OrgContext';
 import { SearchSelect } from '@/components/ui/SearchSelect';
-import { Location, LocationDef } from '@/lib/types';
+import { Location, LocationDef, Role } from '@/lib/types';
 import { PageHeader } from '@/components/ui/PageHeader';
-import { Card, CardHeader, Button } from '@/components/ui/Card';
+import { Card, CardHeader, Button, EmptyState } from '@/components/ui/Card';
 import { StatusBadge } from '@/components/ui/Badge';
-import { CheckIcon, UploadIcon, XIcon } from '@/components/icons';
+import { Avatar } from '@/components/ui/Avatar';
+import { StatStrip } from '@/components/ui/StatStrip';
+import { daysBetween } from '@/lib/dates';
+import { CheckIcon, ClockIcon, JoinIcon, SearchIcon, ShieldIcon, UploadIcon, XIcon } from '@/components/icons';
 
 const STEPS = ['Personal', 'Employment', 'Passport / Visa / EID', 'Emergency', 'Experience & Education', 'Family', 'Bank & PF', 'Salary', 'Documents', 'Assets & Approval'];
 
@@ -196,6 +200,8 @@ export default function OnboardingPage() {
   const [office, setOffice] = useState<Location>(location);
   const [done, setDone] = useState(false);
   const [createdCount, setCreatedCount] = useState(0);
+  const [listQ, setListQ] = useState('');
+  const [listStatus, setListStatus] = useState<'All' | (typeof ONBOARDING_REQUESTS)[number]['status']>('All');
 
   const [fullName, setFullName] = useState('');
   const [dob, setDob] = useState('');
@@ -204,6 +210,9 @@ export default function OnboardingPage() {
   const [departmentId, setDepartmentId] = useState('');
   const [designationId, setDesignationId] = useState('');
   const [managerId, setManagerId] = useState('');
+  const [role, setRole] = useState<Role>('Employee');
+  const [workEmail, setWorkEmail] = useState('');
+  const [roleError, setRoleError] = useState('');
   const [visaStep, setVisaStep] = useState(0);
   const [assetFlags, setAssetFlags] = useState<Set<string>>(new Set(['Laptop', 'Access card']));
   const [notifyDocs, setNotifyDocs] = useState(true);
@@ -222,6 +231,9 @@ export default function OnboardingPage() {
   const selectedDept = companyDepts.find((d) => d.id === departmentId);
   const deptDesigs = selectedDept ? designations.filter((x) => x.departmentId === selectedDept.id) : [];
   const employeeCode = nextEmployeeCode(createdCount);
+  const suggestedEmail = fullName.trim() ? `${fullName.trim().split(/\s+/)[0].toLowerCase().replace(/[^a-z0-9]/g, '')}@gs-it.ae` : '';
+  const signInEmail = (workEmail.trim() || suggestedEmail).toLowerCase();
+  const emailTaken = !!signInEmail && EMPLOYEES.some((e) => e.email.toLowerCase() === signInEmail);
   const setExpiry = (doc: string, v: string) => setExpiries((prev) => ({ ...prev, [doc]: v }));
   const docList = isIndia
     ? ['Passport Copy', 'Signed Company Offer Letter', 'Highest Educational Certificate', 'PAN Card', 'Aadhaar Card', 'Passbook / Bank Statement', 'Signed NDA', 'Signed Employment Contract', 'Insurance Document', 'KPI', 'Passport Size Photo', 'Casual Photo']
@@ -254,10 +266,33 @@ export default function OnboardingPage() {
   };
 
   if (!showWizard) {
+    const pipeline = ONBOARDING_REQUESTS;
+    const awaiting = pipeline.filter((r) => r.status === 'Pending Approval').length;
+    const soon = pipeline.filter((r) => {
+      const d = daysBetween(REFERENCE_TODAY, r.startDate);
+      return d >= 0 && d <= 30;
+    }).length;
+    const avgProgress = pipeline.length ? Math.round((pipeline.reduce((n, r) => n + r.step, 0) / pipeline.length / STEPS.length) * 100) : 0;
+    const needle = listQ.trim().toLowerCase();
+    const listed = pipeline.filter(
+      (r) => (listStatus === 'All' || r.status === listStatus) && (!needle || `${r.candidateName} ${r.designation} ${r.department} ${r.location}`.toLowerCase().includes(needle)),
+    );
+    const initialsOf = (name: string) =>
+      name
+        .split(/\s+/)
+        .filter(Boolean)
+        .map((w) => w[0])
+        .slice(0, 2)
+        .join('')
+        .toUpperCase();
+    const startLabel = (iso: string) => {
+      const d = daysBetween(REFERENCE_TODAY, iso);
+      return d === 0 ? 'Starts today' : d > 0 ? `Starts in ${d} day${d === 1 ? '' : 's'}` : `Started ${-d} day${d === -1 ? '' : 's'} ago`;
+    };
     return (
       <div>
         <PageHeader
-          eyebrow="Module 02 · Lifecycle"
+          eyebrow="Employee Lifecycle"
           title="Onboarding"
           description="A guided 10-step wizard capturing the full employee record. Creates the employee and triggers asset provisioning and RMS enrolment."
           actions={
@@ -269,34 +304,100 @@ export default function OnboardingPage() {
             </Button>
           }
         />
-        <Card>
-          <CardHeader title="In-progress onboardings" sub="Across both locations" />
-          {ONBOARDING_REQUESTS.map((r) => (
-            <div key={r.id} className="doc" style={{ margin: '9px 16px' }}>
-              <div className="fic">
-                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.8}>
-                  <path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2" />
-                  <circle cx="9" cy="7" r="4" />
-                  <path d="M19 8v6M22 11h-6" />
-                </svg>
-              </div>
-              <div>
-                <div className="nm">{r.candidateName}</div>
-                <div className="mt">
-                  {r.designation} · {r.department} · {r.location} · Starts {r.startDate}
+
+        <StatStrip
+          items={[
+            { label: 'In the pipeline', value: pipeline.length, icon: <JoinIcon />, tone: 'blue', hint: 'New joiners being set up' },
+            { label: 'Awaiting approval', value: awaiting, icon: <ShieldIcon />, tone: 'amber', hint: 'Ready for sign-off' },
+            { label: 'Starting in 30 days', value: soon, icon: <ClockIcon />, tone: 'purple', hint: 'Joining date approaching' },
+            { label: 'Average progress', value: `${avgProgress}%`, icon: <CheckIcon />, tone: 'green', hint: `Of ${STEPS.length} wizard steps` },
+          ]}
+        />
+
+        <Card className="row-gap">
+          <CardHeader title="In-progress onboardings" sub="Across all locations" />
+          <div className="tbar">
+            <div className="tsearch" style={{ width: 260 }}>
+              <SearchIcon />
+              <input value={listQ} onChange={(e) => setListQ(e.target.value)} placeholder="Search candidate, role or department…" />
+            </div>
+            <select value={listStatus} onChange={(e) => setListStatus(e.target.value as typeof listStatus)} className="chip">
+              <option value="All">All statuses</option>
+              <option value="In Progress">In Progress</option>
+              <option value="Pending Approval">Pending Approval</option>
+              <option value="Approved">Approved</option>
+            </select>
+            {(needle || listStatus !== 'All') && (
+              <button
+                type="button"
+                className="chip"
+                onClick={() => {
+                  setListQ('');
+                  setListStatus('All');
+                }}
+              >
+                <XIcon /> Clear filters
+              </button>
+            )}
+            <span className="sp" />
+            <span className="lc-count">
+              {listed.length} of {pipeline.length}
+            </span>
+          </div>
+
+          {!listed.length ? (
+            <div>
+              <EmptyState
+                icon={<JoinIcon />}
+                title={pipeline.length ? 'No matching onboardings' : 'No onboardings in progress'}
+                description={pipeline.length ? 'Try a different search or filter.' : 'Start a new onboarding to capture a joiner’s record and provision their assets.'}
+              />
+              {!pipeline.length && (
+                <div style={{ padding: '0 0 20px', textAlign: 'center' }}>
+                  <Button variant="primary" onClick={() => setShowWizard(true)}>
+                    New onboarding
+                  </Button>
                 </div>
-              </div>
-              <div className="rt" style={{ gap: 12 }}>
-                <div style={{ width: 110 }}>
-                  <div style={{ height: 6, background: 'var(--bg)', borderRadius: 6, overflow: 'hidden' }}>
-                    <div style={{ height: '100%', width: `${(r.step / 10) * 100}%`, background: 'var(--primary)', borderRadius: 6 }} />
+              )}
+            </div>
+          ) : (
+            <div className="lc-list">
+              {listed.map((r) => (
+                <div key={r.id} className="doc">
+                  <div className="lc-onb-row" style={{ flex: 1, minWidth: 0 }}>
+                    <Avatar initials={initialsOf(r.candidateName)} seed={r.department} size={42} />
+                    <div className="grow">
+                      <div className="nm">{r.candidateName}</div>
+                      <div className="mt">
+                        {r.designation} · {r.department} · {r.location} · {r.role}
+                      </div>
+                      <div className="mt" style={{ marginTop: 2 }}>
+                        {startLabel(r.startDate)} · {r.startDate}
+                      </div>
+                    </div>
+                    <div className="lc-onb-prog">
+                      <div className="lc-prog">
+                        <i style={{ width: `${(r.step / STEPS.length) * 100}%` }} />
+                      </div>
+                      <span>
+                        Step {r.step}/{STEPS.length}
+                      </span>
+                    </div>
+                    <StatusBadge status={r.status} />
                   </div>
                 </div>
-                <span style={{ fontSize: 11.5, fontWeight: 600, color: 'var(--muted)' }}>Step {r.step}/10</span>
-                <StatusBadge status={r.status} />
-              </div>
+              ))}
             </div>
-          ))}
+          )}
+
+          {!!listed.length && (
+            <div className="tfoot lc-foot">
+              <span>
+                Showing {listed.length} of {pipeline.length} onboarding{pipeline.length === 1 ? '' : 's'}
+              </span>
+              <span>Start a new onboarding to add another joiner</span>
+            </div>
+          )}
         </Card>
       </div>
     );
@@ -310,12 +411,22 @@ export default function OnboardingPage() {
         description="A guided 10-step wizard capturing the full employee record. Creates the employee and triggers asset provisioning and RMS enrolment."
       />
 
-      <Card>
+      <Card className="lc-wiz">
+        <div className="lc-wiz-top">
+          <div className="t">
+            {done ? 'Completed' : <>Step <b>{step + 1}</b> of {steps.length}</>}
+            {!done && <> · {steps[step]}</>}
+          </div>
+          <div className={`lc-prog ${done ? 'ok' : ''}`} role="progressbar" aria-valuemin={0} aria-valuemax={steps.length} aria-valuenow={done ? steps.length : step + 1}>
+            <i style={{ width: `${((done ? steps.length : step + 1) / steps.length) * 100}%` }} />
+          </div>
+          <div className="p">{Math.round(((done ? steps.length : step + 1) / steps.length) * 100)}%</div>
+        </div>
         <div className="stepper">
           {steps.map((s, i) => (
-            <div key={i} className="step">
+            <div key={i} className={`step ${done || i < step ? 'done' : i === step ? 'active' : ''}`}>
               <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
-                <div className={`num ${i < step ? 'done' : i === step ? 'active' : ''}`}>{i < step ? <CheckIcon style={{ width: 14, height: 14 }} /> : i + 1}</div>
+                <div className={`num ${i < step ? 'done' : i === step ? 'active' : ''}`}>{done || i < step ? <CheckIcon style={{ width: 14, height: 14 }} /> : i + 1}</div>
                 <span className="lb" style={i <= step ? { color: 'var(--text)' } : undefined}>
                   <small>Step {i + 1}</small>
                   {s}
@@ -438,6 +549,26 @@ export default function OnboardingPage() {
                 </Fg>
                 <Fg label="Employment type" required>
                   <Select options={['Permanent', 'Temporary', 'Contract', 'Trainee']} />
+                </Fg>
+                <Fg label="System role" required>
+                  <Select options={SYSTEM_ROLES} value={role} onChange={(v) => setRole(v as Role)} />
+                  <span className="hint">{ROLE_SCOPE[role]}</span>
+                  {(role === 'Super Admin' || role === 'HR') && (
+                    <span className="hint" style={{ color: '#B45309' }}>
+                      This role can see salary, bank and identity documents, so it needs the approver&apos;s sign-off in the last step.
+                    </span>
+                  )}
+                  <span className="hint">Fine-tune what each role can view, add, edit or delete under Administration → Roles &amp; Permissions.</span>
+                </Fg>
+                <Fg label="Work email (sign-in ID)" required>
+                  <Input type="email" placeholder={suggestedEmail || 'name@gs-it.ae'} value={workEmail} onChange={setWorkEmail} />
+                  {emailTaken ? (
+                    <span className="hint" style={{ color: '#B91C1C' }}>
+                      {signInEmail} already belongs to another employee. Enter a different work email.
+                    </span>
+                  ) : (
+                    <span className="hint">{signInEmail ? `Signs in as ${signInEmail}.` : 'Used to sign in.'} Leave blank to use the suggested address.</span>
+                  )}
                 </Fg>
                 <Fg label="Joining date" required>
                   <Input type="date" value={joiningDate} onChange={setJoiningDate} />
@@ -974,7 +1105,22 @@ export default function OnboardingPage() {
                 ))}
               </div>
               <div className="subhd">Review</div>
-              <div className="g2">
+              <div className="lc-sum">
+                <Avatar initials={fullName.trim() ? fullName.trim().split(/\s+/).map((w) => w[0]).slice(0, 2).join('').toUpperCase() : '?'} seed={deptValue} size={48} />
+                <div>
+                  <div className="lc-sum-n">{fullName.trim() || 'New candidate'}</div>
+                  <div className="lc-sum-s">
+                    {designations.find((x) => x.id === designationId)?.title ?? 'Designation not set'} · {selectedDept?.name ?? 'Department not set'}
+                    {selectedCompany ? ` · ${selectedCompany.name}` : ''}
+                  </div>
+                </div>
+                <div className="lc-sum-tags">
+                  <span className="lc-pill">{country}</span>
+                  <span className="lc-pill">{role}</span>
+                  <span className="lc-pill">{joiningDate ? `Joins ${joiningDate}` : 'Joining date not set'}</span>
+                </div>
+              </div>
+              <div className="g2 lc-review">
                 <div>
                   <div className="field">
                     <span className="k">Employee ID</span>
@@ -987,6 +1133,14 @@ export default function OnboardingPage() {
                   <div className="field">
                     <span className="k">Department</span>
                     <span className="v">{deptValue}</span>
+                  </div>
+                  <div className="field">
+                    <span className="k">System role</span>
+                    <span className="v">{role}</span>
+                  </div>
+                  <div className="field">
+                    <span className="k">Sign-in email</span>
+                    <span className="v">{signInEmail || '—'}</span>
                   </div>
                   <div className="field">
                     <span className="k">Bank &amp; salary</span>
@@ -1026,13 +1180,13 @@ export default function OnboardingPage() {
           )}
 
           {done && (
-            <div style={{ textAlign: 'center', padding: '40px 0' }}>
-              <div style={{ width: 56, height: 56, borderRadius: '50%', background: 'var(--success-50)', color: '#15803D', display: 'grid', placeItems: 'center', margin: '0 auto' }}>
+            <div className="lc-done">
+              <div className="lc-done-ic">
                 <CheckIcon style={{ width: 28, height: 28 }} />
               </div>
               <h3 style={{ marginTop: 16 }}>Employee created</h3>
               <p style={{ marginTop: 4, color: 'var(--muted)', maxWidth: 420, marginLeft: 'auto', marginRight: 'auto' }}>
-                {fullName || 'The employee'} (ID {nextEmployeeCode(createdCount - 1)}) has been added to the {country} directory. Bank &amp; salary details synced to Payroll, document
+                {fullName || 'The employee'} (ID {nextEmployeeCode(createdCount - 1)}) has been added to the {country} directory with the {role} role and will sign in as {signInEmail || 'their work email'}. Bank &amp; salary details synced to Payroll, document
                 expiries enrolled into Renewal Management, and assets ({assetFlags.size ? Array.from(assetFlags).join(', ') : 'none selected'})
                 have been queued for provisioning.
               </p>
@@ -1050,6 +1204,9 @@ export default function OnboardingPage() {
                   setDepartmentId('');
                   setDesignationId('');
                   setManagerId('');
+                  setRole('Employee');
+                  setWorkEmail('');
+                  setRoleError('');
                   setVisaStep(0);
                   setExpiries({});
                   setReminderDays(new Set(REMINDER_DAYS));
@@ -1066,6 +1223,7 @@ export default function OnboardingPage() {
           <div className="wizfoot">
             <div className="autosave">
               <span className="dot" /> Draft saved automatically
+              {roleError && <span style={{ marginLeft: 14, color: '#B91C1C', fontWeight: 600 }}>{roleError}</span>}
             </div>
             <div style={{ display: 'flex', gap: 9 }}>
               {step > 0 && (
@@ -1078,7 +1236,20 @@ export default function OnboardingPage() {
                   Cancel
                 </Button>
               )}
-              <Button variant="primary" onClick={() => (step === STEPS.length - 1 ? (setDone(true), setCreatedCount((c) => c + 1)) : setStep((s) => s + 1))}>
+              <Button
+                variant="primary"
+                onClick={() => {
+                  if (step === 1 && (emailTaken || (signInEmail && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(signInEmail)))) {
+                    setRoleError('Enter a valid work email that no other employee already uses.');
+                    return;
+                  }
+                  setRoleError('');
+                  if (step === STEPS.length - 1) {
+                    setDone(true);
+                    setCreatedCount((c) => c + 1);
+                  } else setStep((s) => s + 1);
+                }}
+              >
                 {step === STEPS.length - 1 ? 'Create employee' : 'Continue'}
               </Button>
             </div>

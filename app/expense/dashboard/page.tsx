@@ -6,10 +6,10 @@ import { useOrg } from '@/context/OrgContext';
 import { employeeById } from '@/lib/data';
 import { useExpense } from '@/context/ExpenseContext';
 import { PageHeader } from '@/components/ui/PageHeader';
-import { Card, CardHeader } from '@/components/ui/Card';
-import { StatCard } from '@/components/ui/StatCard';
+import { Card, CardHeader, EmptyState } from '@/components/ui/Card';
 import { StatusBadge } from '@/components/ui/Badge';
-import { CheckIcon, GridIcon, InboxIcon, ReceiptIcon } from '@/components/icons';
+import { StatStrip } from '@/components/ui/StatStrip';
+import { CheckIcon, GridIcon, InboxIcon, ReceiptIcon, TagIcon } from '@/components/icons';
 
 export default function ExpenseDashboardPage() {
   const { location } = useApp();
@@ -30,61 +30,80 @@ export default function ExpenseDashboardPage() {
     }, {})
   ).sort((a, b) => b[1] - a[1]);
   const maxCat = Math.max(1, ...byCategory.map(([, n]) => n));
+  const totalSpend = byCategory.reduce((n, [, v]) => n + v, 0);
 
   return (
-    <div>
+    <div className="tx-page">
       <PageHeader eyebrow="Expense Claims" title="Expense Dashboard" description={`Claim volume and spend for ${location}, current cycle.`} />
 
-      <div className="g4">
-        <StatCard icon={<ReceiptIcon />} bg="var(--primary-50)" fg="var(--primary)" value={scoped.length} label="Total claims" foot={`${cur} across ${locationName(location)}`} />
-        <StatCard icon={<InboxIcon />} bg="var(--warning-50)" fg="#B45309" value={pending.length} label="Pending approval" foot={`${cur} ${pendingAmount.toLocaleString()}`} />
-        <StatCard icon={<CheckIcon />} bg="var(--success-50)" fg="#15803D" value={approved.length} label="Approved" foot={`${cur} ${approvedAmount.toLocaleString()}`} />
-        <StatCard icon={<GridIcon />} bg="var(--orange-50)" fg="#C2410C" value={byCategory[0]?.[0] ?? '—'} label="Top category" foot={byCategory[0] ? `${cur} ${byCategory[0][1].toLocaleString()}` : undefined} />
-      </div>
+      <StatStrip
+        items={[
+          { label: 'Total claims', value: scoped.length, icon: <ReceiptIcon />, tone: 'blue', hint: `${cur} across ${locationName(location)}`, href: '/expense/claims' },
+          { label: 'Pending approval', value: pending.length, icon: <InboxIcon />, tone: 'amber', hint: `${cur} ${pendingAmount.toLocaleString()}`, href: '/expense/approvals' },
+          { label: 'Approved', value: approved.length, icon: <CheckIcon />, tone: 'green', hint: `${cur} ${approvedAmount.toLocaleString()}` },
+          { label: 'Top category', value: byCategory[0]?.[0] ?? '—', icon: <GridIcon />, tone: 'purple', hint: byCategory[0] ? `${cur} ${byCategory[0][1].toLocaleString()}` : 'No spend yet' },
+        ]}
+      />
 
-      <div className="g2 row-gap">
+      <div className="g2">
         <Card>
-          <CardHeader title="Spend by category" sub={`${location} · this cycle`} />
-          <div className="barchart">
-            {byCategory.map(([cat, amt]) => (
-              <div key={cat} className="bc-row">
-                <div className="bl">{cat}</div>
-                <div className="bc-track">
-                  <div className="bc-fill" style={{ width: `${(amt / maxCat) * 100}%` }}>
+          <CardHeader title="Spend by category" sub={`${location} · this cycle · ${cur} ${totalSpend.toLocaleString()} total`} />
+          {!byCategory.length ? (
+            <EmptyState icon={<TagIcon />} title="No spend yet" description={`No claims have been filed for ${location} this cycle.`} />
+          ) : (
+            <div className="tx-spend">
+              {byCategory.map(([cat, amt]) => (
+                <div key={cat} className="tx-spend-row">
+                  <span className="tx-cat-ic">
+                    <TagIcon />
+                  </span>
+                  <div className="tx-t">{cat}</div>
+                  <div className="tx-bar">
+                    <i style={{ width: `${(amt / maxCat) * 100}%` }} />
+                  </div>
+                  <div className="tx-spend-n">
                     {amt.toLocaleString()}
+                    <small>{totalSpend ? Math.round((amt / totalSpend) * 100) : 0}%</small>
                   </div>
                 </div>
-                <span className="bv" />
-              </div>
-            ))}
-            {!byCategory.length && <div className="empty">No claims for {location}.</div>}
-          </div>
+              ))}
+            </div>
+          )}
         </Card>
 
         <Card>
-          <CardHeader title="Recent claims" sub={`${location}`} action={<Link href="/expense/claims" className="lnk">View all →</Link>} />
-          {scoped.slice(0, 5).map((c) => {
-            const e = employeeById(c.employeeId)!;
-            return (
-              <div key={c.id} className="doc">
-                <div className="fic">
-                  <ReceiptIcon />
-                </div>
-                <div>
-                  <div className="nm">
-                    {e.name} · {c.category}
+          <CardHeader
+            title="Recent claims"
+            sub={`${location}`}
+            action={
+              <Link href="/expense/claims" className="lnk">
+                View all →
+              </Link>
+            }
+          />
+          {!scoped.length ? (
+            <EmptyState icon={<ReceiptIcon />} title="No claims yet" description={`Claims filed for ${location} will show up here.`} />
+          ) : (
+            <div className="tx-list">
+              {scoped.slice(0, 5).map((c) => {
+                const e = employeeById(c.employeeId)!;
+                return (
+                  <div key={c.id} className="tx-item">
+                    <div className="tx-av">{e.avatarInitials}</div>
+                    <div className="tx-main">
+                      <div className="tx-t">
+                        {e.name} · {c.category}
+                      </div>
+                      <div className="tx-s">
+                        {c.currency} {c.amount.toLocaleString()} · {c.date}
+                      </div>
+                    </div>
+                    <StatusBadge status={c.status} />
                   </div>
-                  <div className="mt">
-                    {c.currency} {c.amount.toLocaleString()} · {c.date}
-                  </div>
-                </div>
-                <div className="rt">
-                  <StatusBadge status={c.status === 'Approved' ? 'Approved' : c.status === 'Rejected' ? 'Rejected' : 'Pending'} />
-                </div>
-              </div>
-            );
-          })}
-          {!scoped.length && <div className="empty">No claims for {location}.</div>}
+                );
+              })}
+            </div>
+          )}
         </Card>
       </div>
     </div>

@@ -14,7 +14,9 @@ import { Card, CardHeader, EmptyState, Button } from '@/components/ui/Card';
 import { Badge } from '@/components/ui/Badge';
 import { Drawer } from '@/components/ui/Drawer';
 import { EmpId } from '@/components/ui/EmployeeBits';
-import { PlusIcon, SearchIcon, StarIcon } from '@/components/icons';
+import { Avatar } from '@/components/ui/Avatar';
+import { StatStrip } from '@/components/ui/StatStrip';
+import { CheckIcon, ClockIcon, PeopleIcon, PlusIcon, SearchIcon, StarIcon, XIcon } from '@/components/icons';
 
 const TONE: Record<PerformanceReview['status'], 'inactive' | 'info' | 'pending' | 'active'> = {
   'Not Started': 'inactive',
@@ -34,9 +36,9 @@ const ACTION_LABEL: Record<PerformanceReview['status'], string> = {
 };
 
 function Stars({ rating }: { rating: number | null | undefined }) {
-  if (!rating) return <span style={{ color: 'var(--faint)' }}>—</span>;
+  if (!rating) return <span style={{ color: 'var(--faint)' }} aria-label="Not rated">—</span>;
   return (
-    <span style={{ display: 'inline-flex', gap: 2, color: '#f59e0b' }}>
+    <span role="img" aria-label={`Rated ${rating} out of 5`} style={{ display: 'inline-flex', gap: 2, color: '#f59e0b' }}>
       {Array.from({ length: 5 }).map((_, i) => (
         <StarIcon key={i} style={{ width: 13, height: 13, fill: i < rating ? '#f59e0b' : 'none' }} />
       ))}
@@ -120,6 +122,8 @@ export default function PerformancePage() {
   const notStarted = allRows.filter((r) => r.status === 'Not Started').length;
   const rated = completed.filter((r) => r.rating);
   const avg = rated.length ? (rated.reduce((n, r) => n + (r.rating ?? 0), 0) / rated.length).toFixed(1) : null;
+  const doneRate = allRows.length ? Math.round((completed.length / allRows.length) * 100) : 0;
+  const filtersOn = !!q.trim() || loc !== 'All' || statusFilter !== 'All';
 
   const open = reviews.find((r) => r.id === openId);
   const openEmp = open ? employeeById(open.employeeId) : undefined;
@@ -201,26 +205,14 @@ export default function PerformancePage() {
         }
       />
 
-      <div className="g3">
-        <div className="compcard">
-          <div className="ttl">Completed</div>
-          <div className="num" style={{ fontSize: 24, fontWeight: 700, color: '#15803D' }}>
-            {completed.length}
-          </div>
-        </div>
-        <div className="compcard">
-          <div className="ttl">In progress</div>
-          <div className="num" style={{ fontSize: 24, fontWeight: 700, color: '#28469A' }}>
-            {inProgress}
-          </div>
-        </div>
-        <div className="compcard">
-          <div className="ttl">Not started</div>
-          <div className="num" style={{ fontSize: 24, fontWeight: 700, color: 'var(--muted)' }}>
-            {notStarted}
-          </div>
-        </div>
-      </div>
+      <StatStrip
+        items={[
+          { label: teamMode ? 'Team members' : 'In this cycle', value: allRows.length, icon: <PeopleIcon />, tone: 'blue', hint: `${notStarted} not started` },
+          { label: 'In progress', value: inProgress, icon: <ClockIcon />, tone: 'amber', hint: 'Self assessment or manager review' },
+          { label: 'Completed', value: completed.length, icon: <CheckIcon />, tone: 'green', hint: `${doneRate}% of the cycle` },
+          { label: 'Average rating', value: avg ?? '—', icon: <StarIcon />, tone: 'purple', hint: rated.length ? `From ${rated.length} final rating${rated.length === 1 ? '' : 's'}` : 'No final ratings yet' },
+        ]}
+      />
 
       <Card className="row-gap">
         <CardHeader title={`${cycle} reviews`} sub={`${allRows.length} employee(s)${avg ? ` · average rating ${avg}` : ''}`} />
@@ -249,8 +241,21 @@ export default function PerformancePage() {
               </option>
             ))}
           </select>
+          {filtersOn && (
+            <button
+              type="button"
+              className="chip"
+              onClick={() => {
+                setQ('');
+                setLoc('All');
+                setStatusFilter('All');
+              }}
+            >
+              <XIcon /> Clear filters
+            </button>
+          )}
           <span className="sp" />
-          <span style={{ fontSize: 12, color: 'var(--muted)' }}>
+          <span className="lc-count">
             {rows.length} of {allRows.length}
           </span>
         </div>
@@ -271,6 +276,8 @@ export default function PerformancePage() {
             )}
           </div>
         ) : (
+          <>
+          <div className="lc-scroll">
           <table>
             <thead>
               <tr>
@@ -287,12 +294,10 @@ export default function PerformancePage() {
                 const e = employeeById(r.employeeId)!;
                 const overdue = r.status !== 'Completed' && r.dueDate < REFERENCE_TODAY;
                 return (
-                  <tr key={r.id}>
+                  <tr key={r.id} className={`lc-row ${overdue ? 'expired' : ''}`}>
                     <td>
                       <Link href={`/directory/${e.employeeCode}`} className="person">
-                        <div className="av" style={{ background: 'var(--primary-100)', color: 'var(--primary)' }}>
-                          {e.avatarInitials}
-                        </div>
+                        <Avatar initials={e.avatarInitials} seed={e.department} />
                         <div>
                           <div className="nm">
                             {e.name}
@@ -315,9 +320,9 @@ export default function PerformancePage() {
                     </td>
                     <td className="mono">
                       {r.dueDate}
-                      {overdue && <span style={{ marginLeft: 6, fontSize: 11, fontWeight: 700, color: '#B91C1C' }}>Overdue</span>}
+                      {overdue && <span className="lc-over">Overdue</span>}
                     </td>
-                    <td style={{ textAlign: 'right' }}>
+                    <td className="lc-right">
                       <Button size="sm" variant={r.status === 'Completed' ? 'ghost' : 'primary'} onClick={() => openReview(r)}>
                         {ACTION_LABEL[r.status]}
                       </Button>
@@ -327,6 +332,14 @@ export default function PerformancePage() {
               })}
             </tbody>
           </table>
+          </div>
+          <div className="tfoot lc-foot">
+            <span>
+              Showing {rows.length} of {allRows.length} review{allRows.length === 1 ? '' : 's'}
+            </span>
+            <span>{cycle} cycle</span>
+          </div>
+          </>
         )}
       </Card>
 
@@ -436,12 +449,22 @@ export default function PerformancePage() {
 
             {open.status === 'Completed' && (
               <>
+                <ReadBlock label="Self vs manager rating">
+                  {open.selfRating && open.rating ? (
+                    <span>
+                      Self {open.selfRating}/5 · Manager {open.rating}/5 ·{' '}
+                      <span style={{ color: 'var(--muted)' }}>{open.rating === open.selfRating ? 'Aligned' : open.rating > open.selfRating ? `Manager rated ${open.rating - open.selfRating} higher` : `Manager rated ${open.selfRating - open.rating} lower`}</span>
+                    </span>
+                  ) : (
+                    <span style={{ color: 'var(--muted)' }}>No self rating on file for this review.</span>
+                  )}
+                </ReadBlock>
                 <ReadBlock label="Final rating">
                   <Stars rating={open.rating} /> <span style={{ marginLeft: 6, color: 'var(--muted)' }}>{open.rating ? RATING_LABEL[open.rating] : ''}</span>
                 </ReadBlock>
                 <ReadBlock label="Self rating">
                   <Stars rating={open.selfRating} />
-                  {open.selfComments && <div style={{ marginTop: 4 }}>{open.selfComments}</div>}
+                  <div style={{ marginTop: 4 }}>{open.selfComments || (open.selfRating ? 'No comments provided.' : 'No self assessment was recorded.')}</div>
                 </ReadBlock>
                 <ReadBlock label="Manager feedback">{open.managerComments || '—'}</ReadBlock>
                 <ReadBlock label="Goals for next cycle">{open.goals || '—'}</ReadBlock>

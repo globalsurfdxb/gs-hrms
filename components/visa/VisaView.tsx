@@ -14,7 +14,9 @@ import { Card, CardHeader, EmptyState, Button } from '@/components/ui/Card';
 import { ExpiryBadge } from '@/components/ui/Badge';
 import { Drawer } from '@/components/ui/Drawer';
 import { EmpId } from '@/components/ui/EmployeeBits';
-import { BellIcon, SearchIcon, ShieldIcon, XIcon } from '@/components/icons';
+import { Avatar } from '@/components/ui/Avatar';
+import { StatTiles } from '@/components/ui/StatTiles';
+import { BellIcon, CheckIcon, ClockIcon, PeopleIcon, SearchIcon, ShieldIcon, WarnIcon, XIcon } from '@/components/icons';
 
 const SORTED_RUNGS = [...RUNGS].sort((a, b) => b - a);
 const FILTERS: { key: 'All' | ExpiryState; label: string }[] = [
@@ -34,23 +36,6 @@ function inWindow(days: number | null, rung: number) {
   if (days === null) return false;
   const lower = [...RUNGS].sort((a, b) => a - b).filter((r) => r < rung).pop() ?? -1;
   return days >= 0 && days <= rung && days > lower;
-}
-
-function Stat({ label, value, color, active, onClick }: { label: string; value: number; color: string; active: boolean; onClick: () => void }) {
-  return (
-    <button
-      type="button"
-      className="compcard"
-      onClick={onClick}
-      style={{ textAlign: 'left', cursor: 'pointer', font: 'inherit', outline: active ? '2px solid var(--primary)' : undefined, outlineOffset: -1 }}
-      title="Click to filter the register"
-    >
-      <div className="ttl">{label}</div>
-      <div className="num" style={{ fontSize: 24, fontWeight: 700, color }}>
-        {value}
-      </div>
-    </button>
-  );
 }
 
 function DaysLeft({ days }: { days: number | null }) {
@@ -134,7 +119,7 @@ export function VisaView({ forceTeam = false }: { forceTeam?: boolean }) {
   return (
     <div>
       <PageHeader
-        eyebrow={teamMode ? 'Team · Visa' : 'Module 06 · Compliance'}
+        eyebrow={teamMode ? 'Team · Visa' : 'Documents & Compliance'}
         title={teamMode ? 'Team Visa' : 'Visa & Expiry Management'}
         description={
           teamMode
@@ -160,11 +145,16 @@ export function VisaView({ forceTeam = false }: { forceTeam?: boolean }) {
         </div>
       )}
 
-      <div className="g3">
-        <Stat label="Valid" value={count('ok')} color="#15803D" active={statusFilter === 'ok'} onClick={() => setStatusFilter(statusFilter === 'ok' ? 'All' : 'ok')} />
-        <Stat label="Expiring soon" value={count('soon')} color="#C2410C" active={statusFilter === 'soon'} onClick={() => setStatusFilter(statusFilter === 'soon' ? 'All' : 'soon')} />
-        <Stat label="Expired" value={count('expired')} color="#B91C1C" active={statusFilter === 'expired'} onClick={() => setStatusFilter(statusFilter === 'expired' ? 'All' : 'expired')} />
-      </div>
+      <StatTiles
+        items={[
+          { label: 'Expired', value: count('expired'), icon: <WarnIcon />, tone: 'red', hint: 'Renew immediately', active: statusFilter === 'expired', onClick: () => setStatusFilter(statusFilter === 'expired' ? 'All' : 'expired') },
+          { label: 'Expiring soon', value: count('soon'), icon: <ClockIcon />, tone: 'amber', hint: 'Inside the notice windows', active: statusFilter === 'soon', onClick: () => setStatusFilter(statusFilter === 'soon' ? 'All' : 'soon') },
+          { label: 'Valid', value: count('ok'), icon: <CheckIcon />, tone: 'green', hint: 'No action needed', active: statusFilter === 'ok', onClick: () => setStatusFilter(statusFilter === 'ok' ? 'All' : 'ok') },
+          teamMode
+            ? { label: 'Team members', value: scoped.length, icon: <PeopleIcon />, tone: 'blue', hint: 'UAE direct reports with a visa' }
+            : { label: 'Reminders due', value: dueList.length, icon: <BellIcon />, tone: 'blue', hint: `${scoped.length} UAE employee${scoped.length === 1 ? '' : 's'} tracked` },
+        ]}
+      />
 
       {!teamMode && (
         <Card className="row-gap">
@@ -209,12 +199,25 @@ export function VisaView({ forceTeam = false }: { forceTeam?: boolean }) {
             ))}
           </select>
           {rungFilter !== null && (
-            <button type="button" className="chip" onClick={() => setRungFilter(null)} style={{ background: 'var(--primary-50)', borderColor: 'var(--primary-100)', color: 'var(--primary)' }}>
+            <button type="button" className="chip lc-chip-on" onClick={() => setRungFilter(null)}>
               {rungFilter}-day window <XIcon />
             </button>
           )}
+          {(!!q.trim() || statusFilter !== 'All' || rungFilter !== null) && (
+            <button
+              type="button"
+              className="chip"
+              onClick={() => {
+                setQ('');
+                setStatusFilter('All');
+                setRungFilter(null);
+              }}
+            >
+              <XIcon /> Clear filters
+            </button>
+          )}
           <span className="sp" />
-          <span style={{ fontSize: 12, color: 'var(--muted)' }}>
+          <span className="lc-count">
             {rows.length} of {scoped.length}
           </span>
         </div>
@@ -222,6 +225,8 @@ export function VisaView({ forceTeam = false }: { forceTeam?: boolean }) {
         {!rows.length ? (
           <EmptyState icon={<ShieldIcon />} title={scoped.length ? 'No matching records' : 'No records'} description={scoped.length ? 'Try a different search or filter.' : 'No UAE employees with visa records.'} />
         ) : (
+          <>
+          <div className="lc-scroll">
           <table>
             <thead>
               <tr>
@@ -242,16 +247,19 @@ export function VisaView({ forceTeam = false }: { forceTeam?: boolean }) {
                 const last = lastReminder(e);
                 const lastCurrent = last && last.expiry === visaExpiryOf(e) ? last : undefined;
                 return (
-                  <tr key={e.id}>
+                  <tr key={e.id} className={`lc-row ${st}`}>
                     <td>
                       <Link href={`/directory/${e.employeeCode}`} className="person">
-                        <div className="av" style={{ background: 'var(--primary-100)', color: 'var(--primary)' }}>
-                          {e.avatarInitials}
+                        <Avatar initials={e.avatarInitials} seed={e.department} />
+                        <div>
+                          <div className="nm">
+                            {e.name}
+                            <EmpId code={e.employeeCode} />
+                          </div>
+                          <div className="sb">
+                            {e.designation} · {e.department}
+                          </div>
                         </div>
-                        <span className="nm">
-                          {e.name}
-                          <EmpId code={e.employeeCode} />
-                        </span>
                       </Link>
                     </td>
                     <td>
@@ -282,13 +290,15 @@ export function VisaView({ forceTeam = false }: { forceTeam?: boolean }) {
                       </td>
                     )}
                     {!teamMode && (
-                      <td style={{ textAlign: 'right', whiteSpace: 'nowrap' }}>
-                        <Button size="sm" onClick={() => remind(e)} title="Send a reminder now">
-                          <BellIcon /> Remind
-                        </Button>{' '}
-                        <Button size="sm" variant={st === 'ok' ? 'ghost' : 'primary'} onClick={() => openRenew(e)}>
-                          Renew
-                        </Button>
+                      <td className="lc-right">
+                        <span className="lc-acts">
+                          <Button size="sm" onClick={() => remind(e)} title="Send a reminder now">
+                            <BellIcon /> Remind
+                          </Button>
+                          <Button size="sm" variant={st === 'ok' ? 'ghost' : 'primary'} onClick={() => openRenew(e)}>
+                            Renew
+                          </Button>
+                        </span>
                       </td>
                     )}
                   </tr>
@@ -296,6 +306,14 @@ export function VisaView({ forceTeam = false }: { forceTeam?: boolean }) {
               })}
             </tbody>
           </table>
+          </div>
+          <div className="tfoot lc-foot">
+            <span>
+              Showing {rows.length} of {scoped.length} UAE employee{scoped.length === 1 ? '' : 's'}
+            </span>
+            <span>Sorted by days left</span>
+          </div>
+          </>
         )}
       </Card>
 
@@ -303,56 +321,66 @@ export function VisaView({ forceTeam = false }: { forceTeam?: boolean }) {
         <div className="g2 row-gap">
           <Card>
             <CardHeader title="Reminder log" sub={`${reminders.length} sent this session`} />
-            {!reminders.length && <div style={{ padding: '14px 18px', fontSize: 13, color: 'var(--muted)' }}>No reminders sent yet. Use “Send due reminders” or “Remind” on a row.</div>}
-            {[...reminders]
-              .reverse()
-              .slice(0, 8)
-              .map((r) => {
-                const e = employeeById(r.employeeId)!;
-                return (
-                  <div key={r.id} className="doc">
-                    <div className="fic">
-                      <BellIcon />
-                    </div>
-                    <div>
-                      <div className="nm">
-                        {e.name}
-                        <EmpId code={e.employeeCode} />
+            {!reminders.length ? (
+              <div className="lc-hint">No reminders sent yet. Use “Send due reminders” or “Remind” on a row.</div>
+            ) : (
+              <div className="lc-list">
+                {[...reminders]
+                  .reverse()
+                  .slice(0, 8)
+                  .map((r) => {
+                    const e = employeeById(r.employeeId)!;
+                    return (
+                      <div key={r.id} className="doc">
+                        <div className="fic">
+                          <BellIcon />
+                        </div>
+                        <div>
+                          <div className="nm">
+                            {e.name}
+                            <EmpId code={e.employeeCode} />
+                          </div>
+                          <div className="mt">
+                            {r.rung ? `${r.rung}-day notice` : 'Manual reminder'} · {r.sentOn} · to {r.to.join(', ')}
+                          </div>
+                        </div>
                       </div>
-                      <div className="mt">
-                        {r.rung ? `${r.rung}-day notice` : 'Manual reminder'} · {r.sentOn} · to {r.to.join(', ')}
-                      </div>
-                    </div>
-                  </div>
-                );
-              })}
+                    );
+                  })}
+              </div>
+            )}
           </Card>
           <Card>
             <CardHeader title="Renewal history" sub={`${renewals.length} renewal(s) this session`} />
-            {!renewals.length && <div style={{ padding: '14px 18px', fontSize: 13, color: 'var(--muted)' }}>No renewals recorded yet. Use “Renew” on a row to update a visa.</div>}
-            {[...renewals]
-              .reverse()
-              .slice(0, 8)
-              .map((r) => {
-                const e = employeeById(r.employeeId)!;
-                return (
-                  <div key={r.id} className="doc">
-                    <div className="fic">
-                      <ShieldIcon />
-                    </div>
-                    <div>
-                      <div className="nm">
-                        {e.name}
-                        <EmpId code={e.employeeCode} />
+            {!renewals.length ? (
+              <div className="lc-hint">No renewals recorded yet. Use “Renew” on a row to update a visa.</div>
+            ) : (
+              <div className="lc-list">
+                {[...renewals]
+                  .reverse()
+                  .slice(0, 8)
+                  .map((r) => {
+                    const e = employeeById(r.employeeId)!;
+                    return (
+                      <div key={r.id} className="doc">
+                        <div className="fic">
+                          <ShieldIcon />
+                        </div>
+                        <div>
+                          <div className="nm">
+                            {e.name}
+                            <EmpId code={e.employeeCode} />
+                          </div>
+                          <div className="mt">
+                            {r.previousExpiry} → {r.newExpiry} · renewed {r.renewedOn}
+                            {r.reference ? ` · ref ${r.reference}` : ''}
+                          </div>
+                        </div>
                       </div>
-                      <div className="mt">
-                        {r.previousExpiry} → {r.newExpiry} · renewed {r.renewedOn}
-                        {r.reference ? ` · ref ${r.reference}` : ''}
-                      </div>
-                    </div>
-                  </div>
-                );
-              })}
+                    );
+                  })}
+              </div>
+            )}
           </Card>
         </div>
       )}

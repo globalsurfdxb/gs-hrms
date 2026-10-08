@@ -14,6 +14,14 @@
   const tplLabel = (t) => (t === 'all' ? 'All locations' : t === 'uae' ? 'UAE' : 'India');
   const scopeTpls = () => (L.loc() === 'all' ? [...new Set(L.locs().map((l) => l.template))] : [L.tplOf(L.loc())]);
   const empOpts = () => L.empIn().map((e) => ({ v: e.n, l: `${e.n} · ${e.id} · ${L.locCity(e.loc)}` }));
+  /* ---------- shared list-page pieces (op2) ---------- */
+  const SP = '<div style="height:16px"></div>';
+  const lb = (inner, count) => listBar(inner, count).replace('class="lbar"', 'class="lbar op2-lb"');
+  const rst = (keys) => `<button class="btn sm ghost" onclick="LA.resetUi(${JSON.stringify(keys).replace(/"/g, '&quot;')})">${ic('refresh')} Reset</button>`;
+  const nOf = (arr, f) => arr.filter(f).length;
+  const lcard = (title, bar, head, rows, opts) => card(title, `${bar || ''}<div class="tbl-wrap"><table class="tbl"><thead><tr>${head.map((h) => (h.charAt(0) === '>' ? `<th class="num">${h.slice(1)}</th>` : `<th>${h}</th>`)).join('')}</tr></thead><tbody>${rows}</tbody></table></div>`, { ...opts, pad: false });
+  const noRows = (n, have, what) => emptyRow(n, have ? `No ${what} match the current filters` : `No ${what} to show yet`);
+  const chipSet = (key, vals, def, f) => L.chips(key, vals.map((v) => ({ v, l: v, n: f(v) })), def);
 
   /* ---------- attendance statuses ---------- */
   const guess = (s) => ({
@@ -33,14 +41,25 @@
   L.statusDel = (n) => L.confirm('Remove status', `Remove <b>${esc(n)}</b>?`, 'Remove', () => { db().statusExtra = db().statusExtra.filter((x) => x.name !== n); delete ST[n]; L.audit('Status removed', n, '—', ''); L.rr(); }, true);
   function setStatus() {
     const q = L.ui('stQ', '');
-    const yn = (k, key) => L.fSel(key, k, ['All', 'Yes', 'No'], 'All');
+    const yn = (lbl, key) => L.fSel(key, lbl, ['All', 'Yes', 'No'], 'All');
     const ok = (s, k, key) => { const v = L.ui(key, 'All'); return v === 'All' || (v === 'Yes') === !!flags(s)[k]; };
-    const list = allStatuses().filter((s) => L.matches(q, s) && ok(s, 'pres', 'stPres') && ok(s, 'paid', 'stPaid') && ok(s, 'appr', 'stAppr'));
+    const all = allStatuses();
+    const list = all.filter((s) => L.matches(q, s) && ok(s, 'pres', 'stPres') && ok(s, 'paid', 'stPaid') && ok(s, 'appr', 'stAppr'));
+    const cnt = (k) => nOf(all, (s) => !!flags(s)[k]);
+    const isX = (s) => db().statusExtra.some((x) => x.name === s);
     const tog = (s, k, y, n) => `<span style="cursor:pointer" title="Click to change" onclick="LA.togStatus('${esc(s).replace(/'/g, "\\'")}','${k}')">${flags(s)[k] ? y : n}</span>`;
-    return pageHead('Attendance Status Master', 'Define statuses and their payroll / approval behaviour (applies to every location)', `<button class="btn pri" onclick="LA.statusNew()">${ic('plus')} Add status</button>`, 'Settings')
+    return pageHead('Attendance Status Master', 'Define statuses and their payroll / approval behaviour (applies to every location)', `<button class="btn pri" onclick="LA.statusNew()">${ic('plus')} Add status</button>`, 'Attendance')
+      + statStrip([
+        { lbl: 'Statuses', val: all.length, icon: 'grid', tone: 'b', hint: `${nOf(all, isX)} custom` },
+        { lbl: 'Count as present', val: cnt('pres'), icon: 'check', tone: 'g', hint: `${all.length - cnt('pres')} do not` },
+        { lbl: 'Paid', val: cnt('paid'), icon: 'wallet', tone: 'p', hint: `${all.length - cnt('paid')} unpaid` },
+        { lbl: 'Approval required', val: cnt('appr'), icon: 'shield', tone: 'a', hint: 'Need a manager / HR decision' },
+      ])
       + note('info', 'HR can add statuses and define whether each counts as <b>present, paid, unpaid, payroll-impacting or approval-required</b> (FRS §6). Click a badge to change a rule.')
-      + `<div class="filters" style="margin-top:16px">${yn('Present', 'stPres')}${yn('Paid', 'stPaid')}${yn('Approval required', 'stAppr')}${L.searchBox('stQ', 'Search statuses')}${L.fReset(['stPres', 'stPaid', 'stAppr', 'stQ'])}</div>`
-      + tableCard('Statuses', ['Status', 'Present', 'Paid', 'Payroll impact', 'Approval req.', ''], list.map((s) => `<tr><td>${statusBadge(s)}</td><td>${tog(s, 'pres', bdg('s-g', 'Yes'), bdg('s-gray', 'No'))}</td><td>${tog(s, 'paid', bdg('s-g', 'Paid'), bdg('s-r', 'Unpaid'))}</td><td>${bdg('s-b', 'Yes')}</td><td>${tog(s, 'appr', bdg('s-a', 'Yes'), bdg('s-gray', 'No'))}</td><td>${db().statusExtra.some((x) => x.name === s) ? `<button class="btn sm ghost" onclick="LA.statusDel('${esc(s).replace(/'/g, "\\'")}')">${ic('x')}</button>` : ''}</td></tr>`).join('') || emptyRow(6, 'No statuses match'), { sub: `${list.length} of ${allStatuses().length} · configurable` });
+      + SP
+      + lcard('Statuses', lb(L.searchBox('stQ', 'Search statuses') + yn('Present', 'stPres') + yn('Paid', 'stPaid') + yn('Approval', 'stAppr') + rst(['stPres', 'stPaid', 'stAppr', 'stQ']), `Showing ${list.length} of ${all.length}`),
+        ['Status', 'Present', 'Paid', 'Payroll impact', 'Approval req.', ''],
+        list.map((s) => `<tr><td>${statusBadge(s)}${isX(s) ? ' <span class="op2-tag">Custom</span>' : ''}</td><td>${tog(s, 'pres', bdg('s-g', 'Yes'), bdg('s-gray', 'No'))}</td><td>${tog(s, 'paid', bdg('s-g', 'Paid'), bdg('s-r', 'Unpaid'))}</td><td>${bdg('s-b', 'Yes')}</td><td>${tog(s, 'appr', bdg('s-a', 'Yes'), bdg('s-gray', 'No'))}</td><td class="tr">${isX(s) ? `<button class="btn sm ghost" title="Remove status" onclick="LA.statusDel('${esc(s).replace(/'/g, "\\'")}')">${ic('x')}</button>` : ''}</td></tr>`).join('') || noRows(6, all.length, 'statuses'), { sub: 'Click a badge to change a rule' });
   }
   const regStatuses = () => db().statusExtra.forEach((x) => { ST[x.name] = [x.cls, x.name]; });
   regStatuses();
@@ -64,14 +83,27 @@
   function setShift() {
     const q = L.ui('shQ', '');
     const tF = L.ui('shType', 'All types');
-    const rows = db().shifts.filter((s) => L.hasLoc([s.loc]) && (tF === 'All types' || s.type === tF) && L.matches(q, s.name, s.assigned));
-    return pageHead('Shift Master', 'Define working schedules, breaks and variable patterns per location', `<button class="btn pri" onclick="LA.shiftNew()">${ic('plus')} New shift</button>`, 'Settings')
-      + `<div class="filters">${L.fLoc()}${L.fSel('shType', 'Type', ['All types', 'Fixed', 'Flexible', 'Rotational', 'Split', 'Night', 'Remote', 'Client-site', 'On-call'], 'All types')}${L.searchBox('shQ', 'Shift or assignment')}${L.fReset(['shType', 'shQ', 'loc'])}</div>`
-      + tableCard('Default office schedule (from each location’s settings)', ['Location', 'Working days', 'Office hours', 'Weekly off'], L.locIds().map((id) => { const w = L.work(id); const off = [0, 1, 2, 3, 4, 5, 6].filter((d) => !w.days.includes(d)).map((d) => DOWL[d]).join(', '); return `<tr><td class="fw6">${esc(L.locName(id))}</td><td>${w.days.map((d) => DOWL[d]).join(', ')}</td><td class="mono">${w.from}–${w.to}</td><td>${off}</td></tr>`; }).join(''), { actions: `<button class="btn sm ghost" onclick="LA.openApp('/admin/settings')">Edit in Settings ↗</button>` })
-      + '<div style="height:16px"></div>'
-      + card('Supported shift patterns (FRS §4.3)', `<div class="tag-list">${['Fixed', 'Flexible', 'Rotational', 'Split', 'Night', 'Remote', 'Client-site', 'On-call'].map((t) => `<span class="chip on">${t}</span>`).join('')}</div><div class="divider"></div><p class="muted">Schedules can vary by department, job role, client assignment, location, employee category and operational requirement.</p>`)
-      + '<div style="height:16px"></div>'
-      + tableCard('Configured shifts', ['Location', 'Shift', 'Type', 'Timing', 'Break', 'Assigned to', ''], rows.map((r) => `<tr><td>${L.locChip(r.loc)}</td><td class="fw6">${esc(r.name)}</td><td>${bdg('s-b', esc(r.type))}</td><td class="mono">${esc(r.timing)}</td><td>${esc(r.brk)}</td><td>${esc(r.assigned)}</td><td><div class="hb"><button class="btn sm ghost" onclick="LA.shiftEdit('${r.id}')">${ic('edit')}</button><button class="btn sm ghost" onclick="LA.shiftDel('${r.id}')">${ic('x')}</button></div></td></tr>`).join('') || emptyRow(7, 'No shifts match'));
+    const TYPES = ['Fixed', 'Flexible', 'Rotational', 'Split', 'Night', 'Remote', 'Client-site', 'On-call'];
+    const base = db().shifts.filter((s) => L.hasLoc([s.loc]));
+    const rows = base.filter((s) => (tF === 'All types' || s.type === tF) && L.matches(q, s.name, s.assigned));
+    const used = [...new Set(base.map((s) => s.type))];
+    const shown = TYPES.filter((t) => used.includes(t) || t === tF);
+    const locsN = new Set(base.map((s) => s.loc)).size;
+    const flex = nOf(base, (s) => s.type === 'Flexible' || s.type === 'Remote');
+    return pageHead('Shift Master', 'Define working schedules, breaks and variable patterns per location', `<button class="btn pri" onclick="LA.shiftNew()">${ic('plus')} New shift</button>`, 'Attendance')
+      + statStrip([
+        { lbl: 'Configured shifts', val: base.length, icon: 'briefcase', tone: 'b', hint: L.locLabel() },
+        { lbl: 'Shift types in use', val: used.length, icon: 'grid', tone: 'p', hint: `of ${TYPES.length} supported patterns` },
+        { lbl: 'Locations covered', val: locsN, icon: 'location', tone: 'g', hint: `${L.locIds().length} in view` },
+        { lbl: 'Flexible / remote', val: flex, icon: 'clock', tone: 'a', hint: 'Variable or location-free' },
+      ])
+      + lcard('Configured shifts', lb(L.searchBox('shQ', 'Search shift or assignment') + L.chips('shType', [{ v: 'All types', l: 'All', n: base.length }].concat(shown.map((t) => ({ v: t, l: t, n: nOf(base, (s) => s.type === t) }))), 'All types') + rst(['shType', 'shQ']), `Showing ${rows.length} of ${base.length}`),
+        ['Location', 'Shift', 'Type', 'Timing', 'Break', 'Assigned to', ''],
+        rows.map((r) => `<tr><td>${L.locChip(r.loc)}</td><td class="fw6">${esc(r.name)}</td><td>${bdg('s-b', esc(r.type))}</td><td class="mono">${esc(r.timing)}</td><td>${esc(r.brk)}</td><td class="muted">${esc(r.assigned)}</td><td class="tr"><div class="hb" style="justify-content:flex-end"><button class="btn sm ghost" title="Edit" onclick="LA.shiftEdit('${r.id}')">${ic('edit')}</button><button class="btn sm ghost" title="Delete" onclick="LA.shiftDel('${r.id}')">${ic('x')}</button></div></td></tr>`).join('') || noRows(7, base.length, 'shifts'))
+      + SP
+      + tableCard('Default office schedule (from each location’s settings)', ['Location', 'Working days', 'Office hours', 'Weekly off'], L.locIds().map((id) => { const w = L.work(id); const off = [0, 1, 2, 3, 4, 5, 6].filter((d) => !w.days.includes(d)).map((d) => DOWL[d]).join(', '); return `<tr><td class="fw6">${esc(L.locName(id))}</td><td>${w.days.map((d) => DOWL[d]).join(', ')}</td><td class="mono">${w.from}–${w.to}</td><td class="muted">${off}</td></tr>`; }).join('') || emptyRow(4, 'No locations in view'), { actions: `<button class="btn sm ghost" onclick="LA.openApp('/admin/settings')">Edit in Settings ↗</button>` })
+      + SP
+      + card('Supported shift patterns (FRS §4.3)', `<div class="tag-list">${TYPES.map((t) => `<span class="chip ${used.includes(t) ? 'on' : ''}">${t}</span>`).join('')}</div><div class="divider"></div><p class="muted">Highlighted patterns are in use. Schedules can vary by department, job role, client assignment, location, employee category and operational requirement.</p>`);
   }
 
   /* ---------- Ramadan / special schedule (per location) ---------- */
@@ -79,9 +111,21 @@
   function setRamadan() {
     const loc = L.oneLoc('rmLoc');
     const r = db().ramadan[loc];
-    const head = pageHead('Ramadan Schedule', 'Temporary reduced-hours schedule with automatic revert — configured per location', '', 'Settings')
-      + `<div class="filters">${L.fSel('rmLoc', 'Location', L.locOptions(false), loc)}</div>`;
-    if (!r) return head + card('', `<div style="text-align:center;padding:24px"><div class="fw6" style="margin-bottom:6px">No Ramadan / special schedule for ${esc(L.locName(loc))}</div><div class="muted" style="margin-bottom:14px">${L.tplOf(loc) === 'india' ? 'Ramadan reduced hours normally apply to UAE locations. You can still define a temporary schedule (festival season, summer hours) here.' : 'Create one to apply reduced hours for a fixed period.'}</div><button class="btn pri" onclick="LA.ramCreate('${loc}')">${ic('plus')} Configure schedule</button></div>`);
+    const stOf = (x) => (!x ? 'Not set' : TODAY < x.start ? 'Upcoming' : TODAY > x.end ? 'Ended' : 'Active');
+    const stTone = { Active: 'g', Upcoming: 'b', Ended: 'x', 'Not set': 'a' };
+    const s0 = stOf(r);
+    const head = pageHead('Ramadan Schedule', 'Temporary reduced-hours schedule with automatic revert — configured per location', '', 'Attendance')
+      + statStrip([
+        { lbl: 'Schedule status', val: s0, icon: 'sun', tone: stTone[s0], hint: r ? `${fmt(r.start)} → ${fmt(r.end)}` : 'Not configured' },
+        { lbl: 'Period length', val: r ? `${daysBetween(r.start, r.end) + 1} days` : '—', icon: 'calendar', tone: 'b', hint: 'Maximum 40 days' },
+        { lbl: 'Hours reduction', val: r ? esc(r.reduction) : '—', icon: 'clock', tone: 'p', hint: r ? `Scope: ${esc(r.scope)}` : 'Set when configured' },
+        { lbl: 'Special hours', val: r ? `${esc(r.from)}–${esc(r.to)}` : '—', icon: 'briefcase', tone: 'x', hint: `Standard ${esc(L.workLabel(loc))}` },
+      ])
+      + `<div class="card op2-solo">${lb(L.fSel('rmLoc', 'Location', L.locOptions(false), loc), `${esc(L.locCity(loc))} · ${esc(L.workLabel(loc))}`)}</div>`;
+    const ov = L.locOptions(false).filter((o) => L.hasLoc([o.v]));
+    const overview = SP + lcard('Schedules by location', '', ['Location', 'Status', 'Period', 'Special hours', 'Reduction'],
+      ov.map((o) => { const x = db().ramadan[o.v]; const s = stOf(x); return `<tr class="op2-clk ${o.v === loc ? 'sel' : ''}" title="Open this location" onclick="LA.setUi('rmLoc','${o.v}')"><td class="fw6">${esc(o.l)}</td><td>${bdg(s === 'Active' ? 's-g' : s === 'Upcoming' ? 's-b' : s === 'Ended' ? 's-gray' : 's-a', s)}</td><td>${x ? `${fmt(x.start)} → ${fmt(x.end)}` : '<span class="muted">—</span>'}</td><td class="mono">${x ? `${esc(x.from)}–${esc(x.to)}` : '<span class="muted">—</span>'}</td><td>${x ? esc(x.reduction) : '<span class="muted">—</span>'}</td></tr>`; }).join('') || emptyRow(5, 'No locations in view'), { sub: 'Click a row to edit that location' });
+    if (!r) return head + card('', `<div style="text-align:center;padding:24px"><div class="fw6" style="margin-bottom:6px">No Ramadan / special schedule for ${esc(L.locName(loc))}</div><div class="muted" style="margin-bottom:14px">${L.tplOf(loc) === 'india' ? 'Ramadan reduced hours normally apply to UAE locations. You can still define a temporary schedule (festival season, summer hours) here.' : 'Create one to apply reduced hours for a fixed period.'}</div><button class="btn pri" onclick="LA.ramCreate('${loc}')">${ic('plus')} Configure schedule</button></div>`) + overview;
     const state = TODAY < r.start ? `Upcoming — starts in ${daysBetween(TODAY, r.start)} day(s)` : TODAY > r.end ? 'Ended — standard schedule restored' : 'Active now';
     return head
       + `<div class="row"><div style="flex:1;max-width:520px">${card('Schedule configuration — ' + esc(L.locCity(loc)), `<div class="form-row two">
@@ -92,7 +136,8 @@
         <div class="field"><label>Break duration</label><input id="rm_brk" type="text" value="${esc(r.brk)}"></div>
         <div class="field"><label>Auto-revert</label><select id="rm_rev">${['Enabled — restore standard schedule', 'Manual'].map((o) => `<option ${o === r.revert ? 'selected' : ''}>${o}</option>`).join('')}</select></div></div>
         <div id="rmErr"></div><div class="hb"><button class="btn pri" onclick="LA.ramSave('${loc}')">${ic('sun')} Save schedule</button><button class="btn ghost" onclick="LA.ramDel('${loc}')">Remove</button></div>`)}</div>
-        <div style="flex:1">${note(TODAY >= r.start && TODAY <= r.end ? 'warn' : 'info', `<b>${state}</b> · ${fmt(r.start)} → ${fmt(r.end)} · ${esc(r.from)}–${esc(r.to)}${r.saved ? '' : ' (default — not yet saved)'}`)}<div style="height:12px"></div>${note('info', `Standard hours for ${esc(L.locCity(loc))}: ${esc(L.workLabel(loc))}. The standard schedule is retained and automatically reactivated after the end date.`)}</div></div>`;
+        <div style="flex:1">${note(TODAY >= r.start && TODAY <= r.end ? 'warn' : 'info', `<b>${state}</b> · ${fmt(r.start)} → ${fmt(r.end)} · ${esc(r.from)}–${esc(r.to)}${r.saved ? '' : ' (default — not yet saved)'}`)}<div style="height:12px"></div>${note('info', `Standard hours for ${esc(L.locCity(loc))}: ${esc(L.workLabel(loc))}. The standard schedule is retained and automatically reactivated after the end date.`)}</div></div>`
+      + overview;
   }
   L.ramSave = (loc) => {
     const g = (i) => __$(i).value.trim();
@@ -121,11 +166,20 @@
     const tpls = scopeTpls();
     const q = L.ui('ltQ', '');
     const aF = L.ui('ltAct', 'All');
-    const rows = db().ltypes.filter((t) => (t.tpl === 'all' || tpls.includes(t.tpl)) && (aF === 'All' || (aF === 'Active') === t.active) && L.matches(q, t.t, t.code));
-    return pageHead('Leave Types', 'Configure entitlement, accrual, pay tiers and documents — each location group has its own leave types', `<button class="btn pri" onclick="LA.ltNew()">${ic('plus')} Add leave type</button>`, 'Settings')
-      + `<div class="filters">${L.fLoc()}${L.fSel('ltAct', 'Status', ['All', 'Active', 'Disabled'], 'All')}${L.searchBox('ltQ', 'Type or code')}${L.fReset(['ltAct', 'ltQ', 'loc'])}</div>`
-      + tableCard('Leave type master', ['Applies to', 'Type', 'Code', 'Pay', 'Entitlement', 'Accrual', 'Probation', 'Document', 'Active', ''], rows.map((t) => `<tr style="${t.active ? '' : 'opacity:.55'}"><td>${bdg(t.tpl === 'india' ? 's-p' : t.tpl === 'uae' ? 's-b' : 's-gray', tplLabel(t.tpl))}</td><td class="fw6">${esc(t.t)}</td><td>${bdg('s-b', esc(t.code))}</td><td>${esc(t.pay)}</td><td>${esc(t.ent)}</td><td>${esc(t.accrual)}</td><td>${esc(t.probation)}</td><td class="muted">${esc(t.doc)}</td><td><span style="cursor:pointer" onclick="LA.ltToggle('${t.id}')">${t.active ? bdg('s-g', 'On') : bdg('s-gray', 'Off')}</span></td><td><button class="btn sm ghost" onclick="LA.ltEdit('${t.id}')">${ic('edit')}</button></td></tr>`).join('') || emptyRow(10, 'No leave types match'))
-      + '<div style="height:16px"></div>' + note('warn', `Sick tiers and annual/earned accrual are configured per location group; partial-month accrual and encashment formulas remain ${phFlag('HR confirmation pending')}.`);
+    const base = db().ltypes.filter((t) => t.tpl === 'all' || tpls.includes(t.tpl));
+    const rows = base.filter((t) => (aF === 'All' || (aF === 'Active') === t.active) && L.matches(q, t.t, t.code));
+    const dash = (v) => !v || v === '—';
+    return pageHead('Leave Types', 'Configure entitlement, accrual, pay tiers and documents — each location group has its own leave types', `<button class="btn pri" onclick="LA.ltNew()">${ic('plus')} Add leave type</button>`, 'Leave')
+      + statStrip([
+        { lbl: 'Leave types', val: base.length, icon: 'wallet', tone: 'b', hint: L.locLabel() },
+        { lbl: 'Active', val: nOf(base, (t) => t.active), icon: 'check', tone: 'g', hint: 'Available in Apply Leave' },
+        { lbl: 'Disabled', val: nOf(base, (t) => !t.active), icon: 'lock', tone: 'x', hint: 'Hidden from employees' },
+        { lbl: 'Need a document', val: nOf(base, (t) => !dash(t.doc)), icon: 'doc', tone: 'a', hint: 'Certificate or proof required' },
+      ])
+      + lcard('Leave type master', lb(L.searchBox('ltQ', 'Search type or code') + L.chips('ltAct', [{ v: 'All', l: 'All', n: base.length }, { v: 'Active', l: 'Active', n: nOf(base, (t) => t.active) }, { v: 'Disabled', l: 'Disabled', n: nOf(base, (t) => !t.active) }], 'All') + rst(['ltAct', 'ltQ']), `Showing ${rows.length} of ${base.length}`),
+        ['Type', 'Applies to', 'Pay', 'Entitlement', 'Accrual', 'Probation', 'Document', 'Active', ''],
+        rows.map((t) => `<tr class="${t.active ? '' : 'op2-off'}"><td><div class="fw6">${esc(t.t)}</div><div class="op2-sec">${bdg('s-b', esc(t.code))}</div></td><td>${bdg(t.tpl === 'india' ? 's-p' : t.tpl === 'uae' ? 's-b' : 's-gray', tplLabel(t.tpl))}</td><td>${esc(t.pay)}</td><td>${esc(t.ent)}</td><td class="muted">${esc(t.accrual)}</td><td class="muted">${esc(t.probation)}</td><td class="muted">${esc(t.doc)}</td><td><span style="cursor:pointer" title="Click to enable / disable" onclick="LA.ltToggle('${t.id}')">${t.active ? bdg('s-g', 'On') : bdg('s-gray', 'Off')}</span></td><td class="tr"><button class="btn sm ghost" title="Edit" onclick="LA.ltEdit('${t.id}')">${ic('edit')}</button></td></tr>`).join('') || noRows(9, base.length, 'leave types'))
+      + SP + note('warn', `Sick tiers and annual/earned accrual are configured per location group; partial-month accrual and encashment formulas remain ${phFlag('HR confirmation pending')}.`);
   }
 
   /* ---------- medical verification ---------- */
@@ -140,13 +194,24 @@
   function docVerify() {
     const st = L.ui('mdSt', 'Pending');
     const q = L.ui('mdQ', '');
-    const rows = sc(db().med).filter((m) => (st === 'All' || m.st === st) && L.deptOk(m.emp, 'mdDept') && L.matches(q, m.emp, m.req, m.period));
-    return pageHead('Medical Document Verification', 'Verify sick-leave certificates and convert unsupported leave', '', 'Leave Ops')
+    const base = sc(db().med);
+    const rows = base.filter((m) => (st === 'All' || m.st === st) && L.deptOk(m.emp, 'mdDept') && L.matches(q, m.emp, m.req, m.period));
+    const c = (s) => nOf(base, (m) => m.st === s);
+    const missing = nOf(base, (m) => m.st === 'Pending' && m.doc === 'Missing');
+    return pageHead('Medical Document Verification', 'Verify sick-leave certificates and convert unsupported leave', '', 'Leave')
+      + statStrip([
+        { lbl: 'Awaiting review', val: c('Pending'), icon: 'doc', tone: c('Pending') ? 'a' : 'g', hint: c('Pending') ? 'Verify or convert' : 'Queue is clear' },
+        { lbl: 'Missing certificates', val: missing, icon: 'alert', tone: missing ? 'r' : 'g', hint: missing ? 'Convert to unpaid leave' : 'None outstanding' },
+        { lbl: 'Verified', val: c('Verified'), icon: 'check', tone: 'g', hint: 'Certificates accepted' },
+        { lbl: 'Rejected / converted', val: c('Rejected') + c('Converted'), icon: 'x', tone: 'x', hint: 'Closed with action' },
+      ])
       + note('info', 'A valid medical certificate is mandatory for ≥2 consecutive days (UAE) / more than 2 days (India), instances after the first six, and sick leave adjacent to a public holiday. Missing/invalid documents are converted to unpaid leave (FRS §14).')
-      + `<div class="filters" style="margin-top:16px">${L.fLoc()}${L.fDept('mdDept')}${L.fSel('mdSt', 'Show', ['Pending', 'Verified', 'Rejected', 'Converted', 'All'], 'Pending')}${L.searchBox('mdQ', 'Member or requirement')}${L.fReset(['mdDept', 'mdSt', 'mdQ', 'loc'])}</div>`
-      + tableCard('Verification queue', ['Member', 'Location', 'Instance', 'Period', 'Days', 'Requirement', 'Document', 'Action'], rows.map((r) => `<tr><td>${L.empCell(r.emp)}</td><td>${L.locChip(L.locOf(r.emp))}</td><td>${r.inst}</td><td>${esc(r.period)}</td><td class="num">${r.days}</td><td>${esc(r.req)}</td><td>${r.doc === 'Missing' ? bdg('s-r', 'Missing') : bdg('s-g', 'Uploaded')}</td>
-        <td>${r.st !== 'Pending' ? (r.st === 'Verified' ? bdg('s-g', 'Verified') : r.st === 'Rejected' ? bdg('s-r', 'Rejected') : bdg('s-gray', 'Converted')) : r.doc === 'Missing' ? `<button class="btn sm danger" onclick="LA.medDo('${r.id}','convert')">Convert to unpaid</button>` : `<div class="hb"><button class="btn sm ok" onclick="LA.medDo('${r.id}','verify')">Verify</button><button class="btn sm ghost" onclick="LA.medDo('${r.id}','reject')">Reject</button></div>`}</td></tr>`).join('') || emptyRow(8, 'Nothing in this queue'))
-      + '<div style="height:16px"></div>' + note('warn', 'Access to medical information is restricted and audited (FRS §25).');
+      + SP
+      + lcard('Verification queue', lb(L.searchBox('mdQ', 'Search member or requirement') + chipSet('mdSt', ['Pending', 'Verified', 'Rejected', 'Converted', 'All'], 'Pending', (s) => (s === 'All' ? base.length : c(s))) + L.fDept('mdDept') + rst(['mdDept', 'mdSt', 'mdQ']), `Showing ${rows.length} of ${base.length}`),
+        ['Member', 'Location', 'Instance', 'Period', '>Days', 'Requirement', 'Document', 'Action'],
+        rows.map((r) => `<tr><td>${L.empCell(r.emp)}</td><td>${L.locChip(L.locOf(r.emp))}</td><td>${r.inst}</td><td>${esc(r.period)}</td><td class="num">${r.days}</td><td class="muted">${esc(r.req)}</td><td>${r.doc === 'Missing' ? bdg('s-r', 'Missing') : bdg('s-g', 'Uploaded')}</td>
+        <td>${r.st !== 'Pending' ? (r.st === 'Verified' ? bdg('s-g', 'Verified') : r.st === 'Rejected' ? bdg('s-r', 'Rejected') : bdg('s-gray', 'Converted')) : r.doc === 'Missing' ? `<button class="btn sm danger" onclick="LA.medDo('${r.id}','convert')">Convert to unpaid</button>` : `<div class="hb"><button class="btn sm ok" onclick="LA.medDo('${r.id}','verify')">Verify</button><button class="btn sm ghost" onclick="LA.medDo('${r.id}','reject')">Reject</button></div>`}</td></tr>`).join('') || noRows(8, base.length, 'certificates'), { sub: st === 'Pending' ? 'Pending items first' : st })
+      + SP + note('warn', 'Access to medical information is restricted and audited (FRS §25).');
   }
 
   /* ---------- balance adjustment ---------- */
@@ -169,11 +234,22 @@
     const q = L.ui('adQ', '');
     const tF = L.ui('adType', 'All types');
     const dF = L.ui('adDir', 'All');
-    const rows = sc(db().adj).filter((a) => L.deptOk(a.emp, 'adDept') && (tF === 'All types' || a.type === tF) && (dF === 'All' || (dF === 'Credits') === a.change > 0) && L.dateOk(a.date, 'adFrom', 'adTo') && L.matches(q, a.emp, a.type, a.reason));
-    return pageHead('Leave Balance Adjustment', 'Manual adjustments with mandatory reason and audit trail', `<button class="btn pri" onclick="LA.adjNew()">${ic('edit')} New adjustment</button>`, 'Leave Ops')
+    const base = sc(db().adj);
+    const rows = base.filter((a) => L.deptOk(a.emp, 'adDept') && (tF === 'All types' || a.type === tF) && (dF === 'All' || (dF === 'Credits') === a.change > 0) && L.dateOk(a.date, 'adFrom', 'adTo') && L.matches(q, a.emp, a.type, a.reason));
+    const cred = R1(base.filter((a) => a.change > 0).reduce((s, a) => s + a.change, 0));
+    const deb = R1(Math.abs(base.filter((a) => a.change < 0).reduce((s, a) => s + a.change, 0)));
+    return pageHead('Leave Balance Adjustment', 'Manual adjustments with mandatory reason and audit trail', `<button class="btn pri" onclick="LA.adjNew()">${ic('edit')} New adjustment</button>`, 'Leave')
+      + statStrip([
+        { lbl: 'Adjustments', val: base.length, icon: 'scale', tone: 'b', hint: L.locLabel() },
+        { lbl: 'Days credited', val: '+' + cred, icon: 'plus', tone: 'g', hint: `${nOf(base, (a) => a.change > 0)} credit entr${nOf(base, (a) => a.change > 0) === 1 ? 'y' : 'ies'}` },
+        { lbl: 'Days debited', val: '−' + deb, icon: 'history', tone: 'r', hint: `${nOf(base, (a) => a.change < 0)} debit entr${nOf(base, (a) => a.change < 0) === 1 ? 'y' : 'ies'}` },
+        { lbl: 'Employees affected', val: new Set(base.map((a) => a.emp)).size, icon: 'users', tone: 'p', hint: 'With at least one adjustment' },
+      ])
       + note('warn', 'Every manual override requires a reason and audit record (FRS §27, rule 16).')
-      + `<div class="filters" style="margin-top:16px">${L.fLoc()}${L.fDept('adDept')}${L.fSel('adType', 'Leave type', ['All types'].concat([...new Set(db().adj.map((a) => a.type))]), 'All types')}${L.fSel('adDir', 'Direction', ['All', 'Credits', 'Debits'], 'All')}${L.fDate('adFrom', 'From')}${L.fDate('adTo', 'To')}${L.searchBox('adQ', 'Member, type, reason')}${L.fReset(['adDept', 'adType', 'adDir', 'adFrom', 'adTo', 'adQ', 'loc'])}</div>`
-      + tableCard('Recent adjustments', ['Member', 'Location', 'Leave type', 'Change', 'Reason', 'By', 'Date'], rows.map((r) => `<tr><td>${L.empCell(r.emp)}</td><td>${L.locChip(L.locOf(r.emp))}</td><td>${esc(r.type)}</td><td class="num fw6" style="color:${r.change > 0 ? 'var(--g)' : 'var(--r)'}">${r.change > 0 ? '+' : '−'}${Math.abs(r.change).toFixed(1)}</td><td class="muted">${esc(r.reason)}</td><td>${esc(r.by)}</td><td>${fmt(r.date)}</td></tr>`).join('') || emptyRow(7, 'No adjustments match'));
+      + SP
+      + lcard('Recent adjustments', lb(L.searchBox('adQ', 'Search member, type or reason') + L.chips('adDir', [{ v: 'All', l: 'All', n: base.length }, { v: 'Credits', l: 'Credits', n: nOf(base, (a) => a.change > 0) }, { v: 'Debits', l: 'Debits', n: nOf(base, (a) => a.change < 0) }], 'All') + L.fSel('adType', 'Type', ['All types'].concat([...new Set(db().adj.map((a) => a.type))]), 'All types') + L.fDept('adDept') + L.fDate('adFrom', 'From') + L.fDate('adTo', 'To') + rst(['adDept', 'adType', 'adDir', 'adFrom', 'adTo', 'adQ']), `Showing ${rows.length} of ${base.length}`),
+        ['Member', 'Location', 'Leave type', '>Change', 'Reason', 'By', 'Date'],
+        rows.map((r) => `<tr><td>${L.empCell(r.emp)}</td><td>${L.locChip(L.locOf(r.emp))}</td><td>${bdg('s-b', esc(r.type))}</td><td class="num fw6" style="color:${r.change > 0 ? 'var(--g)' : 'var(--r)'}">${r.change > 0 ? '+' : '−'}${Math.abs(r.change).toFixed(1)}</td><td class="muted">${esc(r.reason)}</td><td>${esc(r.by)}</td><td>${fmt(r.date)}</td></tr>`).join('') || noRows(7, base.length, 'adjustments'));
   }
 
   /* ---------- carry forward ---------- */
@@ -195,12 +271,24 @@
   function carryForward() {
     const q = L.ui('cfQ', '');
     const sF = L.ui('cfSt', 'All');
-    const rows = sc(db().cf).filter((c) => L.deptOk(c.emp, 'cfDept') && (sF === 'All' || c.st === sF) && L.matches(q, c.emp, c.year));
+    const base = sc(db().cf);
+    const rows = base.filter((c) => L.deptOk(c.emp, 'cfDept') && (sF === 'All' || c.st === sF) && L.matches(q, c.emp, c.year));
     const conf = L.confOf(L.oneLoc('polLoc'));
-    return pageHead('Carry Forward', 'Approve carry-forward and monitor 3-month expiry', `<button class="btn pri" onclick="LA.cfNew()">${ic('plus')} New request</button>`, 'Leave Ops')
+    const c = (s) => nOf(base, (x) => x.st === s);
+    const dsum = (f) => R1(base.filter(f).reduce((a, x) => a + (Number(x.days) || 0), 0));
+    const soon = base.filter((x) => x.st === 'Approved' && daysBetween(TODAY, x.expires) >= 0 && daysBetween(TODAY, x.expires) <= 90);
+    return pageHead('Carry Forward', 'Approve carry-forward and monitor 3-month expiry', `<button class="btn pri" onclick="LA.cfNew()">${ic('plus')} New request</button>`, 'Leave')
+      + statStrip([
+        { lbl: 'Pending approval', val: c('Pending'), icon: 'history', tone: c('Pending') ? 'a' : 'g', hint: c('Pending') ? 'Awaiting a decision' : 'Nothing pending' },
+        { lbl: 'Days pending', val: dsum((x) => x.st === 'Pending'), icon: 'calendar', tone: 'b', hint: 'Capped at 5 days per request' },
+        { lbl: 'Days approved', val: dsum((x) => x.st === 'Approved'), icon: 'check', tone: 'g', hint: `${c('Approved')} approved request(s)` },
+        { lbl: 'Expiring within 90 days', val: soon.length, icon: 'alert', tone: soon.length ? 'r' : 'x', hint: soon.length ? `${R1(soon.reduce((a, x) => a + (Number(x.days) || 0), 0))} day(s) at risk` : 'No upcoming expiry' },
+      ])
       + note('warn', `Carry-forward workflow (manager only vs manager + HR) and exact three-month expiry date logic are ${phFlag(conf.cfFlow ? 'Set: ' + esc(conf.cfFlow) : 'HR confirmation pending')} (FRS §28).`)
-      + `<div class="filters" style="margin-top:16px">${L.fLoc()}${L.fDept('cfDept')}${L.fSel('cfSt', 'Status', ['All', 'Pending', 'Approved', 'Rejected'], 'All')}${L.searchBox('cfQ', 'Member or year')}${L.fReset(['cfDept', 'cfSt', 'cfQ', 'loc'])}</div>`
-      + tableCard('Carry-forward requests', ['Member', 'Location', 'Carry days', 'Entitlement year', 'Expires', 'Status', 'Action'], rows.map((r) => `<tr><td>${L.empCell(r.emp)}</td><td>${L.locChip(L.locOf(r.emp))}</td><td class="num">${r.days}</td><td>${esc(r.year)}</td><td>${fmt(r.expires)}</td><td>${L.statusPill(r.st)}</td><td>${r.st === 'Pending' ? `<div class="hb"><button class="btn sm ok" onclick="LA.cfDo('${r.id}','approve')">Approve</button><button class="btn sm ghost" onclick="LA.cfDo('${r.id}','reject')">Reject</button></div>` : '—'}</td></tr>`).join('') || emptyRow(7, 'No requests match'));
+      + SP
+      + lcard('Carry-forward requests', lb(L.searchBox('cfQ', 'Search member or year') + chipSet('cfSt', ['All', 'Pending', 'Approved', 'Rejected'], 'All', (s) => (s === 'All' ? base.length : c(s))) + L.fDept('cfDept') + rst(['cfDept', 'cfSt', 'cfQ']), `Showing ${rows.length} of ${base.length}`),
+        ['Member', 'Location', '>Carry days', 'Entitlement year', 'Expires', 'Status', 'Action'],
+        rows.map((r) => { const dl = daysBetween(TODAY, r.expires); return `<tr><td>${L.empCell(r.emp)}</td><td>${L.locChip(L.locOf(r.emp))}</td><td class="num fw6">${r.days}</td><td class="muted">${esc(r.year)}</td><td>${fmt(r.expires)}${r.st === 'Rejected' ? '' : `<div class="op2-sec">${dl >= 0 ? `in ${dl} day(s)` : 'expired'}</div>`}</td><td>${L.statusPill(r.st)}</td><td>${r.st === 'Pending' ? `<div class="hb"><button class="btn sm ok" onclick="LA.cfDo('${r.id}','approve')">Approve</button><button class="btn sm ghost" onclick="LA.cfDo('${r.id}','reject')">Reject</button></div>` : '<span class="muted">—</span>'}</td></tr>`; }).join('') || noRows(7, base.length, 'requests'));
   }
 
   /* ---------- encashment ---------- */
@@ -222,13 +310,25 @@
     const q = L.ui('enQ', '');
     const sF = L.ui('enSt', 'All');
     const stage = (r) => (r.mgr !== 'Approved' ? 'Awaiting manager' : r.hr !== 'Approved' ? 'Awaiting HR' : r.payroll === '—' ? 'Ready for payroll' : 'Queued');
-    const rows = sc(db().enc).filter((r) => L.deptOk(r.emp, 'enDept') && (sF === 'All' || stage(r) === sF) && L.matches(q, r.emp, r.reason));
+    const base = sc(db().enc);
+    const rows = base.filter((r) => L.deptOk(r.emp, 'enDept') && (sF === 'All' || stage(r) === sF) && L.matches(q, r.emp, r.reason));
     const conf = L.confOf(L.oneLoc('polLoc'));
-    return pageHead('Leave Encashment', 'Operational-reason encashment · Manager and HR approval', `<button class="btn pri" onclick="LA.encNew()">${ic('plus')} New request</button>`, 'Leave Ops')
+    const c = (s) => nOf(base, (r) => stage(r) === s);
+    const dd = (s) => R1(base.filter((r) => stage(r) === s).reduce((a, r) => a + (Number(r.days) || 0), 0));
+    const none = (v) => `<span class="muted">${v}</span>`;
+    return pageHead('Leave Encashment', 'Operational-reason encashment · Manager and HR approval', `<button class="btn pri" onclick="LA.encNew()">${ic('plus')} New request</button>`, 'Leave')
+      + statStrip([
+        { lbl: 'Awaiting manager', val: c('Awaiting manager'), icon: 'usercheck', tone: c('Awaiting manager') ? 'a' : 'g', hint: `${dd('Awaiting manager')} day(s)` },
+        { lbl: 'Awaiting HR', val: c('Awaiting HR'), icon: 'shield', tone: c('Awaiting HR') ? 'b' : 'g', hint: `${dd('Awaiting HR')} day(s)` },
+        { lbl: 'Ready for payroll', val: c('Ready for payroll'), icon: 'wallet', tone: c('Ready for payroll') ? 'p' : 'x', hint: `${dd('Ready for payroll')} day(s) to queue` },
+        { lbl: 'Queued to payroll', val: c('Queued'), icon: 'check', tone: 'g', hint: `${dd('Queued')} day(s) · pay within 45 days` },
+      ])
       + note('warn', `Encashment formula (gross / basic / approved salary component) is ${phFlag(conf.encFormula ? 'Set: ' + esc(conf.encFormula) : 'HR confirmation pending')}. Payment within 45 days after approval.`)
-      + `<div class="filters" style="margin-top:16px">${L.fLoc()}${L.fDept('enDept')}${L.fSel('enSt', 'Stage', ['All', 'Awaiting manager', 'Awaiting HR', 'Ready for payroll', 'Queued'], 'All')}${L.searchBox('enQ', 'Member or reason')}${L.fReset(['enDept', 'enSt', 'enQ', 'loc'])}</div>`
-      + tableCard('Encashment requests', ['Member', 'Location', 'Days', 'Reason', 'Manager', 'HR', 'Payroll', 'Action'], rows.map((r) => `<tr><td>${L.empCell(r.emp)}</td><td>${L.locChip(L.locOf(r.emp))}</td><td class="num">${r.days}</td><td class="muted">${esc(r.reason)}</td><td>${r.mgr === 'Approved' ? bdg('s-g', '✓') : bdg('s-a', 'Pending')}</td><td>${r.hr === 'Approved' ? bdg('s-g', '✓') : r.hr === 'Pending' ? bdg('s-a', 'Pending') : '—'}</td><td>${r.payroll !== '—' ? bdg('s-b', r.payroll) : '—'}</td>
-        <td>${r.mgr !== 'Approved' ? `<button class="btn sm ok" onclick="LA.encDo('${r.id}','mgr')">Manager ✓</button>` : r.hr !== 'Approved' ? `<button class="btn sm ok" onclick="LA.encDo('${r.id}','hr')">HR ✓</button>` : r.payroll === '—' ? `<button class="btn sm" onclick="LA.encDo('${r.id}','pay')">Queue to payroll</button>` : '—'}</td></tr>`).join('') || emptyRow(8, 'No requests match'));
+      + SP
+      + lcard('Encashment requests', lb(L.searchBox('enQ', 'Search member or reason') + chipSet('enSt', ['All', 'Awaiting manager', 'Awaiting HR', 'Ready for payroll', 'Queued'], 'All', (s) => (s === 'All' ? base.length : c(s))) + L.fDept('enDept') + rst(['enDept', 'enSt', 'enQ']), `Showing ${rows.length} of ${base.length}`),
+        ['Member', 'Location', '>Days', 'Reason', 'Manager', 'HR', 'Payroll', 'Action'],
+        rows.map((r) => `<tr><td>${L.empCell(r.emp)}</td><td>${L.locChip(L.locOf(r.emp))}</td><td class="num fw6">${r.days}</td><td class="muted">${esc(r.reason)}</td><td>${r.mgr === 'Approved' ? bdg('s-g', 'Approved') : bdg('s-a', 'Pending')}</td><td>${r.hr === 'Approved' ? bdg('s-g', 'Approved') : r.hr === 'Pending' ? bdg('s-a', 'Pending') : none('—')}</td><td>${r.payroll !== '—' ? bdg('s-b', esc(r.payroll)) : none('—')}</td>
+        <td>${r.mgr !== 'Approved' ? `<button class="btn sm ok" onclick="LA.encDo('${r.id}','mgr')">Manager ✓</button>` : r.hr !== 'Approved' ? `<button class="btn sm ok" onclick="LA.encDo('${r.id}','hr')">HR ✓</button>` : r.payroll === '—' ? `<button class="btn sm" onclick="LA.encDo('${r.id}','pay')">Queue to payroll</button>` : none('—')}</td></tr>`).join('') || noRows(8, base.length, 'requests'));
   }
 
   /* ---------- maternity / parental ---------- */
@@ -241,13 +341,29 @@
   });
   function maternity() {
     const q = L.ui('maQ', '');
-    const mat = sc(db().mat).filter((m) => L.deptOk(m.emp, 'maDept') && L.matches(q, m.emp, m.type));
-    const par = sc(db().par).filter((m) => L.deptOk(m.emp, 'maDept') && L.matches(q, m.emp));
-    return pageHead('Maternity & Parental Leave', 'Track entitlement, pay tiers and supporting cases', `<button class="btn" onclick="LA.matNew('par')">${ic('plus')} Parental case</button><button class="btn pri" onclick="LA.matNew('mat')">${ic('plus')} Maternity case</button>`, 'Leave Ops')
-      + `<div class="filters">${L.fLoc()}${L.fDept('maDept')}${L.searchBox('maQ', 'Member or type')}${L.fReset(['maDept', 'maQ', 'loc'])}</div>`
-      + '<div class="row"><div style="flex:1">' + tableCard('Maternity cases', ['Member', 'Location', 'Type', 'Full-pay', 'Half-pay', 'Unpaid', 'Status', ''], mat.map((r) => `<tr><td>${L.empCell(r.emp)}</td><td>${L.locChip(L.locOf(r.emp))}</td><td>${esc(r.type)}</td><td class="num">${r.full}</td><td class="num">${r.half}</td><td class="num">${r.unpaid}</td><td>${bdg('s-b', esc(r.st))}</td><td><button class="btn sm ghost" onclick="LA.matDel('${r.id}','mat')">${ic('x')}</button></td></tr>`).join('') || emptyRow(8, 'No cases'))
-      + '</div><div style="flex:1">' + tableCard('Parental / paternity leave', ['Member', 'Location', 'Entitlement', 'Document', 'Status', ''], par.map((r) => `<tr><td>${L.empCell(r.emp)}</td><td>${L.locChip(L.locOf(r.emp))}</td><td>${esc(r.ent)}</td><td>${r.doc === 'Uploaded' ? bdg('s-g', 'Uploaded') : bdg('s-r', 'Missing')}</td><td>${r.st === 'Approved' ? bdg('s-g', 'Approved') : bdg('s-a', esc(r.st))}</td><td><button class="btn sm ghost" onclick="LA.matDel('${r.id}','par')">${ic('x')}</button></td></tr>`).join('') || emptyRow(6, 'No cases')) + '</div></div>'
-      + '<div style="height:16px"></div>' + note('info', 'UAE: 45 full-pay + 15 half-pay days (60 total), nursing break of 2 h/day. India: 26 weeks statutory maternity leave (182 days). Annual-leave combination follows each location’s policy.');
+    const vw = L.ui('maView', 'All');
+    const matB = sc(db().mat);
+    const parB = sc(db().par);
+    const mat = matB.filter((m) => L.deptOk(m.emp, 'maDept') && L.matches(q, m.emp, m.type));
+    const par = parB.filter((m) => L.deptOk(m.emp, 'maDept') && L.matches(q, m.emp));
+    const showM = vw === 'All' || vw === 'Maternity';
+    const showP = vw === 'All' || vw === 'Parental';
+    const shown = (showM ? mat.length : 0) + (showP ? par.length : 0);
+    const total = matB.length + parB.length;
+    const miss = nOf(parB, (p) => p.doc === 'Missing');
+    const pend = nOf(matB, (m) => m.st !== 'Approved') + nOf(parB, (p) => p.st !== 'Approved');
+    return pageHead('Maternity & Parental Leave', 'Track entitlement, pay tiers and supporting cases', `<button class="btn" onclick="LA.matNew('par')">${ic('plus')} Parental case</button><button class="btn pri" onclick="LA.matNew('mat')">${ic('plus')} Maternity case</button>`, 'Leave')
+      + statStrip([
+        { lbl: 'Maternity cases', val: matB.length, icon: 'baby', tone: 'p', hint: `${nOf(matB, (m) => m.st === 'Approved')} approved` },
+        { lbl: 'Parental cases', val: parB.length, icon: 'users', tone: 'b', hint: '5 working days each' },
+        { lbl: 'Documents missing', val: miss, icon: 'doc', tone: miss ? 'r' : 'g', hint: miss ? 'Birth certificate outstanding' : 'All supporting documents in' },
+        { lbl: 'Pending approval', val: pend, icon: 'clock', tone: pend ? 'a' : 'g', hint: pend ? 'Cases not yet approved' : 'Nothing pending' },
+      ])
+      + `<div class="card op2-solo">${lb(L.searchBox('maQ', 'Search member or type') + chipSet('maView', ['All', 'Maternity', 'Parental'], 'All', (s) => (s === 'All' ? total : s === 'Maternity' ? matB.length : parB.length)) + L.fDept('maDept') + rst(['maDept', 'maQ', 'maView']), `Showing ${shown} of ${vw === 'All' ? total : vw === 'Maternity' ? matB.length : parB.length} cases`)}</div>`
+      + (showM ? lcard('Maternity cases', '', ['Member', 'Location', 'Type', '>Full-pay', '>Half-pay', '>Unpaid', 'Status', ''], mat.map((r) => `<tr><td>${L.empCell(r.emp)}</td><td>${L.locChip(L.locOf(r.emp))}</td><td>${esc(r.type)}</td><td class="num">${r.full}</td><td class="num">${r.half}</td><td class="num">${r.unpaid}</td><td>${bdg(r.st === 'Approved' ? 's-g' : 's-a', esc(r.st))}</td><td class="tr"><button class="btn sm ghost" title="Remove case" onclick="LA.matDel('${r.id}','mat')">${ic('x')}</button></td></tr>`).join('') || noRows(8, matB.length, 'maternity cases'), { sub: `${mat.length} of ${matB.length}` }) : '')
+      + (showM && showP ? SP : '')
+      + (showP ? lcard('Parental / paternity leave', '', ['Member', 'Location', 'Entitlement', 'Document', 'Status', ''], par.map((r) => `<tr><td>${L.empCell(r.emp)}</td><td>${L.locChip(L.locOf(r.emp))}</td><td>${esc(r.ent)}</td><td>${r.doc === 'Uploaded' ? bdg('s-g', 'Uploaded') : bdg('s-r', 'Missing')}</td><td>${r.st === 'Approved' ? bdg('s-g', 'Approved') : bdg('s-a', esc(r.st))}</td><td class="tr"><button class="btn sm ghost" title="Remove case" onclick="LA.matDel('${r.id}','par')">${ic('x')}</button></td></tr>`).join('') || noRows(6, parB.length, 'parental cases'), { sub: `${par.length} of ${parB.length}` }) : '')
+      + SP + note('info', 'UAE: 45 full-pay + 15 half-pay days (60 total), nursing break of 2 h/day. India: 26 weeks statutory maternity leave (182 days). Annual-leave combination follows each location’s policy.');
   }
   L.matDel = (id, k) => L.confirm('Remove case', 'Remove this case record?', 'Remove', () => { if (k === 'par') db().par = db().par.filter((x) => x.id !== id); else db().mat = db().mat.filter((x) => x.id !== id); L.audit('Maternity/parental case removed', id, '—', ''); L.rr(); }, true);
 
@@ -265,10 +381,22 @@
     const y = L.ui('hsYear', Number(TODAY.slice(0, 4)));
     const tF = L.ui('hsType', 'All types');
     const q = L.ui('hsQ', '');
-    const rows = db().hol.filter((h) => h.d.slice(0, 4) === String(y) && L.hasLoc(h.locs) && (tF === 'All types' || h.type === tF) && L.matches(q, h.n)).sort((a, b) => (a.d < b.d ? -1 : 1));
-    return pageHead('Holiday Calendar Settings', 'Maintain public holidays for each location', `<div class="daterange"><button class="dr-nav" onclick="LA.setUi('hsYear',${y - 1})">${ic('chevL')}</button><span class="dr-lbl">${y}</span><button class="dr-nav" onclick="LA.setUi('hsYear',${y + 1})">${ic('chevR')}</button></div><button class="btn pri" onclick="LA.holNew()">${ic('plus')} Add holiday</button>`, 'Settings')
-      + `<div class="filters">${L.fLoc()}${L.fSel('hsType', 'Type', ['All types', 'Public', 'Optional', 'Company'], 'All types')}${L.searchBox('hsQ', 'Holiday name')}${L.fReset(['hsType', 'hsQ', 'loc'])}</div>`
-      + tableCard(`${y} · ${L.locLabel()}`, ['Date', 'Holiday', 'Applies to', 'Type', 'Action'], rows.map((h) => `<tr><td class="fw6">${fmt(h.d)}${h.to ? ' → ' + fmt(h.to) : ''}</td><td>${esc(h.n)}</td><td class="muted">${!h.locs || h.locs.includes('all') ? 'All locations' : h.locs.map((i) => esc(L.locCity(i))).join(', ')}</td><td>${bdg('s-p', esc(h.type))}</td><td><div class="hb"><button class="btn sm ghost" onclick="LA.holEdit('${h.id}')">${ic('edit')}</button><button class="btn sm ghost" onclick="LA.holDel('${h.id}')">${ic('x')}</button></div></td></tr>`).join('') || emptyRow(5, 'No holidays for this selection'));
+    const base = db().hol.filter((h) => h.d.slice(0, 4) === String(y) && L.hasLoc(h.locs));
+    const rows = base.filter((h) => (tF === 'All types' || h.type === tF) && L.matches(q, h.n)).sort((a, b) => (a.d < b.d ? -1 : 1));
+    const upc = db().hol.filter((h) => L.hasLoc(h.locs) && (h.to || h.d) >= TODAY).sort((a, b) => (a.d < b.d ? -1 : 1))[0];
+    const wd = (d) => { try { return DOWL[L.parse(d).getDay()]; } catch { return ''; } };
+    const dur = (h) => (h.to ? daysBetween(h.d, h.to) + 1 : 1);
+    const c = (t) => nOf(base, (h) => h.type === t);
+    return pageHead('Holiday Calendar Settings', 'Maintain public holidays for each location', `<div class="daterange"><button class="dr-nav" onclick="LA.setUi('hsYear',${y - 1})">${ic('chevL')}</button><span class="dr-lbl">${y}</span><button class="dr-nav" onclick="LA.setUi('hsYear',${y + 1})">${ic('chevR')}</button></div><button class="btn pri" onclick="LA.holNew()">${ic('plus')} Add holiday</button>`, 'Leave')
+      + statStrip([
+        { lbl: `Holidays in ${y}`, val: base.length, icon: 'calendar', tone: 'b', hint: L.locLabel() },
+        { lbl: 'Public holidays', val: c('Public'), icon: 'gift', tone: 'p', hint: `${nOf(base, (h) => h.type === 'Public' && dur(h) > 1)} multi-day` },
+        { lbl: 'Optional / company', val: c('Optional') + c('Company'), icon: 'sun', tone: 'a', hint: `${c('Optional')} optional · ${c('Company')} company` },
+        { lbl: 'Next holiday', val: upc ? fmt(upc.d) : '—', icon: 'chevR', tone: 'g', hint: upc ? esc(upc.n) : 'None scheduled' },
+      ])
+      + lcard(`${y} · ${L.locLabel()}`, lb(L.searchBox('hsQ', 'Search holiday name') + chipSet('hsType', ['All types', 'Public', 'Optional', 'Company'], 'All types', (t) => (t === 'All types' ? base.length : c(t))) + rst(['hsType', 'hsQ']), `Showing ${rows.length} of ${base.length}`),
+        ['Date', 'Holiday', '>Days', 'Applies to', 'Type', 'Action'],
+        rows.map((h) => `<tr><td><div class="fw6">${fmt(h.d)}${h.to ? ' → ' + fmt(h.to) : ''}</div><div class="op2-sec">${wd(h.d)}</div></td><td>${esc(h.n)}</td><td class="num">${dur(h)}</td><td class="muted">${!h.locs || h.locs.includes('all') ? 'All locations' : h.locs.map((i) => esc(L.locCity(i))).join(', ')}</td><td>${bdg(h.type === 'Public' ? 's-p' : h.type === 'Optional' ? 's-a' : 's-b', esc(h.type))}</td><td class="tr"><div class="hb" style="justify-content:flex-end"><button class="btn sm ghost" title="Edit" onclick="LA.holEdit('${h.id}')">${ic('edit')}</button><button class="btn sm ghost" title="Remove" onclick="LA.holDel('${h.id}')">${ic('x')}</button></div></td></tr>`).join('') || noRows(6, base.length, 'holidays'));
   }
 
   /* ---------- workflows ---------- */
@@ -285,10 +413,22 @@
   function setWorkflows() {
     const tpls = scopeTpls();
     const q = L.ui('wfQ', '');
-    const rows = db().workflows.map((r, i) => ({ r, i })).filter(({ r }) => ((r[2] || 'all') === 'all' || tpls.includes(r[2])) && L.matches(q, r[0], r[1]));
-    return pageHead('Approval Workflows', 'Configure per-request approval routing (FRS §18 · Table 14)', `<button class="btn pri" onclick="LA.wfForm()">${ic('plus')} Add workflow</button>`, 'Settings')
-      + `<div class="filters">${L.fLoc()}${L.searchBox('wfQ', 'Request type or step')}${L.fReset(['wfQ', 'loc'])}</div>`
-      + tableCard('Request workflows', ['Request type', 'Applies to', 'Workflow', ''], rows.map(({ r, i }) => `<tr><td class="fw6">${esc(r[0])}</td><td>${bdg('s-gray', tplLabel(r[2] || 'all'))}</td><td>${r[1].split('→').map((s) => `<span class="chip" style="margin:2px">${esc(s.trim())}</span>`).join('<span style="color:var(--faint)">→</span>')}</td><td><div class="hb"><button class="btn sm ghost" onclick="LA.wfForm(${i})">${ic('edit')}</button><button class="btn sm ghost" onclick="LA.wfDel(${i})">${ic('x')}</button></div></td></tr>`).join('') || emptyRow(4, 'No workflows match'));
+    const tF = L.ui('wfTpl', 'All');
+    const base = db().workflows.map((r, i) => ({ r, i })).filter(({ r }) => (r[2] || 'all') === 'all' || tpls.includes(r[2]));
+    const rows = base.filter(({ r }) => (tF === 'All' || (r[2] || 'all') === tF) && L.matches(q, r[0], r[1]));
+    const steps = (r) => String(r[1] || '').split('→').map((s) => s.trim()).filter(Boolean);
+    const avg = base.length ? R1(base.reduce((a, { r }) => a + Math.max(0, steps(r).length - 1), 0) / base.length) : 0;
+    const tc = (t) => nOf(base, ({ r }) => (r[2] || 'all') === t);
+    return pageHead('Approval Workflows', 'Configure per-request approval routing (FRS §18 · Table 14)', `<button class="btn pri" onclick="LA.wfForm()">${ic('plus')} Add workflow</button>`, 'Compliance')
+      + statStrip([
+        { lbl: 'Workflows', val: base.length, icon: 'swap', tone: 'b', hint: L.locLabel() },
+        { lbl: 'Require HR approval', val: nOf(base, ({ r }) => /HR/.test(r[1] || '')), icon: 'shield', tone: 'p', hint: 'HR is an approval step' },
+        { lbl: 'Avg. approval steps', val: avg, icon: 'check', tone: 'g', hint: 'Excluding the requester' },
+        { lbl: 'Location-specific', val: nOf(base, ({ r }) => (r[2] || 'all') !== 'all'), icon: 'location', tone: 'a', hint: 'UAE or India only' },
+      ])
+      + lcard('Request workflows', lb(L.searchBox('wfQ', 'Search request type or step') + L.chips('wfTpl', [{ v: 'All', l: 'All', n: base.length }, { v: 'all', l: 'All locations', n: tc('all') }, { v: 'uae', l: 'UAE', n: tc('uae') }, { v: 'india', l: 'India', n: tc('india') }], 'All') + rst(['wfTpl', 'wfQ']), `Showing ${rows.length} of ${base.length}`),
+        ['Request type', 'Applies to', 'Workflow', ''],
+        rows.map(({ r, i }) => `<tr><td class="fw6">${esc(r[0])}</td><td>${bdg('s-gray', tplLabel(r[2] || 'all'))}</td><td><div class="op2-flow">${steps(r).map((s) => `<span class="chip">${esc(s)}</span>`).join('<i>→</i>')}</div></td><td class="tr"><div class="hb" style="justify-content:flex-end"><button class="btn sm ghost" title="Edit" onclick="LA.wfForm(${i})">${ic('edit')}</button><button class="btn sm ghost" title="Delete" onclick="LA.wfDel(${i})">${ic('x')}</button></div></td></tr>`).join('') || noRows(4, base.length, 'workflows'));
   }
 
   /* ---------- HR overtime ---------- */
@@ -296,14 +436,23 @@
     const q = L.ui('otQ', '');
     const sF = L.ui('otStH', 'All');
     const cF = L.ui('otCatH', 'All categories');
-    const rows = sc(db().ots).filter((o) => L.deptOk(o.emp, 'otDept') && (sF === 'All' || o.st === sF) && (cF === 'All categories' || o.cat === cF) && L.dateOk(o.date, 'otFromH', 'otToH') && L.matches(q, o.emp, o.cat, o.comp, o.st)).sort((a, b) => (a.date < b.date ? 1 : -1));
-    const tot = (c) => R1(sc(db().ots).filter((o) => o.st === 'Approved' && o.cat.startsWith(c)).reduce((a, o) => a + o.hours, 0));
+    const base = sc(db().ots);
+    const rows = base.filter((o) => L.deptOk(o.emp, 'otDept') && (sF === 'All' || o.st === sF) && (cF === 'All categories' || o.cat === cF) && L.dateOk(o.date, 'otFromH', 'otToH') && L.matches(q, o.emp, o.cat, o.comp, o.st)).sort((a, b) => (a.date < b.date ? 1 : -1));
+    const tot = (c) => R1(base.filter((o) => o.st === 'Approved' && o.cat.startsWith(c)).reduce((a, o) => a + o.hours, 0));
+    const pend = base.filter((o) => o.st === 'Pending');
+    const c = (s) => nOf(base, (o) => o.st === s);
     return pageHead('Overtime & Comp-Off (HR)', 'Approve, calculate and track overtime and compensatory off', `<button class="btn" onclick="LA.otExport()">${ic('download')} Export</button>`, 'Payroll & Output')
-      + `<div class="grid g-3" style="margin-bottom:16px">${kpi({ icon: 'clock2', acc: 'g', val: tot('Normal'), lbl: 'Normal hours (approved)' })}${kpi({ icon: 'clock2', acc: 'p', val: tot('Night'), lbl: 'Night hours (approved)' })}${kpi({ icon: 'gift', acc: 'b', val: tot('Weekend'), lbl: 'Weekend / holiday hours' })}</div>`
-      + tableCard('Overtime calculation rules (FRS §19)', ['Category', 'Calculation rule'], [['Normal overtime', 'Basic hourly wage + at least 25%'], ['10:00 PM–4:00 AM', 'Basic hourly wage + at least 50% (shift-worker exclusion configurable)'], ['Weekend work', 'Alternative day off, or normal day wage + at least 50% of basic wage'], ['Compensation method', 'OT payment, special allowance, comp-off, alternative day off, or none with reason']].map((r) => `<tr><td class="fw6">${r[0]}</td><td>${r[1]}</td></tr>`).join(''))
-      + '<div style="height:16px"></div>' + `<div class="filters">${L.fLoc()}${L.fDept('otDept')}${L.fSel('otStH', 'Status', ['All', 'Pending', 'Approved', 'Rejected', 'Withdrawn'], 'All')}${L.fSel('otCatH', 'Category', ['All categories', 'Normal (+25%)', 'Night 10PM–4AM (+50%)', 'Weekend / holiday'], 'All categories')}${L.fDate('otFromH', 'From')}${L.fDate('otToH', 'To')}${L.searchBox('otQ', 'Member, category, method')}${L.fReset(['otDept', 'otStH', 'otCatH', 'otFromH', 'otToH', 'otQ', 'loc'])}</div>`
-      + tableCard('Overtime records', ['Ref', 'Member', 'Location', 'Date', 'Hours', 'Category', 'Method', 'Status', 'Action'], rows.map((r) => `<tr><td class="mono fw6">${r.id}</td><td>${L.empCell(r.emp)}</td><td>${L.locChip(L.locOf(r.emp))}</td><td>${fmt(r.date)}</td><td class="num">${r.hours.toFixed(1)}</td><td>${esc(r.cat)}</td><td>${esc(r.comp)}</td><td>${L.statusPill(r.st)}</td><td>${r.st === 'Pending' ? `<div class="hb"><button class="btn sm ok" onclick="LA.otHr('${r.id}','Approved')">Approve</button><button class="btn sm ghost" onclick="LA.otHr('${r.id}','Rejected')">Reject</button></div>` : esc(r.by || '—')}</td></tr>`).join('') || emptyRow(9, 'No records match'), { sub: `${rows.length} record(s)` })
-      + '<div style="height:16px"></div>' + note('warn', 'Unapproved additional time must <b>not</b> automatically become payable overtime. Eligibility applies only to configured employee categories.');
+      + statStrip([
+        { lbl: 'Pending approval', val: pend.length, icon: 'clock2', tone: pend.length ? 'a' : 'g', hint: pend.length ? `${R1(pend.reduce((a, o) => a + o.hours, 0))} hour(s) to decide` : 'Nothing pending' },
+        { lbl: 'Normal hours', val: tot('Normal'), icon: 'clock', tone: 'g', hint: 'Approved · +25%' },
+        { lbl: 'Night hours', val: tot('Night'), icon: 'sun', tone: 'p', hint: 'Approved · 10 PM–4 AM, +50%' },
+        { lbl: 'Weekend / holiday hours', val: tot('Weekend'), icon: 'gift', tone: 'b', hint: 'Approved · day off or +50%' },
+      ])
+      + lcard('Overtime records', lb(L.searchBox('otQ', 'Search member, category or method') + chipSet('otStH', ['All', 'Pending', 'Approved', 'Rejected', 'Withdrawn'], 'All', (s) => (s === 'All' ? base.length : c(s))) + L.fSel('otCatH', 'Category', ['All categories', 'Normal (+25%)', 'Night 10PM–4AM (+50%)', 'Weekend / holiday'], 'All categories') + L.fDept('otDept') + L.fDate('otFromH', 'From') + L.fDate('otToH', 'To') + rst(['otDept', 'otStH', 'otCatH', 'otFromH', 'otToH', 'otQ']), `Showing ${rows.length} of ${base.length}`),
+        ['Ref', 'Member', 'Location', 'Date', '>Hours', 'Category', 'Method', 'Status', 'Action'],
+        rows.map((r) => `<tr><td class="mono fw6">${r.id}</td><td>${L.empCell(r.emp)}</td><td>${L.locChip(L.locOf(r.emp))}</td><td>${fmt(r.date)}</td><td class="num fw6">${r.hours.toFixed(1)}</td><td>${esc(r.cat)}</td><td class="muted">${esc(r.comp)}</td><td>${L.statusPill(r.st)}</td><td>${r.st === 'Pending' ? `<div class="hb"><button class="btn sm ok" onclick="LA.otHr('${r.id}','Approved')">Approve</button><button class="btn sm ghost" onclick="LA.otHr('${r.id}','Rejected')">Reject</button></div>` : `<span class="muted">${esc(r.by || '—')}</span>`}</td></tr>`).join('') || noRows(9, base.length, 'overtime records'), { sub: 'Latest first' })
+      + SP + tableCard('Overtime calculation rules (FRS §19)', ['Category', 'Calculation rule'], [['Normal overtime', 'Basic hourly wage + at least 25%'], ['10:00 PM–4:00 AM', 'Basic hourly wage + at least 50% (shift-worker exclusion configurable)'], ['Weekend work', 'Alternative day off, or normal day wage + at least 50% of basic wage'], ['Compensation method', 'OT payment, special allowance, comp-off, alternative day off, or none with reason']].map((r) => `<tr><td class="fw6">${r[0]}</td><td class="muted">${r[1]}</td></tr>`).join(''))
+      + SP + note('warn', 'Unapproved additional time must <b>not</b> automatically become payable overtime. Eligibility applies only to configured employee categories.');
   }
   L.otExport = () => L.csv('overtime.csv', ['Ref', 'Member', 'Location', 'Date', 'Hours', 'Category', 'Method', 'Status'], sc(db().ots).map((o) => [o.id, o.emp, L.locName(L.locOf(o.emp)), o.date, o.hours, o.cat, o.comp, o.st]));
   L.otHr = (id, out) => { const o = db().ots.find((x) => x.id === id); if (!o || o.st !== 'Pending') return; L.otSettle(o, out, 'HR decision'); toast(`${id} ${out.toLowerCase()}`); L.rr(); };
@@ -335,10 +484,17 @@
     const loc = L.oneLoc('polLoc');
     const p = L.policyOf(loc);
     const conf = L.confOf(loc);
-    return pageHead('Policy Settings', 'Configuration-driven attendance & leave policy — one policy per location', `<button class="btn" onclick="LA.rr()">Cancel</button><button class="btn pri" onclick="LA.polSave('${loc}')">Save policy</button>`, 'Settings')
-      + `<div class="filters">${L.fSel('polLoc', 'Policy for location', L.locOptions(false), loc)}</div>`
+    const setN = nOf(CONF, ([k]) => conf[k] != null);
+    return pageHead('Policy Settings', 'Configuration-driven attendance & leave policy — one policy per location', `<button class="btn" onclick="LA.rr()">Cancel</button><button class="btn pri" onclick="LA.polSave('${loc}')">Save policy</button>`, 'Configuration')
+      + statStrip([
+        { lbl: 'HR confirmations set', val: `${setN} / ${CONF.length}`, icon: 'check', tone: setN === CONF.length ? 'g' : 'a', hint: setN === CONF.length ? 'All values confirmed' : `${CONF.length - setN} still pending` },
+        { lbl: 'Effective year', val: esc(p.year), icon: 'calendar', tone: 'b', hint: esc(p.name) },
+        { lbl: 'Standard weekly hours', val: esc(p.hours), icon: 'clock', tone: 'p', hint: esc(p.week) },
+        { lbl: 'Probation period', val: esc(p.probation), icon: 'shield', tone: 'x', hint: `Monitoring: ${esc(p.monitor)}` },
+      ])
+      + `<div class="card op2-solo">${lb(L.fSel('polLoc', 'Policy for location', L.locOptions(false), loc), `${esc(L.locCity(loc))} · ${esc(L.workLabel(loc))}`)}</div>`
       + `<div class="row"><div style="flex:1.3">${card('Company policy — ' + esc(L.locName(loc)) + ' (FRS §2)', `<div id="polErr"></div>${note('info', `Work week and hours for this location come from Settings: <b>${esc(L.workLabel(loc))}</b>.`)}<div class="form-row two" style="margin-top:12px">${PFIELDS.map(([k, l]) => `<div class="field"><label>${l}</label><input id="pol_${k}" type="text" value="${esc(p[k])}"></div>`).join('')}</div>`)}</div>
-        <div style="flex:1">${card('HR confirmations required', note('warn', 'These policy values are <b>undefined in the FRS</b> and must be confirmed before final calculations. Click a row to set its value (FRS §28).') + `<div style="margin-top:12px">${CONF.map(([k, l, s]) => `<div class="lrow" style="padding:9px 0;cursor:pointer" onclick="LA.confSet('${loc}','${k}')"><div><div class="li-t" style="font-size:12.5px">${l}</div><div class="li-s">${conf[k] != null ? 'Confirmed: ' + esc(conf[k]) : s}</div></div><div class="li-r">${conf[k] != null ? bdg('s-g', '✓ Set') : phFlag('Pending')}</div></div>`).join('')}</div>`, { sub: `${Object.keys(conf).length} of ${CONF.length} confirmed` })}</div></div>`;
+        <div style="flex:1">${card('HR confirmations required', note('warn', 'These policy values are <b>undefined in the FRS</b> and must be confirmed before final calculations. Click a row to set its value (FRS §28).') + `<div style="margin-top:12px">${CONF.map(([k, l, s]) => `<div class="lrow" style="padding:9px 0;cursor:pointer" onclick="LA.confSet('${loc}','${k}')"><div><div class="li-t" style="font-size:12.5px">${l}</div><div class="li-s">${conf[k] != null ? 'Confirmed: ' + esc(conf[k]) : s}</div></div><div class="li-r">${conf[k] != null ? bdg('s-g', '✓ Set') : phFlag('Pending')}</div></div>`).join('')}</div>`, { sub: `${setN} of ${CONF.length} confirmed` })}</div></div>`;
   }
 
   /* ---------- administration ---------- */
@@ -351,21 +507,44 @@
   function companies() {
     const q = L.ui('coQ', '');
     const sF = L.ui('coSt', 'All');
-    const rows = db().companies.filter((c) => (L.loc() === 'all' || c.loc === 'all' || c.loc === L.loc()) && (sF === 'All' || c.status === sF) && L.matches(q, c.name, c.code));
+    const base = db().companies.filter((c) => L.loc() === 'all' || c.loc === 'all' || c.loc === L.loc());
+    const rows = base.filter((c) => (sF === 'All' || c.status === sF) && L.matches(q, c.name, c.code));
     const heads = (c) => EMP.filter((e) => e.company === c.name && L.inLoc(e.n)).length;
+    const c = (s) => nOf(base, (x) => x.status === s);
     return pageHead('Companies & Branches', 'Multi-company structure with company-level data separation', `<button class="btn pri" onclick="LA.coForm()">${ic('plus')} Add company</button>`, 'Administration')
-      + `<div class="filters">${L.fLoc()}${L.fSel('coSt', 'Status', ['All', 'Active', 'Setup', 'Suspended'], 'All')}${L.searchBox('coQ', 'Company name or code')}${L.fReset(['coSt', 'coQ', 'loc'])}</div>`
-      + tableCard('Companies', ['Company', 'Location', 'Branches', 'Employees (in view)', 'Policy version', 'Status', ''], rows.map((r) => `<tr><td>${personCell(r.name, r.code || '')}</td><td>${r.loc === 'all' ? 'All locations' : esc(L.locName(r.loc))}</td><td class="num">${r.branches}</td><td class="num">${heads(r) || '—'}</td><td>${bdg('s-b', esc(r.policy))}</td><td>${r.status === 'Active' ? bdg('s-g', 'Active') : r.status === 'Suspended' ? bdg('s-r', 'Suspended') : bdg('s-a', esc(r.status))}</td><td><button class="btn sm ghost" onclick="LA.coForm(LA.db().companies.find(c=>c.id==='${r.id}'))">${ic('edit')}</button></td></tr>`).join('') || emptyRow(7, 'No companies match'), { actions: `<button class="btn sm ghost" onclick="LA.openApp('/admin/companies')">Manage in Administration ↗</button>` })
-      + '<div style="height:16px"></div>' + note('info', 'Companies and locations are maintained in the main Administration area; this view shows how attendance policy is applied to them.');
+      + statStrip([
+        { lbl: 'Companies', val: base.length, icon: 'building', tone: 'b', hint: L.locLabel() },
+        { lbl: 'Active', val: c('Active'), icon: 'check', tone: 'g', hint: `${c('Setup')} in setup · ${c('Suspended')} suspended` },
+        { lbl: 'Branches', val: base.reduce((a, x) => a + (Number(x.branches) || 0), 0), icon: 'location', tone: 'p', hint: 'Across companies in view' },
+        { lbl: 'Employees in view', val: base.reduce((a, x) => a + heads(x), 0), icon: 'users', tone: 'a', hint: 'Mapped to a company' },
+      ])
+      + lcard('Companies', lb(L.searchBox('coQ', 'Search company name or code') + chipSet('coSt', ['All', 'Active', 'Setup', 'Suspended'], 'All', (s) => (s === 'All' ? base.length : c(s))) + rst(['coSt', 'coQ']), `Showing ${rows.length} of ${base.length}`),
+        ['Company', 'Location', '>Branches', '>Employees', 'Policy version', 'Status', ''],
+        rows.map((r) => `<tr><td>${personCell(esc(r.name), esc(r.code || ''))}</td><td class="muted">${r.loc === 'all' ? 'All locations' : esc(L.locName(r.loc))}</td><td class="num">${r.branches}</td><td class="num">${heads(r) || '—'}</td><td>${bdg('s-b', esc(r.policy))}</td><td>${r.status === 'Active' ? bdg('s-g', 'Active') : r.status === 'Suspended' ? bdg('s-r', 'Suspended') : bdg('s-a', esc(r.status))}</td><td class="tr"><button class="btn sm ghost" title="Edit" onclick="LA.coForm(LA.db().companies.find(c=>c.id==='${r.id}'))">${ic('edit')}</button></td></tr>`).join('') || noRows(7, base.length, 'companies'), { actions: `<button class="btn sm ghost" onclick="LA.openApp('/admin/companies')">Manage in Administration ↗</button>` })
+      + SP + note('info', 'Companies and locations are maintained in the main Administration area; this view shows how attendance policy is applied to them.');
   }
   L.roleTog = (i, c) => { const r = db().roles[i]; const cyc = { y: 'n', n: 'partial', partial: 'y' }; const before = r[c]; r[c] = cyc[before] || 'y'; L.audit('Permission changed', r[0], `${['', 'Employee', 'Manager', 'HR Admin', 'Super Admin'][c]}: ${before} → ${r[c]}`, ''); toast('Permission updated'); L.rr(); };
   function rolesPerms() {
     const q = L.ui('rlQ', '');
+    const fF = L.ui('rlF', 'All');
+    const base = db().roles.map((r, i) => ({ r, i }));
+    const scoped = ({ r }) => [1, 2, 3].some((c) => r[c] === 'partial');
+    const adminOnly = ({ r }) => [1, 2, 3].every((c) => r[c] === 'n') && r[4] === 'y';
+    const rows = base.filter((x) => (fF === 'All' || (fF === 'Has scoped access' ? scoped(x) : adminOnly(x))) && L.matches(q, x.r[0]));
+    const scopedCells = base.reduce((a, { r }) => a + [1, 2, 3].filter((c) => r[c] === 'partial').length, 0);
     return pageHead('Roles & Permissions', 'Role-based access control across the module (FRS §3)', '', 'Administration')
+      + statStrip([
+        { lbl: 'Capabilities', val: base.length, icon: 'key', tone: 'b', hint: 'Rows in the permission matrix' },
+        { lbl: 'Open to employees', val: nOf(base, ({ r }) => r[1] === 'y'), icon: 'users', tone: 'g', hint: 'Self-service capabilities' },
+        { lbl: 'Scoped permissions', val: scopedCells, icon: 'filter', tone: 'a', hint: 'Limited to own team or location' },
+        { lbl: 'Admin-only', val: nOf(base, adminOnly), icon: 'lock', tone: 'p', hint: 'Super Admin exclusive' },
+      ])
       + note('info', 'Click a cell to change a role’s access (✓ → scoped → none). The Super Admin column is locked.')
-      + `<div class="filters" style="margin-top:16px">${L.searchBox('rlQ', 'Capability')}${L.fReset(['rlQ'])}</div>`
-      + tableCard('Permission matrix', ['Capability', 'Employee', 'Manager', 'HR Admin', 'Super Admin'], db().roles.map((r, i) => ({ r, i })).filter(({ r }) => L.matches(q, r[0])).map(({ r, i }) => `<tr><td class="fw6">${r[0]}</td>${[1, 2, 3, 4].map((c) => `<td ${c < 4 ? `style="cursor:pointer" onclick="LA.roleTog(${i},${c})"` : ''}>${r[c] === 'y' ? bdg('s-g', '✓') : r[c] === 'partial' ? bdg('s-a', 'Scoped') : bdg('s-gray', '—')}</td>`).join('')}</tr>`).join('') || emptyRow(5, 'No capabilities match'))
-      + '<div style="height:16px"></div>' + note('info', 'Access includes company-level data separation, encryption, session timeout, device authorization and restricted access to medical information (FRS §25).');
+      + SP
+      + lcard('Permission matrix', lb(L.searchBox('rlQ', 'Search capability') + chipSet('rlF', ['All', 'Has scoped access', 'Admin-only'], 'All', (s) => (s === 'All' ? base.length : s === 'Admin-only' ? nOf(base, adminOnly) : nOf(base, scoped))) + rst(['rlF', 'rlQ']), `Showing ${rows.length} of ${base.length}`),
+        ['Capability', 'Employee', 'Manager', 'HR Admin', 'Super Admin'],
+        rows.map(({ r, i }) => `<tr><td class="fw6">${r[0]}</td>${[1, 2, 3, 4].map((c) => `<td ${c < 4 ? `class="op2-cell" title="Click to change" onclick="LA.roleTog(${i},${c})"` : 'title="Locked"'}>${r[c] === 'y' ? bdg('s-g', '✓') : r[c] === 'partial' ? bdg('s-a', 'Scoped') : bdg('s-gray', '—')}</td>`).join('')}</tr>`).join('') || noRows(5, base.length, 'capabilities'))
+      + SP + note('info', 'Access includes company-level data separation, encryption, session timeout, device authorization and restricted access to medical information (FRS §25).');
   }
   L.devNew = () => L.form({
     title: 'Register device', size: 'sm', submit: 'Register',
@@ -380,13 +559,29 @@
   function biometric() {
     const q = L.ui('bdQ', '');
     const sF = L.ui('bdSt', 'All');
-    const devs = db().devices.filter((d) => L.hasLoc([d.loc]) && (sF === 'All' || (sF === 'Online') === d.online) && L.matches(q, d.id, d.place));
-    const punches = db().rawPunches.map((r, i) => ({ r, i })).filter(({ r }) => L.hasLoc([r.loc]));
+    const pq = L.ui('pnQ', '');
+    const pF = L.ui('pnSt', 'All');
+    const base = db().devices.filter((d) => L.hasLoc([d.loc]));
+    const devs = base.filter((d) => (sF === 'All' || (sF === 'Online') === d.online) && L.matches(q, d.id, d.place));
+    const pAll = db().rawPunches.map((r, i) => ({ r, i })).filter(({ r }) => L.hasLoc([r.loc]));
+    const failed = (r) => String(r.st).includes('Failed');
+    const punches = pAll.filter(({ r }) => (pF === 'All' || (pF === 'Failed') === failed(r)) && L.matches(pq, r.ts, r.emp, r.dev, r.type));
+    const on = nOf(base, (d) => d.online);
+    const nFail = nOf(pAll, ({ r }) => failed(r));
     return pageHead('Biometric Devices', 'Device registry, employee mapping and raw punch logs', `<button class="btn pri" onclick="LA.devNew()">${ic('plus')} Register device</button>`, 'Administration')
-      + `<div class="filters">${L.fLoc()}${L.fSel('bdSt', 'Status', ['All', 'Online', 'Offline'], 'All')}${L.searchBox('bdQ', 'Device or placement')}${L.fReset(['bdSt', 'bdQ', 'loc'])}</div>`
-      + tableCard('Registered devices', ['Device', 'Location', 'Placement', 'Mapped employees', 'Last sync', 'Status', ''], devs.map((r) => `<tr><td class="fw6 mono">${esc(r.id)}</td><td>${L.locChip(r.loc)}</td><td>${esc(r.place || r.loc)}</td><td class="num">${r.mapped}</td><td class="mono" style="font-size:12px">${esc(r.sync)}</td><td><span style="cursor:pointer" title="Click to toggle" onclick="LA.devTog('${r.id}')">${r.online ? bdg('s-g', 'Online') : bdg('s-r', 'Offline')}</span></td><td><div class="hb"><button class="btn sm ghost" onclick="LA.devSync('${r.id}')">${ic('refresh')} Sync</button><button class="btn sm ghost" onclick="LA.devDel('${r.id}')">${ic('x')}</button></div></td></tr>`).join('') || emptyRow(7, 'No devices match'))
-      + '<div style="height:16px"></div>'
-      + tableCard('Recent raw punches (immutable)', ['Timestamp', 'Employee ID', 'Location', 'Device', 'Type', 'Processing', ''], punches.map(({ r, i }) => `<tr><td class="mono" style="font-size:12px">${esc(r.ts)}</td><td class="mono">${esc(r.emp)}</td><td>${L.locChip(r.loc)}</td><td class="mono">${esc(r.dev)}</td><td>${bdg(r.type === 'IN' ? 's-g' : 's-a', r.type)}</td><td>${r.st.includes('Failed') ? bdg('s-r', esc(r.st)) : bdg('s-g', esc(r.st))}</td><td>${r.st.includes('Failed') ? `<button class="btn sm" onclick="LA.punchRe(${i})">Reprocess</button>` : ''}</td></tr>`).join('') || emptyRow(7, 'No punches'), { sub: 'Raw records are never overwritten' });
+      + statStrip([
+        { lbl: 'Registered devices', val: base.length, icon: 'device', tone: 'b', hint: L.locLabel() },
+        { lbl: 'Online', val: on, icon: 'check', tone: 'g', hint: `${base.length ? Math.round((on / base.length) * 100) : 0}% availability` },
+        { lbl: 'Offline', val: base.length - on, icon: 'alert', tone: base.length - on ? 'r' : 'x', hint: base.length - on ? 'Check connectivity' : 'All devices reachable' },
+        { lbl: 'Failed punches', val: nFail, icon: 'refresh', tone: nFail ? 'a' : 'g', hint: nFail ? 'Can be reprocessed' : 'All punches processed' },
+      ])
+      + lcard('Registered devices', lb(L.searchBox('bdQ', 'Search device or placement') + chipSet('bdSt', ['All', 'Online', 'Offline'], 'All', (s) => (s === 'All' ? base.length : nOf(base, (d) => d.online === (s === 'Online')))) + rst(['bdSt', 'bdQ']), `Showing ${devs.length} of ${base.length}`),
+        ['Device', 'Location', '>Mapped employees', 'Last sync', 'Status', ''],
+        devs.map((r) => `<tr><td><div class="op2-dev"><span class="op2-dev-i ${r.online ? '' : 'off'}">${ic('device')}</span><div><div class="fw6 mono">${esc(r.id)}</div><div class="op2-sec">${esc(r.place || r.loc)}</div></div></div></td><td>${L.locChip(r.loc)}</td><td class="num">${r.mapped}</td><td class="mono muted" style="font-size:12px">${esc(r.sync)}</td><td><span style="cursor:pointer" title="Click to toggle" onclick="LA.devTog('${r.id}')">${r.online ? bdg('s-g', 'Online') : bdg('s-r', 'Offline')}</span></td><td class="tr"><div class="hb" style="justify-content:flex-end"><button class="btn sm ghost" onclick="LA.devSync('${r.id}')">${ic('refresh')} Sync</button><button class="btn sm ghost" title="Remove" onclick="LA.devDel('${r.id}')">${ic('x')}</button></div></td></tr>`).join('') || noRows(6, base.length, 'devices'))
+      + SP
+      + lcard('Recent raw punches (immutable)', lb(L.searchBox('pnQ', 'Search time, employee ID or device') + chipSet('pnSt', ['All', 'Failed', 'Processed'], 'All', (s) => (s === 'All' ? pAll.length : nOf(pAll, ({ r }) => failed(r) === (s === 'Failed')))) + rst(['pnSt', 'pnQ']), `Showing ${punches.length} of ${pAll.length}`),
+        ['Timestamp', 'Employee ID', 'Location', 'Device', 'Type', 'Processing', ''],
+        punches.map(({ r, i }) => `<tr><td class="mono" style="font-size:12px">${esc(r.ts)}</td><td class="mono">${esc(r.emp)}</td><td>${L.locChip(r.loc)}</td><td class="mono muted">${esc(r.dev)}</td><td>${bdg(r.type === 'IN' ? 's-g' : 's-a', r.type)}</td><td>${r.st.includes('Failed') ? bdg('s-r', esc(r.st)) : bdg('s-g', esc(r.st))}</td><td class="tr">${r.st.includes('Failed') ? `<button class="btn sm" onclick="LA.punchRe(${i})">Reprocess</button>` : ''}</td></tr>`).join('') || noRows(7, pAll.length, 'punches'), { sub: 'Raw records are never overwritten' });
   }
   const rand = () => Array.from({ length: 24 }, () => 'abcdef0123456789'[Math.floor(Math.random() * 16)]).join('');
   L.keyRotate = () => L.confirm('Rotate API key', 'The current key stops working immediately. Update every integration with the new key.', 'Rotate key', () => {
@@ -400,10 +595,20 @@
   L.syncSet = (i, v) => { const s = db().sync[i]; L.audit('Sync schedule changed', s[0], `${s[1]} → ${v}`, ''); s[1] = v; toast(`${s[0]}: ${v}`); L.rr(); };
   L.syncRun = (i) => { const n = new Date(); db().sync[i][2] = `${pad(n.getHours())}:${pad(n.getMinutes())}`; L.audit('Sync job run', db().sync[i][0], '—', 'Manual'); toast(`${db().sync[i][0]} completed`); L.rr(); };
   function integrations() {
+    const k = db().apiKey || {};
+    const age = k.rotated ? daysBetween(k.rotated, TODAY) : null;
+    const jobs = db().sync || [];
+    const ran = nOf(jobs, (s) => !!s[2]);
     return pageHead('API & Integrations', 'Punch submission, employee/shift sync and webhooks', '', 'Administration')
-      + `<div class="grid g-2">${card('API access', `<div class="dl"><dt>Endpoint</dt><dd class="mono" style="font-size:12px">/api/v1/attendance/punch</dd><dt>Auth</dt><dd>Bearer token (secure)</dd><dt>Key</dt><dd class="mono" style="font-size:12px">${esc(db().apiKey.masked)}</dd><dt>Last rotated</dt><dd>${fmt(db().apiKey.rotated)}</dd><dt>Rate limit</dt><dd>600 / min</dd><dt>Status</dt><dd>${bdg('s-g', 'Connected')}</dd></div><div class="divider"></div><button class="btn" onclick="LA.keyRotate()">${ic('key')} Rotate key</button>`)}
-      ${card('Sync jobs', db().sync.map((s, i) => `<div class="lrow"><div><div class="li-t">${esc(s[0])}</div>${s[2] ? `<div class="li-s">Last run ${esc(s[2])}</div>` : ''}</div><div class="li-r hb"><select onchange="LA.syncSet(${i},this.value)" style="height:30px">${['Hourly', '06:00 daily', 'Weekly', 'Monthly · manual'].map((o) => `<option ${o === s[1] ? 'selected' : ''}>${o}</option>`).join('')}</select><button class="btn sm ghost" onclick="LA.syncRun(${i})">Run now</button></div></div>`).join(''))}</div>`
-      + '<div style="height:16px"></div>' + note('info', 'API-based punch submission preserves raw records and supports error handling and reprocessing. Secure APIs, device authorization and session timeout apply (FRS §5, §25).');
+      + statStrip([
+        { lbl: 'API status', val: 'Connected', icon: 'plug', tone: 'g', hint: 'Bearer token authentication' },
+        { lbl: 'Key age', val: age == null ? '—' : `${age} day${age === 1 ? '' : 's'}`, icon: 'key', tone: age != null && age > 90 ? 'a' : 'b', hint: age != null && age > 90 ? 'Consider rotating the key' : k.rotated ? `Rotated ${fmt(k.rotated)}` : 'Not yet rotated' },
+        { lbl: 'Sync jobs', val: jobs.length, icon: 'refresh', tone: 'p', hint: ran ? `${ran} with a recorded run` : 'No runs recorded' },
+        { lbl: 'Rate limit', val: '600 / min', icon: 'chart', tone: 'x', hint: 'Per API key' },
+      ])
+      + `<div class="grid g-2">${card('API access', `<div class="dl"><dt>Endpoint</dt><dd class="mono" style="font-size:12px">/api/v1/attendance/punch</dd><dt>Auth</dt><dd>Bearer token (secure)</dd><dt>Key</dt><dd class="mono" style="font-size:12px">${esc(k.masked)}</dd><dt>Last rotated</dt><dd>${fmt(k.rotated)}</dd><dt>Rate limit</dt><dd>600 / min</dd><dt>Status</dt><dd>${bdg('s-g', 'Connected')}</dd></div><div class="divider"></div><button class="btn" onclick="LA.keyRotate()">${ic('key')} Rotate key</button>`, { sub: 'Punch submission' })}
+      ${card('Sync jobs', jobs.map((s, i) => `<div class="lrow"><span class="li-ic" style="background:var(--b-bg);color:var(--b)">${ic('refresh')}</span><div><div class="li-t">${esc(s[0])}</div><div class="li-s">${s[2] ? `Last run ${esc(s[2])}` : 'Not run yet'}</div></div><div class="li-r hb"><select onchange="LA.syncSet(${i},this.value)" style="height:30px">${['Hourly', '06:00 daily', 'Weekly', 'Monthly · manual'].map((o) => `<option ${o === s[1] ? 'selected' : ''}>${o}</option>`).join('')}</select><button class="btn sm ghost" onclick="LA.syncRun(${i})">Run now</button></div></div>`).join('') || L.empty('No sync jobs configured'), { sub: `${jobs.length} job(s)` })}</div>`
+      + SP + note('info', 'API-based punch submission preserves raw records and supports error handling and reprocessing. Secure APIs, device authorization and session timeout apply (FRS §5, §25).');
   }
 
   /* ---------- wire up + retire legacy toasts ---------- */

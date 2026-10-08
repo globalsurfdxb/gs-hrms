@@ -1,3 +1,4 @@
+import { shiftSeed, todayISO } from '@/lib/dates';
 import {
   AttendanceDay,
   AuditEntry,
@@ -87,7 +88,7 @@ const RAW_EMPLOYEES: Omit<Employee, 'profile'>[] = [
     designation: 'Solutions Architect',
     location: 'Dubai',
     seatingLocation: '901, SIT Tower, Dubai',
-    reportingManagerId: null,
+    reportingManagerId: 'GS-120',
     dateOfJoining: '2018-08-14',
     employmentStatus: 'Active',
     employmentType: 'Permanent',
@@ -310,7 +311,8 @@ const RAW_EMPLOYEES: Omit<Employee, 'profile'>[] = [
       { id: 'd2', type: 'PAN Card', state: 'ok' },
       { id: 'd3', type: 'Aadhaar', state: 'ok' },
     ],
-    bankDetails: kochiBank('Daniel Costa'),
+    // Still on the previous bank until the pending Bank Detail Update (req-4) is approved.
+    bankDetails: { ...kochiBank('Daniel Costa'), bankName: 'State Bank of India', branchCode: 'SBIN0070231' },
     pfUan: '1001 2233 4455',
     createdAt: '2020-02-28',
     updatedAt: '2026-01-19',
@@ -402,10 +404,10 @@ const RAW_EMPLOYEES: Omit<Employee, 'profile'>[] = [
 export const EMPLOYEES: Employee[] = RAW_EMPLOYEES.map((e) => ({ ...e, profile: buildProfile(e) }));
 
 export const COMPANIES: Company[] = [
-  { id: 'co-1', name: 'GS IT', shortCode: 'GSIT', description: 'Managed IT services, cloud infrastructure and network engineering — the parent entity.', website: '', location: 'Both', established: '2015', status: 'Active' },
-  { id: 'co-2', name: 'GS Digital', shortCode: 'GSD', description: 'Digital marketing, e-commerce platforms and software solutions.', website: '', location: 'Dubai', established: '2019', status: 'Active' },
-  { id: 'co-3', name: 'GS AV', shortCode: 'GSAV', description: 'Audio-visual systems integration and event technology.', website: '', location: 'Dubai', established: '2017', status: 'Active' },
-  { id: 'co-4', name: 'GS Security', shortCode: 'GSS', description: 'Security systems, CCTV and access control solutions.', website: '', location: 'Dubai', established: '2021', status: 'Active' },
+  { id: 'co-1', name: 'GS IT', shortCode: 'GSIT', description: 'Managed IT services, cloud infrastructure and network engineering — the parent entity.', website: 'www.gs-it.ae', location: 'Both', established: '2015', status: 'Active' },
+  { id: 'co-2', name: 'GS Digital', shortCode: 'GSD', description: 'Digital marketing, e-commerce platforms and software solutions.', website: 'www.gsdigital.ae', location: 'Dubai', established: '2019', status: 'Active' },
+  { id: 'co-3', name: 'GS AV', shortCode: 'GSAV', description: 'Audio-visual systems integration and event technology.', website: 'www.gsav.ae', location: 'Dubai', established: '2017', status: 'Active' },
+  { id: 'co-4', name: 'GS Security', shortCode: 'GSS', description: 'Security systems, CCTV and access control solutions.', website: 'www.gssecurity.ae', location: 'Dubai', established: '2021', status: 'Active' },
 ];
 
 export const companyHeadcount = (companyName: string) => EMPLOYEES.filter((e) => e.company === companyName && e.employmentStatus !== 'Inactive').length;
@@ -464,6 +466,7 @@ export const ONBOARDING_REQUESTS: OnboardingRequest[] = [
     step: 8,
     status: 'Pending Approval',
     startDate: '2026-07-06',
+    role: 'Employee',
   },
   {
     id: 'onb-2',
@@ -474,6 +477,7 @@ export const ONBOARDING_REQUESTS: OnboardingRequest[] = [
     step: 4,
     status: 'In Progress',
     startDate: '2026-09-01',
+    role: 'Employee',
   },
 ];
 
@@ -503,6 +507,7 @@ export const EMPLOYEE_REQUESTS: EmployeeRequest[] = [
     status: 'Pending',
     raisedOn: '2026-07-02',
     routedTo: 'HR',
+    changes: { currentAddress: 'Flat 1204, Al Barsha Heights Tower, Al Barsha, Dubai, PO Box 51873' },
   },
   {
     id: 'req-2',
@@ -526,10 +531,11 @@ export const EMPLOYEE_REQUESTS: EmployeeRequest[] = [
     id: 'req-4',
     employeeId: 'GS-076',
     type: 'Bank Detail Update',
-    details: 'Switched salary account to HDFC Bank, Kochi branch.',
+    details: 'Change salary account to HDFC Bank, Kochi branch (IFSC HDFC0001234).',
     status: 'Pending',
     raisedOn: '2026-07-08',
     routedTo: 'Manager',
+    changes: { bankName: 'HDFC Bank', branchCode: 'HDFC0001234' },
   },
 ];
 
@@ -542,11 +548,11 @@ export const AUDIT_LOG: AuditEntry[] = [
 export const PERFORMANCE_CYCLE = 'H1 2026';
 
 export const PERFORMANCE_REVIEWS: PerformanceReview[] = [
-  { id: 'pr-1', employeeId: 'GS-120', cycle: PERFORMANCE_CYCLE, status: 'Completed', rating: 5, dueDate: '2026-06-30' },
-  { id: 'pr-2', employeeId: 'GS-058', cycle: PERFORMANCE_CYCLE, status: 'Completed', rating: 4, dueDate: '2026-06-30' },
+  { id: 'pr-1', employeeId: 'GS-120', cycle: PERFORMANCE_CYCLE, status: 'Completed', rating: 5, dueDate: '2026-06-30', selfRating: 4, selfComments: 'Delivered the Dubai office expansion and the new regional HR policy set on schedule.', managerComments: 'Outstanding half: strong delivery and clear ownership across both locations.' },
+  { id: 'pr-2', employeeId: 'GS-058', cycle: PERFORMANCE_CYCLE, status: 'Completed', rating: 4, dueDate: '2026-06-30', selfRating: 4, selfComments: 'Led two cloud migrations and mentored the network engineering team.', managerComments: 'Reliable technical leadership; next step is broader stakeholder reporting.' },
   { id: 'pr-3', employeeId: 'GS-119', cycle: PERFORMANCE_CYCLE, status: 'Manager Review', rating: null, dueDate: '2026-07-15', selfRating: 4, selfComments: 'Closed the onboarding backlog and introduced a checklist that cut new-joiner paperwork time.' },
   { id: 'pr-4', employeeId: 'GS-101', cycle: PERFORMANCE_CYCLE, status: 'Self Assessment', rating: null, dueDate: '2026-07-15' },
-  { id: 'pr-5', employeeId: 'GS-087', cycle: PERFORMANCE_CYCLE, status: 'Completed', rating: 5, dueDate: '2026-06-30' },
+  { id: 'pr-5', employeeId: 'GS-087', cycle: PERFORMANCE_CYCLE, status: 'Completed', rating: 5, dueDate: '2026-06-30', selfRating: 4, selfComments: 'Exceeded the half-year account renewal target and onboarded three new clients.', managerComments: 'Top performer on renewals; excellent client relationships.' },
   { id: 'pr-6', employeeId: 'GS-042', cycle: PERFORMANCE_CYCLE, status: 'Not Started', rating: null, dueDate: '2026-07-31' },
   { id: 'pr-7', employeeId: 'GS-076', cycle: PERFORMANCE_CYCLE, status: 'Manager Review', rating: null, dueDate: '2026-07-15', selfRating: 3, selfComments: 'Met support SLAs for the half; want to take on more escalation ownership.' },
   { id: 'pr-8', employeeId: 'GS-142', cycle: PERFORMANCE_CYCLE, status: 'Self Assessment', rating: null, dueDate: '2026-07-15' },
@@ -554,16 +560,16 @@ export const PERFORMANCE_REVIEWS: PerformanceReview[] = [
 ];
 
 export const LEARNING_RECORDS: LearningRecord[] = [
-  { id: 'lr-1', employeeId: 'GS-114', course: 'UAE Labour Law Essentials', category: 'Compliance', status: 'In Progress', dueDate: '2026-07-31', assignedOn: '2026-06-01' },
+  { id: 'lr-1', employeeId: 'GS-114', course: 'UAE Labour Law Essentials', category: 'Compliance', status: 'In Progress', dueDate: '2026-07-31', assignedOn: '2026-07-06' },
   { id: 'lr-2', employeeId: 'GS-087', course: 'Customer Service Excellence', category: 'Sales', status: 'Completed', completedOn: '2026-03-01' },
   { id: 'lr-3', employeeId: 'GS-042', course: 'Customer Service Excellence', category: 'Sales', status: 'In Progress', dueDate: '2026-06-30', assignedOn: '2026-05-15' },
   { id: 'lr-4', employeeId: 'GS-119', course: 'Information Security Awareness', category: 'Compliance', status: 'Completed', completedOn: '2026-01-15' },
   { id: 'lr-5', employeeId: 'GS-101', course: 'Procurement Ethics & Compliance', category: 'Compliance', status: 'Not Started', dueDate: '2026-08-15', assignedOn: '2026-07-01' },
   { id: 'lr-6', employeeId: 'GS-058', course: 'Leadership Foundations', category: 'Management', status: 'Completed', completedOn: '2025-11-20' },
   { id: 'lr-7', employeeId: 'GS-120', course: 'Leadership Foundations', category: 'Management', status: 'Completed', completedOn: '2025-11-20' },
-  { id: 'lr-8', employeeId: 'GS-076', course: 'Information Security Awareness', category: 'Compliance', status: 'In Progress' },
+  { id: 'lr-8', employeeId: 'GS-076', course: 'Information Security Awareness', category: 'Compliance', status: 'In Progress', dueDate: '2026-08-15', assignedOn: '2026-07-01' },
   { id: 'lr-9', employeeId: 'GS-142', course: 'Information Security Awareness', category: 'Compliance', status: 'Not Started', dueDate: '2026-08-31', assignedOn: '2026-07-01' },
-  { id: 'lr-10', employeeId: 'GS-150', course: 'Finance Onboarding Essentials', category: 'Finance', status: 'In Progress' },
+  { id: 'lr-10', employeeId: 'GS-150', course: 'Finance Onboarding Essentials', category: 'Finance', status: 'In Progress', dueDate: '2026-09-30', assignedOn: '2026-09-01' },
   { id: 'lr-11', employeeId: 'GS-133', course: 'Workplace Diversity & Inclusion', category: 'Culture', status: 'Completed', completedOn: '2026-02-10' },
 ];
 
@@ -586,7 +592,8 @@ export const EXPENSE_CLAIMS: ExpenseClaim[] = [
   { id: 'exp-8', employeeId: 'GS-133', category: 'Accommodation', amount: 4500, currency: 'INR', date: '2026-05-30', project: 'HR certification', description: 'Hotel for an HR compliance workshop in Chennai.', status: 'Approved' },
 ];
 
-export const REFERENCE_TODAY = '2026-07-06';
+/** Today, from the live clock. (Kept under its old name; every screen reads the date from here.) */
+export const REFERENCE_TODAY = todayISO();
 
 export interface BusinessRenewal {
   id: string;
@@ -597,7 +604,7 @@ export interface BusinessRenewal {
 }
 
 export const BUSINESS_RENEWALS: BusinessRenewal[] = [
-  { id: 'br-1', label: 'Trade Licence — GSIT LLC', owner: 'Admin', offsetDays: 5, location: 'Dubai' },
+  { id: 'br-1', label: 'Trade Licence — Global Surf IT LLC', owner: 'Admin', offsetDays: 5, location: 'Dubai' },
   { id: 'br-2', label: 'Parking ×4', owner: 'Admin', offsetDays: -7, location: 'Dubai' },
   { id: 'br-3', label: 'Mulkiya (Vehicle Registration)', owner: 'Admin', offsetDays: 17, location: 'Dubai' },
   { id: 'br-4', label: 'Ejari Tenancy Contract', owner: 'Admin', offsetDays: 43, location: 'Dubai' },
@@ -641,6 +648,30 @@ export const LEAVE_REQUESTS: LeaveRequest[] = [
   { id: 'lv-6', employeeId: 'GS-101', type: 'Annual', fromDate: '2026-05-20', toDate: '2026-05-22', days: 3, reason: 'Personal', status: 'Rejected' },
 ];
 
+/* Move the sample transactions so they sit around the real "today" instead of a frozen July 2026.
+   Document expiries stay as written (they are facts: an expired visa is expired), except for people who are
+   still onboarding, whose joining and paperwork dates move with them. */
+{
+  const sh = <T extends string | undefined>(d: T): T => (d ? (shiftSeed(d) as T) : d);
+  ONBOARDING_REQUESTS.forEach((r) => (r.startDate = sh(r.startDate)));
+  EMPLOYEE_REQUESTS.forEach((r) => (r.raisedOn = sh(r.raisedOn)));
+  PERFORMANCE_REVIEWS.forEach((r) => ((r.dueDate = sh(r.dueDate)), (r.completedOn = sh(r.completedOn))));
+  LEARNING_RECORDS.forEach((r) => ((r.dueDate = sh(r.dueDate)), (r.assignedOn = sh(r.assignedOn)), (r.completedOn = sh(r.completedOn))));
+  EXPENSE_CLAIMS.forEach((c) => ((c.date = sh(c.date)), (c.submittedOn = sh(c.submittedOn)), (c.decidedOn = sh(c.decidedOn))));
+  LEAVE_REQUESTS.forEach((r) => ((r.fromDate = sh(r.fromDate)), (r.toDate = sh(r.toDate))));
+  EMPLOYEES.filter((e) => e.employmentStatus === 'Onboarding').forEach((e) => {
+    e.dateOfJoining = sh(e.dateOfJoining);
+    e.createdAt = sh(e.createdAt);
+    e.updatedAt = sh(e.updatedAt);
+    e.visaExpiry = sh(e.visaExpiry);
+    e.profile.probationEnd = sh(e.profile.probationEnd);
+    e.profile.emiratesIdExpiry = sh(e.profile.emiratesIdExpiry);
+    e.profile.labourCardIssue = sh(e.profile.labourCardIssue);
+    e.profile.labourCardExpiry = sh(e.profile.labourCardExpiry);
+    e.documents.forEach((d) => d.type !== 'Passport' && (d.expiryDate = sh(d.expiryDate)));
+  });
+}
+
 export const ATTENDANCE_TODAY: AttendanceDay[] = ACTIVE_EMPLOYEES.map((e, i) => {
   let status: AttendanceDay['status'] = 'Present';
   if (LEAVE_REQUESTS.some((r) => r.employeeId === e.id && r.status === 'Approved' && REFERENCE_TODAY >= r.fromDate && REFERENCE_TODAY <= r.toDate)) status = 'Leave';
@@ -667,24 +698,31 @@ export const ASSETS: Asset[] = [
   { id: 'as-9', type: 'Monitor', name: 'LG 24" FHD', serialNumber: 'LG24-9021', assignedTo: 'GS-142', assignedDate: '2024-11-04', warrantyExpiry: '2027-11-04', status: 'Active' },
 ];
 
-export const PAYSLIPS: Payslip[] = ACTIVE_EMPLOYEES.flatMap((e, i) => {
-  const base = e.location === 'Dubai' ? 9000 + (i % 6) * 2200 : 55000 + (i % 6) * 14000;
-  const currency: 'AED' | 'INR' = e.location === 'Dubai' ? 'AED' : 'INR';
-  return ['May', 'June', 'July'].map((month, m) => {
-    const gross = base + m * 150;
-    const deductions = Math.round(gross * 0.06);
-    return {
-      id: `${e.id}-${month}`,
-      employeeId: e.id,
-      month: `${month} 2026`,
-      gross,
-      deductions,
-      net: gross - deductions,
-      currency,
-      status: (month === 'July' ? 'Processing' : 'Paid') as Payslip['status'],
-    };
-  });
+/** A payslip's figures come from the employee's own salary structure (profile.salary), so they always tie to the Salary tab:
+    gross = total earnings, deductions = the structure's deductions, net = gross - deductions. */
+export const payslipFigures = (e: Employee) => {
+  const s = e.profile.salary;
+  const gross = s.earnings.reduce((n, x) => n + x.amount, 0);
+  const deductions = s.deductions.reduce((n, x) => n + x.amount, 0);
+  return { gross, deductions, net: gross - deductions, currency: s.currency };
+};
+
+/** The last three pay months ending with the current one (the current month is still processing). */
+const PAY_MONTHS = [2, 1, 0].map((back, i) => {
+  const [y, m] = REFERENCE_TODAY.split('-').map(Number);
+  const d = new Date(Date.UTC(y, m - 1 - back, 1));
+  return { key: d.toISOString().slice(0, 7), label: `${d.toLocaleString('en-US', { month: 'long', timeZone: 'UTC' })} ${d.getUTCFullYear()}`, status: (i === 2 ? 'Processing' : 'Paid') as Payslip['status'] };
 });
+
+export const PAYSLIPS: Payslip[] = ACTIVE_EMPLOYEES.flatMap((e) =>
+  PAY_MONTHS.filter((pm) => pm.key >= e.dateOfJoining.slice(0, 7)).map((pm) => {
+    const f = payslipFigures(e);
+    return { id: `${e.id}-${pm.key}`, employeeId: e.id, month: pm.label, gross: f.gross, deductions: f.deductions, net: f.net, currency: f.currency as Payslip['currency'], status: pm.status };
+  })
+);
+
+/** Where an approval queue opens: HR and Super Admin see every location, everyone else their own. */
+export const defaultScope = (role: Role, ownLocation: string) => (role === 'HR' || role === 'Super Admin' ? 'All' : ownLocation);
 
 export const PERSONAS: Record<Role, { employeeId: string }> = {
   'Super Admin': { employeeId: 'GS-120' },

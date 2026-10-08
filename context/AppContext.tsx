@@ -5,6 +5,7 @@ import { Location, Role } from '@/lib/types';
 import { PERSONAS, employeeById } from '@/lib/data';
 import { accountFor, useAuth } from '@/lib/auth';
 import { useOrg } from '@/context/OrgContext';
+import { useEmployeeVersion } from '@/lib/employeeStore';
 
 // The signed-in account decides the user and role (see lib/auth.ts). Without a session the Super Admin
 // account is used only as a harmless placeholder while the sign-in redirect happens. Role assignment will be
@@ -73,5 +74,6 @@ export function useApp() {
 
 export function useCurrentEmployee() {
   const { currentEmployeeId } = useApp();
+  useEmployeeVersion();
   return employeeById(currentEmployeeId)!;
 }

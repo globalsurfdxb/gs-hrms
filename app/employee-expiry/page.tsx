@@ -15,7 +15,9 @@ import { ExpiryBadge } from '@/components/ui/Badge';
 import { Drawer } from '@/components/ui/Drawer';
 import { SearchSelect } from '@/components/ui/SearchSelect';
 import { EmpId } from '@/components/ui/EmployeeBits';
-import { BellIcon, ClockIcon, PlusIcon, SearchIcon, XIcon } from '@/components/icons';
+import { Avatar } from '@/components/ui/Avatar';
+import { StatTiles } from '@/components/ui/StatTiles';
+import { BellIcon, CheckIcon, ClockIcon, FileTextIcon, PlusIcon, SearchIcon, WarnIcon, XIcon } from '@/components/icons';
 
 const SORTED_RUNGS = [...RUNGS].sort((a, b) => b - a);
 const DOC_TYPES = ['Passport', 'Emirates ID', 'Residence Visa', 'Labour Card', 'UAE Driving Licence', 'Medical Insurance', 'Professional Licence', 'Insurance Document', 'Other'];
@@ -35,23 +37,6 @@ const addYears = (iso: string, n: number) => {
 function inWindow(days: number, rung: number) {
   const lower = [...RUNGS].sort((a, b) => a - b).filter((r) => r < rung).pop() ?? -1;
   return days >= 0 && days <= rung && days > lower;
-}
-
-function Stat({ label, value, color, active, onClick }: { label: string; value: number; color: string; active: boolean; onClick: () => void }) {
-  return (
-    <button
-      type="button"
-      className="compcard"
-      onClick={onClick}
-      title="Click to filter the register"
-      style={{ textAlign: 'left', cursor: 'pointer', font: 'inherit', outline: active ? '2px solid var(--primary)' : undefined, outlineOffset: -1 }}
-    >
-      <div className="ttl">{label}</div>
-      <div className="num" style={{ fontSize: 24, fontWeight: 700, color }}>
-        {value}
-      </div>
-    </button>
-  );
 }
 
 function DaysLeft({ days }: { days: number }) {
@@ -97,6 +82,8 @@ export default function EmployeeExpiryPage() {
     .filter((r) => (type === 'All' || r.type === type) && (statusFilter === 'All' || stateOf(r) === statusFilter) && (rungFilter === null || inWindow(daysOf(r), rungFilter)))
     .filter((r) => matchesEmployee(r.employee, q) || r.type.toLowerCase().includes(q.trim().toLowerCase()))
     .sort((a, b) => daysOf(a) - daysOf(b));
+
+  const filtersOn = !!q.trim() || loc !== 'All' || type !== 'All' || statusFilter !== 'All' || rungFilter !== null;
 
   const renewing: DocRow | undefined = renewKey ? all.find((r) => r.key === renewKey) ?? rowsFor(employees).find((r) => r.key === renewKey) : undefined;
   const quickBase = renewing && renewing.expiry > REFERENCE_TODAY ? renewing.expiry : REFERENCE_TODAY;
@@ -195,11 +182,14 @@ export default function EmployeeExpiryPage() {
         </div>
       )}
 
-      <div className="g3">
-        <Stat label="Expired" value={count('expired')} color="#B91C1C" active={statusFilter === 'expired'} onClick={() => setStatusFilter(statusFilter === 'expired' ? 'All' : 'expired')} />
-        <Stat label="Expiring soon" value={count('soon')} color="#C2410C" active={statusFilter === 'soon'} onClick={() => setStatusFilter(statusFilter === 'soon' ? 'All' : 'soon')} />
-        <Stat label="Valid" value={count('ok')} color="#15803D" active={statusFilter === 'ok'} onClick={() => setStatusFilter(statusFilter === 'ok' ? 'All' : 'ok')} />
-      </div>
+      <StatTiles
+        items={[
+          { label: 'Expired', value: count('expired'), icon: <WarnIcon />, tone: 'red', hint: 'Needs renewal now', active: statusFilter === 'expired', onClick: () => setStatusFilter(statusFilter === 'expired' ? 'All' : 'expired') },
+          { label: 'Expiring soon', value: count('soon'), icon: <ClockIcon />, tone: 'amber', hint: 'Within the notice windows', active: statusFilter === 'soon', onClick: () => setStatusFilter(statusFilter === 'soon' ? 'All' : 'soon') },
+          { label: 'Valid', value: count('ok'), icon: <CheckIcon />, tone: 'green', hint: 'No action needed', active: statusFilter === 'ok', onClick: () => setStatusFilter(statusFilter === 'ok' ? 'All' : 'ok') },
+          { label: 'Reminders due', value: dueList.length, icon: <BellIcon />, tone: 'blue', hint: `${all.length} document${all.length === 1 ? '' : 's'} tracked` },
+        ]}
+      />
 
       <Card className="row-gap">
         <CardHeader title="Reminder ladder" sub="Click a notice window to filter the register. Green = every document in the window has been reminded." />
@@ -254,12 +244,27 @@ export default function EmployeeExpiryPage() {
             ))}
           </select>
           {rungFilter !== null && (
-            <button type="button" className="chip" onClick={() => setRungFilter(null)} style={{ background: 'var(--primary-50)', borderColor: 'var(--primary-100)', color: 'var(--primary)' }}>
+            <button type="button" className="chip lc-chip-on" onClick={() => setRungFilter(null)}>
               {rungFilter}-day window <XIcon />
             </button>
           )}
+          {filtersOn && (
+            <button
+              type="button"
+              className="chip"
+              onClick={() => {
+                setQ('');
+                setLoc('All');
+                setType('All');
+                setStatusFilter('All');
+                setRungFilter(null);
+              }}
+            >
+              <XIcon /> Clear filters
+            </button>
+          )}
           <span className="sp" />
-          <span style={{ fontSize: 12, color: 'var(--muted)' }}>
+          <span className="lc-count">
             {rows.length} of {all.length}
           </span>
         </div>
@@ -267,6 +272,8 @@ export default function EmployeeExpiryPage() {
         {!rows.length ? (
           <EmptyState icon={<ClockIcon />} title={all.length ? 'No matching documents' : 'Nothing tracked'} description={all.length ? 'Try a different search or filter.' : 'Add a dated document to start tracking its expiry.'} />
         ) : (
+          <>
+          <div className="lc-scroll">
           <table>
             <thead>
               <tr>
@@ -286,24 +293,31 @@ export default function EmployeeExpiryPage() {
                 const due = dueRung(r);
                 const last = lastReminder(r);
                 return (
-                  <tr key={r.key}>
+                  <tr key={r.key} className={`lc-row ${st}`}>
                     <td>
                       <Link href={`/directory/${r.employee.employeeCode}`} className="person">
-                        <div className="av" style={{ background: 'var(--primary-100)', color: 'var(--primary)' }}>
-                          {r.employee.avatarInitials}
-                        </div>
+                        <Avatar initials={r.employee.avatarInitials} seed={r.employee.department} />
                         <div>
                           <div className="nm">
                             {r.employee.name}
                             <EmpId code={r.employee.employeeCode} />
                           </div>
-                          <div className="sb">{locationName(r.employee.location)}</div>
+                          <div className="sb">
+                            {r.employee.department} · {locationName(r.employee.location)}
+                          </div>
                         </div>
                       </Link>
                     </td>
                     <td>
-                      {r.type}
-                      {r.custom && <span style={{ marginLeft: 6, fontSize: 11, color: 'var(--faint)' }}>custom</span>}
+                      <div className="lc-cell">
+                        <span className="lc-ic">
+                          <FileTextIcon />
+                        </span>
+                        <div>
+                          <div className="nm">{r.type}</div>
+                          {r.custom && <div className="sb">Custom document</div>}
+                        </div>
+                      </div>
                     </td>
                     <td className="mono">{r.expiry}</td>
                     <td>
@@ -326,75 +340,95 @@ export default function EmployeeExpiryPage() {
                         <span style={{ color: 'var(--faint)' }}>—</span>
                       )}
                     </td>
-                    <td style={{ textAlign: 'right', whiteSpace: 'nowrap' }}>
-                      <Button size="sm" onClick={() => remind(r)} title="Send a reminder now">
-                        <BellIcon /> Remind
-                      </Button>{' '}
-                      <Button size="sm" variant={st === 'ok' ? 'ghost' : 'primary'} onClick={() => openRenew(r)}>
-                        Update expiry
-                      </Button>
+                    <td className="lc-right">
+                      <span className="lc-acts">
+                        <Button size="sm" onClick={() => remind(r)} title="Send a reminder now">
+                          <BellIcon /> Remind
+                        </Button>
+                        <Button size="sm" variant={st === 'ok' ? 'ghost' : 'primary'} onClick={() => openRenew(r)}>
+                          Update expiry
+                        </Button>
+                      </span>
                     </td>
                   </tr>
                 );
               })}
             </tbody>
           </table>
+          </div>
+          <div className="tfoot lc-foot">
+            <span>
+              Showing {rows.length} of {all.length} document{all.length === 1 ? '' : 's'}
+            </span>
+            <span>Sorted by urgency</span>
+          </div>
+          </>
         )}
       </Card>
 
       <div className="g2 row-gap">
         <Card>
           <CardHeader title="Reminder log" sub={`${reminders.length} sent this session`} />
-          {!reminders.length && <div style={{ padding: '14px 18px', fontSize: 13, color: 'var(--muted)' }}>No reminders sent yet. Use “Send due reminders” or “Remind” on a row.</div>}
-          {[...reminders]
-            .reverse()
-            .slice(0, 8)
-            .map((r) => {
-              const e = employeeById(r.employeeId)!;
-              return (
-                <div key={r.id} className="doc">
-                  <div className="fic">
-                    <BellIcon />
-                  </div>
-                  <div>
-                    <div className="nm">
-                      {e.name}
-                      <EmpId code={e.employeeCode} /> · {r.type}
+          {!reminders.length ? (
+            <div className="lc-hint">No reminders sent yet. Use “Send due reminders” or “Remind” on a row.</div>
+          ) : (
+            <div className="lc-list">
+              {[...reminders]
+                .reverse()
+                .slice(0, 8)
+                .map((r) => {
+                  const e = employeeById(r.employeeId)!;
+                  return (
+                    <div key={r.id} className="doc">
+                      <div className="fic">
+                        <BellIcon />
+                      </div>
+                      <div>
+                        <div className="nm">
+                          {e.name}
+                          <EmpId code={e.employeeCode} /> · {r.type}
+                        </div>
+                        <div className="mt">
+                          {r.rung ? `${r.rung}-day notice` : 'Manual reminder'} · {r.sentOn} · to {r.to.join(', ')}
+                        </div>
+                      </div>
                     </div>
-                    <div className="mt">
-                      {r.rung ? `${r.rung}-day notice` : 'Manual reminder'} · {r.sentOn} · to {r.to.join(', ')}
-                    </div>
-                  </div>
-                </div>
-              );
-            })}
+                  );
+                })}
+            </div>
+          )}
         </Card>
         <Card>
           <CardHeader title="Update history" sub={`${renewals.length} update(s) this session`} />
-          {!renewals.length && <div style={{ padding: '14px 18px', fontSize: 13, color: 'var(--muted)' }}>No expiry dates updated yet. Use “Update expiry” on a row after a document is renewed.</div>}
-          {[...renewals]
-            .reverse()
-            .slice(0, 8)
-            .map((r) => {
-              const e = employeeById(r.employeeId)!;
-              return (
-                <div key={r.id} className="doc">
-                  <div className="fic">
-                    <ClockIcon />
-                  </div>
-                  <div>
-                    <div className="nm">
-                      {e.name}
-                      <EmpId code={e.employeeCode} /> · {r.type}
+          {!renewals.length ? (
+            <div className="lc-hint">No expiry dates updated yet. Use “Update expiry” on a row after a document is renewed.</div>
+          ) : (
+            <div className="lc-list">
+              {[...renewals]
+                .reverse()
+                .slice(0, 8)
+                .map((r) => {
+                  const e = employeeById(r.employeeId)!;
+                  return (
+                    <div key={r.id} className="doc">
+                      <div className="fic">
+                        <ClockIcon />
+                      </div>
+                      <div>
+                        <div className="nm">
+                          {e.name}
+                          <EmpId code={e.employeeCode} /> · {r.type}
+                        </div>
+                        <div className="mt">
+                          {r.previousExpiry} → {r.newExpiry} · {r.renewedOn}
+                          {r.reference ? ` · ref ${r.reference}` : ''}
+                        </div>
+                      </div>
                     </div>
-                    <div className="mt">
-                      {r.previousExpiry} → {r.newExpiry} · {r.renewedOn}
-                      {r.reference ? ` · ref ${r.reference}` : ''}
-                    </div>
-                  </div>
-                </div>
-              );
-            })}
+                  );
+                })}
+            </div>
+          )}
         </Card>
       </div>
 

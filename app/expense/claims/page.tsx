@@ -10,9 +10,10 @@ import { ExpenseClaim } from '@/lib/types';
 import { PageHeader } from '@/components/ui/PageHeader';
 import { Card, CardHeader, EmptyState, Button } from '@/components/ui/Card';
 import { Badge, StatusBadge } from '@/components/ui/Badge';
+import { StatStrip } from '@/components/ui/StatStrip';
 import { Drawer } from '@/components/ui/Drawer';
 import { EmpId } from '@/components/ui/EmployeeBits';
-import { BellIcon, DownloadIcon, PlusIcon, ReceiptIcon, SearchIcon, XIcon } from '@/components/icons';
+import { BellIcon, CheckIcon, ClockIcon, DownloadIcon, PlusIcon, ReceiptIcon, SearchIcon, UserXIcon, WarnIcon, XIcon } from '@/components/icons';
 
 const STATUSES: ('All' | ExpenseClaim['status'])[] = ['All', 'Pending', 'Approved', 'Rejected'];
 
@@ -25,29 +26,11 @@ const sums = (list: ExpenseClaim[]) => {
 
 const csvCell = (v: string | number | undefined) => `"${String(v ?? '').replace(/"/g, '""')}"`;
 
-function Stat({ label, count, amount, color, active, onClick }: { label: string; count: number; amount: string; color: string; active: boolean; onClick: () => void }) {
-  return (
-    <button
-      type="button"
-      className="compcard"
-      onClick={onClick}
-      title="Click to filter the list"
-      style={{ textAlign: 'left', cursor: 'pointer', font: 'inherit', outline: active ? '2px solid var(--primary)' : undefined, outlineOffset: -1 }}
-    >
-      <div className="ttl">{label}</div>
-      <div className="num" style={{ fontSize: 24, fontWeight: 700, color }}>
-        {count}
-      </div>
-      <div style={{ fontSize: 11.5, color: 'var(--muted)', marginTop: 2 }}>{amount}</div>
-    </button>
-  );
-}
-
 function ReadBlock({ label, children }: { label: string; children: React.ReactNode }) {
   return (
-    <div style={{ marginBottom: 14 }}>
-      <div style={{ fontSize: 10.5, fontWeight: 700, letterSpacing: '.04em', textTransform: 'uppercase', color: 'var(--faint)', marginBottom: 3 }}>{label}</div>
-      <div style={{ fontSize: 13 }}>{children}</div>
+    <div className="tx-read">
+      <div className="l">{label}</div>
+      <div className="v">{children}</div>
     </div>
   );
 }
@@ -76,7 +59,6 @@ export default function AllClaimsPage() {
   const rows = scoped.filter((c) => (status === 'All' || c.status === status) && (matchesEmployee(employeeById(c.employeeId)!, q) || `${c.project} ${c.description}`.toLowerCase().includes(q.trim().toLowerCase())));
 
   const byStatus = (s: ExpenseClaim['status']) => scoped.filter((c) => c.status === s);
-  const toggleStatus = (s: ExpenseClaim['status']) => setStatus(status === s ? 'All' : s);
 
   const open = claims.find((c) => c.id === openId);
   const openEmp = open ? employeeById(open.employeeId) : undefined;
@@ -132,7 +114,7 @@ export default function AllClaimsPage() {
   };
 
   return (
-    <div>
+    <div className="tx-page">
       <PageHeader
         eyebrow="Expense Claims"
         title="All Claims"
@@ -152,7 +134,7 @@ export default function AllClaimsPage() {
       />
 
       {notice && (
-        <div className="note-box" style={{ marginBottom: 14, alignItems: 'center' }}>
+        <div className="note-box tx-banner">
           <BellIcon />
           <div style={{ flex: 1 }}>{notice}</div>
           <button type="button" className="icon-act" title="Dismiss" onClick={() => setNotice('')}>
@@ -161,19 +143,29 @@ export default function AllClaimsPage() {
         </div>
       )}
 
-      <div className="g3">
-        <Stat label="Pending" count={byStatus('Pending').length} amount={sums(byStatus('Pending'))} color="#B45309" active={status === 'Pending'} onClick={() => toggleStatus('Pending')} />
-        <Stat label="Approved" count={byStatus('Approved').length} amount={sums(byStatus('Approved'))} color="#15803D" active={status === 'Approved'} onClick={() => toggleStatus('Approved')} />
-        <Stat label="Rejected" count={byStatus('Rejected').length} amount={sums(byStatus('Rejected'))} color="#B91C1C" active={status === 'Rejected'} onClick={() => toggleStatus('Rejected')} />
-      </div>
+      <StatStrip
+        items={[
+          { label: 'Total claims', value: scoped.length, icon: <ReceiptIcon />, tone: 'blue', hint: sums(scoped) },
+          { label: 'Pending', value: byStatus('Pending').length, icon: <ClockIcon />, tone: 'amber', hint: sums(byStatus('Pending')) },
+          { label: 'Approved', value: byStatus('Approved').length, icon: <CheckIcon />, tone: 'green', hint: sums(byStatus('Approved')) },
+          { label: 'Rejected', value: byStatus('Rejected').length, icon: <UserXIcon />, tone: 'red', hint: sums(byStatus('Rejected')) },
+        ]}
+      />
 
-      <Card className="row-gap">
+      <Card>
         <CardHeader title="Claims" sub={`${scoped.length} claim(s) in the current filters`} />
         <div className="tbar">
-          <div className="tsearch" style={{ width: 260 }}>
+          <div className="tsearch">
             <SearchIcon />
             <input value={q} onChange={(e) => setQ(e.target.value)} placeholder="Search name, employee ID, project…" />
           </div>
+          {STATUSES.map((s) => (
+            <button key={s} type="button" className={`chip ${status === s ? 'tx-chip-on' : ''}`} onClick={() => setStatus(s)}>
+              {s} · {s === 'All' ? scoped.length : byStatus(s).length}
+            </button>
+          ))}
+        </div>
+        <div className="tbar">
           <select value={loc} onChange={(e) => setLoc(e.target.value)} className="chip">
             <option value="All">All locations</option>
             {locations.map((l) => (
@@ -188,28 +180,28 @@ export default function AllClaimsPage() {
               <option key={c.id}>{c.name}</option>
             ))}
           </select>
-          <select value={status} onChange={(e) => setStatus(e.target.value as 'All' | ExpenseClaim['status'])} className="chip">
-            {STATUSES.map((s) => (
-              <option key={s} value={s}>
-                {s === 'All' ? 'All statuses' : s}
-              </option>
-            ))}
-          </select>
-          <label style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: 12, color: 'var(--muted)' }}>
+          <label className="tx-dates">
             From
-            <input type="date" value={from} onChange={(e) => setFrom(e.target.value)} style={{ padding: '6px 8px', border: '1px solid var(--border)', borderRadius: 'var(--r-sm)', fontSize: 12.5 }} />
+            <input type="date" value={from} onChange={(e) => setFrom(e.target.value)} />
           </label>
-          <label style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: 12, color: 'var(--muted)' }}>
+          <label className="tx-dates">
             To
-            <input type="date" value={to} onChange={(e) => setTo(e.target.value)} style={{ padding: '6px 8px', border: '1px solid var(--border)', borderRadius: 'var(--r-sm)', fontSize: 12.5 }} />
+            <input type="date" value={to} onChange={(e) => setTo(e.target.value)} />
           </label>
           {(from || to) && (
-            <button type="button" className="chip" onClick={() => { setFrom(''); setTo(''); }}>
+            <button
+              type="button"
+              className="chip"
+              onClick={() => {
+                setFrom('');
+                setTo('');
+              }}
+            >
               Clear dates <XIcon />
             </button>
           )}
           <span className="sp" />
-          <span style={{ fontSize: 12, color: 'var(--muted)' }}>
+          <span className="tx-count">
             {rows.length} of {scoped.length}
           </span>
         </div>
@@ -221,59 +213,68 @@ export default function AllClaimsPage() {
             description={scoped.length ? 'Try a different search or filter.' : 'Submitted claims appear here for review.'}
           />
         ) : (
-          <table>
-            <thead>
-              <tr>
-                <th>Employee</th>
-                <th>Category</th>
-                <th>Project</th>
-                <th>Amount</th>
-                <th>Date</th>
-                <th>Status</th>
-                <th />
-              </tr>
-            </thead>
-            <tbody>
-              {rows.map((c) => {
-                const e = employeeById(c.employeeId)!;
-                const lim = categories.find((x) => x.name === c.category)?.limits[c.currency];
-                const over = lim !== undefined && c.amount > lim;
-                return (
-                  <tr key={c.id}>
-                    <td>
-                      <Link href={`/directory/${e.employeeCode}`} className="person">
-                        <div className="av" style={{ background: 'var(--primary-100)', color: 'var(--primary)' }}>
-                          {e.avatarInitials}
-                        </div>
-                        <div>
-                          <div className="nm">
-                            {e.name}
-                            <EmpId code={e.employeeCode} />
+          <div className="tx-scroll wide">
+            <table>
+              <thead>
+                <tr>
+                  <th>Employee</th>
+                  <th>Claim</th>
+                  <th>Amount</th>
+                  <th>Expense date</th>
+                  <th>Status</th>
+                  <th />
+                </tr>
+              </thead>
+              <tbody>
+                {rows.map((c) => {
+                  const e = employeeById(c.employeeId)!;
+                  const lim = categories.find((x) => x.name === c.category)?.limits[c.currency];
+                  const over = lim !== undefined && c.amount > lim;
+                  return (
+                    <tr key={c.id}>
+                      <td>
+                        <Link href={`/directory/${e.employeeCode}`} className="person">
+                          <div className="av" style={{ background: 'var(--primary-100)', color: 'var(--primary)' }}>
+                            {e.avatarInitials}
                           </div>
-                          <div className="sb">{locationName(e.location)}</div>
+                          <div>
+                            <div className="nm">
+                              {e.name}
+                              <EmpId code={e.employeeCode} />
+                            </div>
+                            <div className="sb">{locationName(e.location)}</div>
+                          </div>
+                        </Link>
+                      </td>
+                      <td>
+                        <div style={{ fontWeight: 600, fontSize: 13 }}>{c.category}</div>
+                        <div className="tx-s faint">{c.project}</div>
+                      </td>
+                      <td className="mono">
+                        <div style={{ fontWeight: 600, color: 'var(--text)' }}>
+                          {c.currency} {c.amount.toLocaleString('en-US')}
                         </div>
-                      </Link>
-                    </td>
-                    <td>{c.category}</td>
-                    <td>{c.project}</td>
-                    <td className="mono">
-                      {c.currency} {c.amount.toLocaleString('en-US')}
-                      {over && <span style={{ marginLeft: 6 }}><Badge tone="soon">Over limit</Badge></span>}
-                    </td>
-                    <td className="mono">{c.date}</td>
-                    <td>
-                      <StatusBadge status={c.status} />
-                    </td>
-                    <td style={{ textAlign: 'right' }}>
-                      <Button size="sm" variant={c.status === 'Pending' ? 'primary' : 'ghost'} onClick={() => openDetail(c)}>
-                        {c.status === 'Pending' ? 'Review' : 'View'}
-                      </Button>
-                    </td>
-                  </tr>
-                );
-              })}
-            </tbody>
-          </table>
+                        {over && (
+                          <span style={{ display: 'inline-block', marginTop: 3 }}>
+                            <Badge tone="soon">Over limit</Badge>
+                          </span>
+                        )}
+                      </td>
+                      <td className="mono">{c.date}</td>
+                      <td>
+                        <StatusBadge status={c.status} />
+                      </td>
+                      <td style={{ textAlign: 'right' }}>
+                        <Button size="sm" variant={c.status === 'Pending' ? 'primary' : 'ghost'} onClick={() => openDetail(c)}>
+                          {c.status === 'Pending' ? 'Review' : 'View'}
+                        </Button>
+                      </td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
+          </div>
         )}
         {!!rows.length && (
           <div className="tfoot">
@@ -352,7 +353,12 @@ export default function AllClaimsPage() {
                 />
               </div>
             )}
-            {decisionError && <div style={{ marginTop: 10, fontSize: 12, color: 'var(--danger)' }}>{decisionError}</div>}
+            {decisionError && (
+              <div className="tx-err" style={{ marginTop: 12 }}>
+                <WarnIcon />
+                {decisionError}
+              </div>
+            )}
           </>
         )}
       </Drawer>

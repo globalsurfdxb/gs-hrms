@@ -7,8 +7,9 @@ import { ExpenseCategory } from '@/lib/types';
 import { PageHeader } from '@/components/ui/PageHeader';
 import { Card, CardHeader, EmptyState, Button } from '@/components/ui/Card';
 import { Badge } from '@/components/ui/Badge';
+import { StatStrip } from '@/components/ui/StatStrip';
 import { Drawer } from '@/components/ui/Drawer';
-import { EditIcon, PlusIcon, SearchIcon, TagIcon, XIcon } from '@/components/icons';
+import { CheckIcon, EditIcon, PlusIcon, ReceiptIcon, SearchIcon, TagIcon, WarnIcon, XIcon } from '@/components/icons';
 
 const blank = (): ExpenseCategory => ({ id: '', name: '', description: '', limits: {}, active: true });
 
@@ -83,9 +84,10 @@ export default function ExpenseCategoriesPage() {
 
   const editingClaims = mode === 'edit' ? claimCount(draft.name) : 0;
   const totalClaims = claims.length;
+  const activeCount = categories.filter((c) => c.active).length;
 
   return (
-    <div>
+    <div className="tx-page">
       <PageHeader
         eyebrow="Expense Claims"
         title="Categories & Policy"
@@ -97,41 +99,29 @@ export default function ExpenseCategoriesPage() {
         }
       />
 
-      <div className="g3">
-        <div className="compcard">
-          <div className="ttl">Categories</div>
-          <div className="num" style={{ fontSize: 24, fontWeight: 700, color: 'var(--primary)' }}>
-            {categories.length}
-          </div>
-        </div>
-        <div className="compcard">
-          <div className="ttl">Active</div>
-          <div className="num" style={{ fontSize: 24, fontWeight: 700, color: '#15803D' }}>
-            {categories.filter((c) => c.active).length}
-          </div>
-        </div>
-        <div className="compcard">
-          <div className="ttl">Claims on file</div>
-          <div className="num" style={{ fontSize: 24, fontWeight: 700 }}>
-            {totalClaims}
-          </div>
-        </div>
-      </div>
+      <StatStrip
+        items={[
+          { label: 'Categories', value: categories.length, icon: <TagIcon />, tone: 'blue', hint: `Limits in ${currencies.join(', ')}` },
+          { label: 'Active', value: activeCount, icon: <CheckIcon />, tone: 'green', hint: 'Available for new claims' },
+          { label: 'Inactive', value: categories.length - activeCount, icon: <XIcon />, tone: 'gray', hint: 'Hidden from new claims' },
+          { label: 'Claims on file', value: totalClaims, icon: <ReceiptIcon />, tone: 'purple', hint: 'Across all categories', href: '/expense/claims' },
+        ]}
+      />
 
-      <Card className="row-gap">
+      <Card>
         <CardHeader title="Categories" sub={`${categories.length} on file · limits in ${currencies.join(', ')}`} />
         <div className="tbar">
-          <div className="tsearch" style={{ width: 260 }}>
+          <div className="tsearch">
             <SearchIcon />
             <input value={q} onChange={(e) => setQ(e.target.value)} placeholder="Search categories…" />
           </div>
-          <select value={statusFilter} onChange={(e) => setStatusFilter(e.target.value as 'All' | 'Active' | 'Inactive')} className="chip">
-            <option value="All">All statuses</option>
-            <option>Active</option>
-            <option>Inactive</option>
-          </select>
+          {(['All', 'Active', 'Inactive'] as const).map((s) => (
+            <button key={s} type="button" className={`chip ${statusFilter === s ? 'tx-chip-on' : ''}`} onClick={() => setStatusFilter(s)}>
+              {s} · {s === 'All' ? categories.length : s === 'Active' ? activeCount : categories.length - activeCount}
+            </button>
+          ))}
           <span className="sp" />
-          <span style={{ fontSize: 12, color: 'var(--muted)' }}>
+          <span className="tx-count">
             {rows.length} of {categories.length}
           </span>
         </div>
@@ -139,64 +129,78 @@ export default function ExpenseCategoriesPage() {
         {!rows.length ? (
           <EmptyState icon={<TagIcon />} title={categories.length ? 'No matching categories' : 'No categories yet'} description={categories.length ? 'Try a different search or filter.' : 'Add a category so employees can file claims against it.'} />
         ) : (
-          <table>
-            <thead>
-              <tr>
-                <th>Category</th>
-                <th>Description</th>
-                {currencies.map((cur) => (
-                  <th key={cur}>Limit ({cur})</th>
-                ))}
-                <th>Claims</th>
-                <th>Status</th>
-                <th />
-              </tr>
-            </thead>
-            <tbody>
-              {rows.map((c) => {
-                const n = claimCount(c.name);
-                return (
-                  <tr key={c.id} style={c.active ? undefined : { opacity: 0.65 }}>
-                    <td>
-                      <span className="person">
-                        <span className="fic" style={{ width: 28, height: 28 }}>
-                          <TagIcon style={{ width: 14, height: 14 }} />
+          <div className="tx-scroll wide">
+            <table>
+              <thead>
+                <tr>
+                  <th>Category</th>
+                  {currencies.map((cur) => (
+                    <th key={cur}>Limit ({cur})</th>
+                  ))}
+                  <th>Claims</th>
+                  <th>Status</th>
+                  <th />
+                </tr>
+              </thead>
+              <tbody>
+                {rows.map((c) => {
+                  const n = claimCount(c.name);
+                  return (
+                    <tr key={c.id} style={c.active ? undefined : { opacity: 0.65 }}>
+                      <td>
+                        <span className="person">
+                          <span className="tx-cat-ic">
+                            <TagIcon />
+                          </span>
+                          <span>
+                            <span className="nm" style={{ display: 'block' }}>
+                              {c.name}
+                            </span>
+                            <span className="sb" style={{ display: 'block' }}>
+                              {c.description || 'No description'}
+                            </span>
+                          </span>
                         </span>
-                        <span className="nm">{c.name}</span>
-                      </span>
-                    </td>
-                    <td>{c.description || <span style={{ color: 'var(--faint)' }}>—</span>}</td>
-                    {currencies.map((cur) => (
-                      <td key={cur} className="mono">
-                        {c.limits[cur] !== undefined ? c.limits[cur].toLocaleString('en-US') : <span style={{ color: 'var(--faint)' }}>No limit</span>}
                       </td>
-                    ))}
-                    <td>{n}</td>
-                    <td>
-                      <Badge tone={c.active ? 'active' : 'inactive'}>{c.active ? 'Active' : 'Inactive'}</Badge>
-                    </td>
-                    <td style={{ textAlign: 'right', whiteSpace: 'nowrap' }}>
-                      <button className="icon-act" onClick={() => openEdit(c)} title="Edit">
-                        <EditIcon />
-                      </button>{' '}
-                      <Button size="sm" onClick={() => toggleCategory(c.id)} title={c.active ? 'Hide from new claims' : 'Allow in new claims'}>
-                        {c.active ? 'Deactivate' : 'Activate'}
-                      </Button>{' '}
-                      <button
-                        className="icon-act"
-                        onClick={() => remove(c)}
-                        disabled={n > 0}
-                        title={n > 0 ? `Used by ${n} claim(s) — deactivate it instead` : 'Delete'}
-                        style={n > 0 ? { opacity: 0.35, cursor: 'not-allowed' } : undefined}
-                      >
-                        <XIcon />
-                      </button>
-                    </td>
-                  </tr>
-                );
-              })}
-            </tbody>
-          </table>
+                      {currencies.map((cur) => (
+                        <td key={cur} className="mono">
+                          {c.limits[cur] !== undefined ? c.limits[cur].toLocaleString('en-US') : <span style={{ color: 'var(--faint)' }}>No limit</span>}
+                        </td>
+                      ))}
+                      <td>{n ? <span className="tx-pill">{n}</span> : <span style={{ color: 'var(--faint)' }}>0</span>}</td>
+                      <td>
+                        <Badge tone={c.active ? 'active' : 'inactive'}>{c.active ? 'Active' : 'Inactive'}</Badge>
+                      </td>
+                      <td style={{ textAlign: 'right', whiteSpace: 'nowrap' }}>
+                        <button className="icon-act" onClick={() => openEdit(c)} title="Edit">
+                          <EditIcon />
+                        </button>{' '}
+                        <Button size="sm" onClick={() => toggleCategory(c.id)} title={c.active ? 'Hide from new claims' : 'Allow in new claims'}>
+                          {c.active ? 'Deactivate' : 'Activate'}
+                        </Button>{' '}
+                        <button
+                          className="icon-act"
+                          onClick={() => remove(c)}
+                          disabled={n > 0}
+                          title={n > 0 ? `Used by ${n} claim(s) — deactivate it instead` : 'Delete'}
+                          style={n > 0 ? { opacity: 0.35, cursor: 'not-allowed' } : undefined}
+                        >
+                          <XIcon />
+                        </button>
+                      </td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
+          </div>
+        )}
+        {!!rows.length && (
+          <div className="tfoot">
+            <span>
+              Showing {rows.length} of {categories.length} · claims above a limit need extra management approval
+            </span>
+          </div>
         )}
       </Card>
 
@@ -229,7 +233,7 @@ export default function ExpenseCategoriesPage() {
                 setError('');
               }}
               placeholder="e.g. Training & Certification"
-              style={error && !draft.name.trim() ? { borderColor: 'var(--danger)' } : undefined}
+              className={error && !draft.name.trim() ? 'tx-input-err' : undefined}
             />
             {editingClaims > 0 && <span className="hint">The name is locked because {editingClaims} existing claim(s) use it.</span>}
           </div>
@@ -260,7 +264,12 @@ export default function ExpenseCategoriesPage() {
           </div>
           <span style={{ fontSize: 11, color: 'var(--faint)' }}>Claims above a limit need extra management approval. Leave a field blank for no limit in that currency.</span>
         </div>
-        {error && <div style={{ marginTop: 10, fontSize: 12, color: 'var(--danger)' }}>{error}</div>}
+        {error && (
+          <div className="tx-err" style={{ marginTop: 14 }}>
+            <WarnIcon />
+            {error}
+          </div>
+        )}
       </Drawer>
     </div>
   );

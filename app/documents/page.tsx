@@ -4,83 +4,119 @@ import { useRef, useState } from 'react';
 import Link from 'next/link';
 import { useApp } from '@/context/AppContext';
 import { EMPLOYEES, matchesEmployee } from '@/lib/data';
-import { Employee } from '@/lib/types';
+import { Employee, ExpiryState } from '@/lib/types';
 import { useDocuments } from '@/context/DocumentsContext';
 import { DocumentViewer, ViewableDoc, documentNumber } from '@/components/profile/DocumentViewer';
 import { PageHeader } from '@/components/ui/PageHeader';
 import { Card, CardHeader, EmptyState } from '@/components/ui/Card';
-import { ExpiryBadge } from '@/components/ui/Badge';
-import { FolderIcon, SearchIcon, UploadIcon } from '@/components/icons';
+import { StatStrip } from '@/components/ui/StatStrip';
+import { FilterChips } from '@/components/ui/FilterChips';
+import { DocTile } from '@/components/ui/DocTile';
+import { FileTextIcon, FolderIcon, PeopleIcon, SearchIcon, UploadIcon, WarnIcon, ClockIcon } from '@/components/icons';
+
+type DocFilter = 'all' | Extract<ExpiryState, 'ok' | 'soon' | 'expired'>;
 
 export default function DocumentsPage() {
   const { location } = useApp();
   const [q, setQ] = useState('');
+  const [filter, setFilter] = useState<DocFilter>('all');
   const [viewing, setViewing] = useState<{ emp: Employee; doc: ViewableDoc } | null>(null);
   const { fileFor, upload } = useDocuments();
   const picker = useRef<HTMLInputElement>(null);
   const pickFor = useRef<Employee | null>(null);
 
-  const scoped = EMPLOYEES.filter((e) => e.location === location && matchesEmployee(e, q));
-  const totalDocs = scoped.reduce((n, e) => n + e.documents.length, 0);
+  const inLocation = EMPLOYEES.filter((e) => e.location === location);
+  const allDocs = inLocation.flatMap((e) => e.documents);
+  const count = (s: ExpiryState) => allDocs.filter((d) => d.state === s).length;
+
+  // Apply the search, then the state filter (which also trims each employee's documents to the matching ones).
+  const searched = inLocation.filter((e) => matchesEmployee(e, q));
+  const rows = searched
+    .map((e) => ({ e, docs: filter === 'all' ? e.documents : e.documents.filter((d) => d.state === filter) }))
+    .filter((r) => filter === 'all' || r.docs.length > 0);
+  const shownDocs = rows.reduce((n, r) => n + r.docs.length, 0);
+
+  const openDoc = (emp: Employee, d: Employee['documents'][number]) => setViewing({ emp, doc: { name: d.type, expiryDate: d.expiryDate, state: d.state, number: documentNumber(emp, d.type), onFile: true } });
 
   return (
     <div>
-      <PageHeader eyebrow="Module 05 · Files" title="Employee Documents" description={`Per-employee document storage — ID proofs, contracts and certificates — with expiry tagging, for ${location}.`} />
+      <PageHeader eyebrow="Organization" title="Employee Documents" description={`Per-employee document storage — ID proofs, contracts and certificates — with expiry tagging, for ${location}.`} />
+
+      <div className="ss-strip">
+        <StatStrip
+          items={[
+            { label: 'Employees', value: inLocation.length, icon: <PeopleIcon />, tone: 'blue', hint: `${location} office` },
+            { label: 'Documents on file', value: allDocs.length, icon: <FileTextIcon />, tone: 'purple', hint: `${count('ok')} valid` },
+            { label: 'Expiring soon', value: count('soon'), icon: <ClockIcon />, tone: 'amber', hint: 'Renew in advance' },
+            { label: 'Expired', value: count('expired'), icon: <WarnIcon />, tone: 'red', hint: 'Needs action' },
+          ]}
+        />
+      </div>
 
       <Card>
-        <CardHeader title="Document vault" sub={`${totalDocs} document(s) across ${scoped.length} ${location} employee(s)`} />
+        <CardHeader title="Document vault" sub={`${allDocs.length} document(s) across ${inLocation.length} ${location} employee(s)`} />
         <div className="tbar">
           <div className="tsearch">
             <SearchIcon />
             <input value={q} onChange={(e) => setQ(e.target.value)} placeholder="Search by name or employee ID…" />
           </div>
+          <FilterChips
+            value={filter}
+            onChange={setFilter}
+            options={[
+              { key: 'all', label: 'All', count: allDocs.length },
+              { key: 'ok', label: 'Valid', count: count('ok') },
+              { key: 'soon', label: 'Expiring soon', count: count('soon') },
+              { key: 'expired', label: 'Expired', count: count('expired') },
+            ]}
+          />
         </div>
 
-        {!scoped.length && <EmptyState icon={<FolderIcon />} title="No records" description="No employees match this search." />}
+        {!rows.length && <EmptyState icon={<FolderIcon />} title="No records" description={q || filter !== 'all' ? 'No employees or documents match these filters.' : `No employees found for ${location}.`} />}
 
-        {scoped.map((e) => (
-          <div key={e.id} style={{ padding: '14px 16px', borderTop: '1px solid var(--border-soft)' }}>
-            <div className="person" style={{ marginBottom: 10 }}>
-              <Link href={`/directory/${e.employeeCode}`} className="person">
-                <div className="av" style={{ background: 'var(--primary-100)', color: 'var(--primary)' }}>
-                  {e.avatarInitials}
-                </div>
-                <div>
-                  <div className="nm">{e.name}</div>
-                  <div className="sb">{e.employeeCode}</div>
+        {rows.map(({ e, docs }) => (
+          <div key={e.id} className="ss-group">
+            <div className="ss-ghead">
+              <Link href={`/directory/${e.employeeCode}`} className="ss-gp">
+                <span className="ss-ic av">{e.avatarInitials}</span>
+                <div style={{ minWidth: 0 }}>
+                  <div className="ss-gn">{e.name}</div>
+                  <div className="ss-gs">
+                    {e.employeeCode} · {e.designation}
+                  </div>
                 </div>
               </Link>
-              <button
-                className="chip"
-                style={{ marginLeft: 'auto' }}
-                onClick={() => {
-                  pickFor.current = e;
-                  picker.current?.click();
-                }}
-              >
-                <UploadIcon /> Upload
-              </button>
+              <div className="ss-gtags">
+                <span className="ss-tag alt">{e.documents.length} document(s)</span>
+                <button
+                  className="chip"
+                  onClick={() => {
+                    pickFor.current = e;
+                    picker.current?.click();
+                  }}
+                >
+                  <UploadIcon /> Upload
+                </button>
+              </div>
             </div>
-            <div className="g3">
-              {e.documents.map((d) => (
-                <div
-                  key={d.id}
-                  className="doc clickable"
-                  role="button"
-                  tabIndex={0}
-                  onClick={() => setViewing({ emp: e, doc: { name: d.type, expiryDate: d.expiryDate, state: d.state, number: documentNumber(e, d.type), onFile: true } })}
-                  onKeyDown={(ev) => (ev.key === 'Enter' || ev.key === ' ') && (ev.preventDefault(), setViewing({ emp: e, doc: { name: d.type, expiryDate: d.expiryDate, state: d.state, number: documentNumber(e, d.type), onFile: true } }))}
-                  style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', border: '1px solid var(--border)', borderRadius: 'var(--r-sm)', padding: '9px 12px' }}>
-                  <div>
-                    <div style={{ fontSize: 12.5, fontWeight: 600, color: 'var(--text-2)' }}>{d.type}</div>
-                    {d.expiryDate && <div style={{ fontSize: 11, color: 'var(--faint)' }}>Expires {d.expiryDate}</div>}
-                  </div>
-                  <ExpiryBadge state={d.state} />
-                </div>
-              ))}
-            </div>
+            {docs.length ? (
+              <div className="ss-docgrid">
+                {docs.map((d) => (
+                  <DocTile key={d.id} name={d.type} expiryDate={d.expiryDate} state={d.state} onOpen={() => openDoc(e, d)} />
+                ))}
+              </div>
+            ) : (
+              <div className="ss-none">No documents on file yet.</div>
+            )}
           </div>
         ))}
+
+        <div className="ss-foot">
+          <span>
+            Showing {rows.length} of {inLocation.length} employee(s) · {shownDocs} document(s)
+          </span>
+          <span>Click a document to view or replace it</span>
+        </div>
       </Card>
       <input
         ref={picker}
@@ -91,7 +127,7 @@ export default function DocumentsPage() {
           const f = ev.target.files?.[0];
           const emp = pickFor.current;
           if (f && emp) {
-            const name = f.name.replace(/.[^.]+$/, '');
+            const name = f.name.replace(/\.[^.]+$/, '');
             upload(emp.id, name, f);
             setViewing({ emp, doc: { name, onFile: true } });
           }

@@ -1,10 +1,13 @@
 'use client';
 
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import Link from 'next/link';
 import { notFound, useParams } from 'next/navigation';
 import { ASSETS, EMPLOYEES, REFERENCE_TODAY, directReports, managerOf } from '@/lib/data';
 import { REQUIRED_DOCS } from '@/lib/profiles';
+import { accountFor } from '@/lib/auth';
+import { useApp } from '@/context/AppContext';
+import { canEditEmployees, useEmployeeVersion } from '@/lib/employeeStore';
 import { useOrg } from '@/context/OrgContext';
 import { useSeparation } from '@/context/SeparationContext';
 import { useVisa } from '@/context/VisaContext';
@@ -13,7 +16,8 @@ import { DocumentViewer, ViewableDoc, documentNumber } from '@/components/profil
 import { StatusBadge, ExpiryBadge, Badge } from '@/components/ui/Badge';
 import { Card } from '@/components/ui/Card';
 import { EmpId } from '@/components/ui/EmployeeBits';
-import { ArrowLeftIcon, ShieldIcon } from '@/components/icons';
+import { toneFor } from '@/components/ui/Avatar';
+import { ArrowLeftIcon, BookIcon, BuildingIcon, EditIcon, PackageIcon, ShieldIcon, XIcon } from '@/components/icons';
 
 function Field({ k, v }: { k: string; v: React.ReactNode }) {
   return (
@@ -45,10 +49,27 @@ export default function EmployeeProfilePage() {
   const { locationDef, locationName } = useOrg();
   const { statusOf, isAssetReturned } = useSeparation();
   const { stateOf, visaExpiryOf, eidExpiryOf } = useVisa();
+  useEmployeeVersion();
+  const { role } = useApp();
   const e = EMPLOYEES.find((emp) => emp.employeeCode === params.code);
   const [tab, setTab] = useState('Overview');
+  const [saved, setSaved] = useState<string[] | null>(null);
   const [viewing, setViewing] = useState<ViewableDoc | null>(null);
   const { fileFor, upload } = useDocuments();
+
+  // The edit page leaves a one-time note so this page can confirm what was saved.
+  useEffect(() => {
+    try {
+      const raw = sessionStorage.getItem('gsit.flash');
+      if (!raw) return;
+      const f = JSON.parse(raw) as { code: string; labels: string[] };
+      sessionStorage.removeItem('gsit.flash');
+      // eslint-disable-next-line react-hooks/set-state-in-effect
+      if (f.code === params.code) setSaved(f.labels);
+    } catch {
+      /* ignore */
+    }
+  }, [params.code]);
 
   if (!e) return notFound();
 
@@ -61,6 +82,7 @@ export default function EmployeeProfilePage() {
   const idTab = isIndia ? 'Passport / Aadhaar / PAN' : 'Passport / Visa / EID';
   const TABS = ['Overview', 'Personal', 'Employment', idTab, 'Emergency', 'Experience & Education', 'Family', 'Bank & PF', 'Salary', 'Documents', 'Assets'];
   const eid = e.documents.find((d) => d.type === 'Emirates ID');
+  const avTone = toneFor(e.department);
 
   return (
     <div>
@@ -68,12 +90,25 @@ export default function EmployeeProfilePage() {
         <ArrowLeftIcon /> Back to Directory
       </Link>
 
-      <Card>
+      {saved && (
+        <div className="note-box" style={{ marginBottom: 12, alignItems: 'center', background: '#effaf3', borderColor: '#bfe8cf' }}>
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.8} style={{ color: '#15803d' }}>
+            <path d="m9 11 3 3L22 4" />
+            <path d="M21 12v7a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11" />
+          </svg>
+          <div style={{ flex: 1 }}>Profile updated — {saved.join(', ')}. Recorded in Audit Logs.</div>
+          <button className="icon-act" onClick={() => setSaved(null)} title="Dismiss">
+            <XIcon />
+          </button>
+        </div>
+      )}
+
+      <Card className="lc-pf">
         <div className="profile-hd">
-          <div className="av" style={{ background: 'var(--primary-100)', color: 'var(--primary)' }}>
+          <div className="av" style={{ background: avTone.bg, color: avTone.fg }}>
             {e.avatarInitials}
           </div>
-          <div style={{ flex: 1 }}>
+          <div style={{ flex: 1, minWidth: 220 }}>
             <h2>{e.name}</h2>
             <div className="meta">
               <span>{e.employeeCode}</span>
@@ -89,6 +124,32 @@ export default function EmployeeProfilePage() {
               <span className="roleflag">{locationName(e.location)}</span>
             </div>
           </div>
+          {canEditEmployees(role) && (
+            <Link href={`/directory/${e.employeeCode}/edit`} className="btn primary">
+              <EditIcon /> Edit profile
+            </Link>
+          )}
+        </div>
+
+        <div className="lc-pf-facts">
+          <div>
+            <div className="k">Reports to</div>
+            <div className="v">{mgr ? mgr.name : '—'}</div>
+          </div>
+          <div>
+            <div className="k">Joined</div>
+            <div className="v">{e.dateOfJoining}</div>
+          </div>
+          <div>
+            <div className="k">Work email</div>
+            <div className="v" title={e.email}>
+              {e.email}
+            </div>
+          </div>
+          <div>
+            <div className="k">Work phone</div>
+            <div className="v">{e.phone || '—'}</div>
+          </div>
         </div>
 
         <div className="tabs">
@@ -99,7 +160,7 @@ export default function EmployeeProfilePage() {
           ))}
         </div>
 
-        <div style={{ padding: 22 }}>
+        <div className="lc-pf-body">
           {tab === 'Overview' && (
             <div className="g2">
               <div>
@@ -129,6 +190,7 @@ export default function EmployeeProfilePage() {
                 <Field k="Work location" v={`${locationName(e.location)} · ${e.seatingLocation}`} />
                 <Field k="Employment type" v={e.employmentType} />
                 <Field k="Employment status" v={statusOf(e)} />
+                <Field k="System role" v={accountFor(e.email)?.role ?? 'Employee'} />
                 <Field k="Work email" v={e.email} />
                 <Field k="Work phone" v={e.phone} />
                 <Field k="Visa status" v={isIndia ? 'Not applicable' : <ExpiryBadge state={stateOf(e)} />} />
@@ -210,6 +272,8 @@ export default function EmployeeProfilePage() {
                 />
                 <Field k="Employment type" v={e.employmentType} />
                 <Field k="Employment status" v={statusOf(e)} />
+                <Field k="System role" v={accountFor(e.email)?.role ?? 'Employee'} />
+                <Field k="Work email (sign-in)" v={e.email} />
               </div>
               <div>
                 <Sub first>Placement</Sub>
@@ -300,7 +364,7 @@ export default function EmployeeProfilePage() {
               {p.experience.map((x, i) => (
                 <div key={`${x.company}-${i}`} className="doc">
                   <div className="fic">
-                    <ShieldIcon />
+                    <BuildingIcon />
                   </div>
                   <div>
                     <div className="nm">
@@ -316,7 +380,7 @@ export default function EmployeeProfilePage() {
               {p.education.map((x, i) => (
                 <div key={`${x.course}-${i}`} className="doc">
                   <div className="fic">
-                    <ShieldIcon />
+                    <BookIcon />
                   </div>
                   <div>
                     <div className="nm">
@@ -334,24 +398,26 @@ export default function EmployeeProfilePage() {
           {tab === 'Family' && (
             <div>
               <Sub first>Family members</Sub>
-              <table>
-                <thead>
-                  <tr>
-                    <th>Name</th>
-                    <th>Relationship</th>
-                    <th>Occupation</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {p.family.map((f) => (
-                    <tr key={`${f.name}-${f.relationship}`}>
-                      <td style={{ fontWeight: 600 }}>{f.name}</td>
-                      <td>{f.relationship}</td>
-                      <td>{f.occupation}</td>
+              <div className="lc-scroll" style={{ border: '1px solid var(--border-soft)', borderRadius: 12, marginTop: 8 }}>
+                <table>
+                  <thead>
+                    <tr>
+                      <th>Name</th>
+                      <th>Relationship</th>
+                      <th>Occupation</th>
                     </tr>
-                  ))}
-                </tbody>
-              </table>
+                  </thead>
+                  <tbody>
+                    {p.family.map((f) => (
+                      <tr key={`${f.name}-${f.relationship}`}>
+                        <td style={{ fontWeight: 600 }}>{f.name}</td>
+                        <td>{f.relationship}</td>
+                        <td>{f.occupation}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
             </div>
           )}
 
@@ -493,7 +559,7 @@ export default function EmployeeProfilePage() {
               {assets.map((a) => (
                 <div key={a.id} className="doc">
                   <div className="fic">
-                    <ShieldIcon />
+                    <PackageIcon />
                   </div>
                   <div>
                     <div className="nm">
@@ -512,6 +578,7 @@ export default function EmployeeProfilePage() {
           )}
         </div>
       </Card>
+
     </div>
   );
 }

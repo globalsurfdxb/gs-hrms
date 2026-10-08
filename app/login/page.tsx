@@ -5,6 +5,7 @@ import { useRouter } from 'next/navigation';
 import { EMPLOYEES, PERSONAS } from '@/lib/data';
 import { Role } from '@/lib/types';
 import { accountFor, safeNext, signIn, useAuth } from '@/lib/auth';
+import { ENTITY_NAME } from '@/lib/org';
 
 const DEMO_ROLES: Role[] = ['Super Admin', 'HR', 'Office Admin', 'Team Lead', 'Employee'];
 
@@ -317,7 +318,7 @@ export default function LoginPage() {
             </div>
           </aside>
         </div>
-        <footer className="sg-foot">© {new Date().getFullYear()}, Global Surf IT LLC. All Rights Reserved.</footer>
+        <footer className="sg-foot">© {new Date().getFullYear()}, {ENTITY_NAME}. All Rights Reserved.</footer>
       </div>
     </div>
   );

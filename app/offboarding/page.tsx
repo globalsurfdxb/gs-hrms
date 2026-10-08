@@ -13,7 +13,9 @@ import { Badge, StatusBadge } from '@/components/ui/Badge';
 import { Drawer } from '@/components/ui/Drawer';
 import { SearchSelect } from '@/components/ui/SearchSelect';
 import { EmpId } from '@/components/ui/EmployeeBits';
-import { CheckIcon, DownloadIcon, ExitIcon, InboxIcon, PeopleIcon, PlusIcon, SearchIcon, ShieldIcon } from '@/components/icons';
+import { Avatar } from '@/components/ui/Avatar';
+import { StatStrip } from '@/components/ui/StatStrip';
+import { CheckIcon, DownloadIcon, ExitIcon, InboxIcon, PeopleIcon, PlusIcon, SearchIcon, ShieldIcon, XIcon } from '@/components/icons';
 
 const REASONS = ['Resignation', 'Termination', 'End of contract', 'Retirement', 'Other'];
 const NOTICE = [
@@ -132,7 +134,7 @@ export default function OffboardingPage() {
   return (
     <div>
       <PageHeader
-        eyebrow="Module 03 · Separation"
+        eyebrow="Employee Lifecycle"
         title="Offboarding"
         description="Structured exit workflow and register — resignation, notice period, clearance checklist and final approval. Completing a case marks the employee inactive while preserving their record."
         actions={
@@ -142,44 +144,14 @@ export default function OffboardingPage() {
         }
       />
 
-      <div className="rp-stats">
-        <div className="rp-stat">
-          <span className="rp-stat-ic" style={{ background: '#fdf3df', color: '#c6851b' }}>
-            <InboxIcon />
-          </span>
-          <div>
-            <div className="rp-stat-n">{count('Clearance Pending') + count('Pending Approval')}</div>
-            <div className="rp-stat-l">In progress</div>
-          </div>
-        </div>
-        <div className="rp-stat">
-          <span className="rp-stat-ic" style={{ background: '#e7f0fc', color: '#2f6fd6' }}>
-            <ShieldIcon />
-          </span>
-          <div>
-            <div className="rp-stat-n">{count('Pending Approval')}</div>
-            <div className="rp-stat-l">Awaiting approval · {count('Clearance Pending')} in clearance</div>
-          </div>
-        </div>
-        <div className="rp-stat">
-          <span className="rp-stat-ic" style={{ background: '#e7f6ee', color: '#1f9d63' }}>
-            <CheckIcon />
-          </span>
-          <div>
-            <div className="rp-stat-n">{count('Completed')}</div>
-            <div className="rp-stat-l">Completed</div>
-          </div>
-        </div>
-        <div className="rp-stat">
-          <span className="rp-stat-ic" style={{ background: '#f0eafc', color: '#7a4bd0' }}>
-            <PeopleIcon />
-          </span>
-          <div>
-            <div className="rp-stat-n">{inactive.length}</div>
-            <div className="rp-stat-l">Inactive employees</div>
-          </div>
-        </div>
-      </div>
+      <StatStrip
+        items={[
+          { label: 'In progress', value: count('Clearance Pending') + count('Pending Approval'), icon: <InboxIcon />, tone: 'amber', hint: 'Open separation cases' },
+          { label: 'Awaiting approval', value: count('Pending Approval'), icon: <ShieldIcon />, tone: 'blue', hint: `${count('Clearance Pending')} still in clearance` },
+          { label: 'Completed', value: count('Completed'), icon: <CheckIcon />, tone: 'green', hint: 'Exits finalised' },
+          { label: 'Inactive employees', value: inactive.length, icon: <PeopleIcon />, tone: 'purple', hint: 'Records preserved' },
+        ]}
+      />
 
       <Card className="row-gap">
         <CardHeader
@@ -216,8 +188,21 @@ export default function OffboardingPage() {
               </option>
             ))}
           </select>
+          {(!!q.trim() || loc !== 'All' || statusFilter !== 'All') && (
+            <button
+              type="button"
+              className="chip"
+              onClick={() => {
+                setQ('');
+                setLoc('All');
+                setStatusFilter('All');
+              }}
+            >
+              <XIcon /> Clear filters
+            </button>
+          )}
           <span className="sp" />
-          <span style={{ fontSize: 12, color: 'var(--muted)' }}>
+          <span className="lc-count">
             {visibleCases.length} of {scopedCases.length}
           </span>
           {view === 'register' && visibleCases.length > 0 && (
@@ -245,7 +230,8 @@ export default function OffboardingPage() {
         )}
 
         {view === 'register' && visibleCases.length > 0 && (
-          <div style={{ overflowX: 'auto' }}>
+          <>
+          <div className="lc-scroll">
             <table>
               <thead>
                 <tr>
@@ -276,13 +262,16 @@ export default function OffboardingPage() {
                     >
                       <td>
                         <Link href={`/directory/${e.employeeCode}`} className="person" onClick={(ev) => ev.stopPropagation()}>
-                          <div className="av" style={{ background: 'var(--gray-50)', color: 'var(--text-2)' }}>
-                            {e.avatarInitials}
+                          <Avatar initials={e.avatarInitials} seed={e.department} />
+                          <div>
+                            <div className="nm">
+                              {e.name}
+                              <EmpId code={e.employeeCode} />
+                            </div>
+                            <div className="sb">
+                              {e.designation} · {e.department}
+                            </div>
                           </div>
-                          <span className="nm">
-                            {e.name}
-                            <EmpId code={e.employeeCode} />
-                          </span>
                         </Link>
                       </td>
                       <td>{locationName(e.location)}</td>
@@ -296,11 +285,11 @@ export default function OffboardingPage() {
                         )}
                       </td>
                       <td>
-                        <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-                          <div style={{ width: 54, height: 6, background: 'var(--bg)', borderRadius: 6, overflow: 'hidden' }}>
-                            <div style={{ height: '100%', width: `${(done / r.clearance.length) * 100}%`, background: done === r.clearance.length ? 'var(--success)' : 'var(--primary)' }} />
+                        <div className="lc-meter">
+                          <div className={`lc-prog ${done === r.clearance.length ? 'ok' : ''}`}>
+                            <i style={{ width: `${(done / r.clearance.length) * 100}%` }} />
                           </div>
-                          <span style={{ fontSize: 12, color: 'var(--muted)' }}>
+                          <span>
                             {done}/{r.clearance.length}
                           </span>
                         </div>
@@ -314,6 +303,13 @@ export default function OffboardingPage() {
               </tbody>
             </table>
           </div>
+          <div className="tfoot lc-foot">
+            <span>
+              Showing {visibleCases.length} of {scopedCases.length} case{scopedCases.length === 1 ? '' : 's'}
+            </span>
+            <span>Click a row to open it in the workflow view</span>
+          </div>
+          </>
         )}
 
         {view === 'cases' && visibleCases.map((r) => {
@@ -326,24 +322,22 @@ export default function OffboardingPage() {
           const completed = r.status === 'Completed';
           const left = daysBetween(REFERENCE_TODAY, r.lastWorkingDay);
           return (
-            <div key={r.id} style={{ padding: 20, borderTop: '1px solid var(--border-soft)' }}>
-              <div className="person" style={{ marginBottom: 14 }}>
-                <div className="av" style={{ width: 40, height: 40, borderRadius: 10, background: 'var(--gray-50)', color: 'var(--text-2)' }}>
-                  {e.avatarInitials}
-                </div>
-                <div style={{ flex: 1 }}>
-                  <div style={{ fontSize: 14, fontWeight: 600 }}>
+            <div key={r.id} className="lc-case">
+              <div className="lc-case-hd">
+                <Avatar initials={e.avatarInitials} seed={e.department} size={42} />
+                <div className="grow">
+                  <Link href={`/directory/${e.employeeCode}`} className="nm">
                     {e.name}
                     <EmpId code={e.employeeCode} />
-                  </div>
-                  <div className="sb" style={{ fontSize: 12 }}>
+                  </Link>
+                  <div className="lc-sub" style={{ fontSize: 12 }}>
                     {e.designation} · {e.department} · {locationName(e.location)}
                   </div>
                 </div>
                 <StatusBadge status={r.status} />
               </div>
 
-              <div style={{ display: 'flex', flexWrap: 'wrap', gap: '14px 32px', marginBottom: 14 }}>
+              <div className="lc-facts">
                 <Detail k="Reason" v={r.reason} />
                 <Detail k="Notice given" v={r.resignationDate} />
                 {r.noticeDays !== undefined && <Detail k="Notice period" v={r.noticeDays === 0 ? 'Immediate' : `${r.noticeDays} days`} />}
@@ -362,11 +356,11 @@ export default function OffboardingPage() {
                 />
               </div>
 
-              <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 10 }}>
-                <div style={{ flex: 1, maxWidth: 320, height: 6, background: 'var(--bg)', borderRadius: 6, overflow: 'hidden' }}>
-                  <div style={{ height: '100%', width: `${(done / r.clearance.length) * 100}%`, background: allDone ? 'var(--success)' : 'var(--primary)', borderRadius: 6 }} />
+              <div className="lc-meter" style={{ marginBottom: 10 }}>
+                <div className={`lc-prog ${allDone ? 'ok' : ''}`} style={{ flex: 1, maxWidth: 320 }}>
+                  <i style={{ width: `${(done / r.clearance.length) * 100}%` }} />
                 </div>
-                <span style={{ fontSize: 12, color: 'var(--muted)' }}>
+                <span>
                   {done} of {r.clearance.length} clearance items complete
                 </span>
               </div>
@@ -381,7 +375,7 @@ export default function OffboardingPage() {
               </div>
 
               <div style={{ marginTop: 16 }}>
-                <div style={{ fontSize: 12, fontWeight: 700, color: 'var(--text-2)', marginBottom: 8 }}>
+                <div className="lc-sechd">
                   Company assets{caseAssets.length ? ` · ${assetsBack} of ${caseAssets.length} returned` : ''}
                 </div>
                 {caseAssets.length === 0 ? (
@@ -407,7 +401,7 @@ export default function OffboardingPage() {
 
               {r.notes && <div style={{ marginTop: 10, fontSize: 12.5, color: 'var(--muted)' }}>Note: {r.notes}</div>}
 
-              <div style={{ marginTop: 14, display: 'flex', alignItems: 'center', gap: 8 }}>
+              <div className="lc-case-foot">
                 {completed ? (
                   <span style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: 12.5, color: '#15803D', fontWeight: 600 }}>
                     <CheckIcon style={{ width: 14, height: 14 }} /> Completed — employee marked inactive
@@ -431,18 +425,26 @@ export default function OffboardingPage() {
             </div>
           );
         })}
+
+        {view === 'cases' && visibleCases.length > 0 && (
+          <div className="tfoot lc-foot">
+            <span>
+              Showing {visibleCases.length} of {scopedCases.length} case{scopedCases.length === 1 ? '' : 's'}
+            </span>
+            <span>Approve a case once clearance and asset returns are complete</span>
+          </div>
+        )}
       </Card>
 
       <Card className="row-gap">
-        <CardHeader title="Inactive employees" sub="Historical record preserved" />
+        <CardHeader title="Inactive employees" sub={`${inactive.length} historical record${inactive.length === 1 ? '' : 's'} preserved`} />
         {!inactive.length && <EmptyState icon={<ExitIcon />} title="No inactive employees" description="Employees appear here once their separation is completed." />}
+        <div className={inactive.length ? 'lc-list' : undefined}>
         {inactive.map((e) => {
           const c = cases.find((x) => x.employeeId === e.id && x.status === 'Completed');
           return (
             <div key={e.id} className="doc">
-              <div className="fic" style={{ background: 'var(--gray-50)', color: 'var(--text-2)' }}>
-                {e.avatarInitials}
-              </div>
+              <Avatar initials={e.avatarInitials} seed={e.department} size={40} />
               <div>
                 <div className="nm">
                   {e.name}
@@ -458,6 +460,7 @@ export default function OffboardingPage() {
             </div>
           );
         })}
+        </div>
       </Card>
 
       <Drawer

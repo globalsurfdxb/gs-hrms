@@ -9,14 +9,16 @@ export interface AppModule {
   name: string;
   desc: string;
   href: string;
+  /** Not available yet: shown greyed out in the module switcher. */
+  soon?: boolean;
 }
 
 export const APP_MODULES: AppModule[] = [
   { slug: 'employee', name: 'Employee Management', desc: 'Directory, onboarding, performance, expiry and expenses', href: '/dashboard' },
-  { slug: 'asset-management', name: 'Asset Management', desc: 'Equipment register, assignment and warranty', href: '/modules/asset-management' },
   { slug: 'leave-attendance', name: 'Leave & Attendance Management', desc: 'Attendance today and leave requests', href: '/modules/leave-attendance' },
-  { slug: 'payroll', name: 'Payroll Management', desc: 'Monthly payroll runs and payslips', href: '/modules/payroll' },
-  { slug: 'renewals', name: 'Renewal Management', desc: 'Employee and business renewals', href: '/modules/renewals' },
+  { slug: 'asset-management', name: 'Asset Management', desc: 'Equipment register, assignment and warranty', href: '/modules/asset-management', soon: true },
+  { slug: 'payroll', name: 'Payroll Management', desc: 'Monthly payroll runs and payslips', href: '/modules/payroll', soon: true },
+  { slug: 'renewals', name: 'Renewal Management', desc: 'Employee and business renewals', href: '/modules/renewals', soon: true },
 ];
 
 export const RAIL_LABEL: Record<RailModule, string> = { home: 'Home', operations: 'Operations', reports: 'Reports', administration: 'Administration' };

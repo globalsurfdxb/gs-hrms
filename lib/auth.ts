@@ -1,6 +1,7 @@
 import { useSyncExternalStore } from 'react';
 import { EMPLOYEES, PERSONAS } from '@/lib/data';
 import { Employee, Role } from '@/lib/types';
+import { chosenRole } from '@/lib/employeeStore';
 
 /* Front-end session for the sign-in page. There is no sign-in backend yet, so a session is just the signed-in work
    email, kept in localStorage ("Keep me signed in") or sessionStorage. The employee and role are derived from it. */
@@ -76,7 +77,8 @@ export function accountFor(email: string | null): Account | null {
   const employee = EMPLOYEES.find((e) => e.email.toLowerCase() === email.trim().toLowerCase());
   if (!employee) return null;
   const persona = (Object.entries(PERSONAS) as [Role, { employeeId: string }][]).find(([, p]) => p.employeeId === employee.id);
-  return { employee, role: persona ? persona[0] : 'Employee' };
+  // People created through onboarding carry the role chosen in the wizard.
+  return { employee, role: persona ? persona[0] : (chosenRole(employee.id) ?? 'Employee') };
 }
 
 /** Only allow same-site relative redirects after sign-in. */

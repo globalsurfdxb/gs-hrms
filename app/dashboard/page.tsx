@@ -12,14 +12,11 @@ import {
   ONBOARDING_REQUESTS,
   PAYROLL_TREND,
   REFERENCE_TODAY,
-  ROLE_SCOPE,
   directReports,
   employeeById,
 } from '@/lib/data';
 import { EmployeeRequest } from '@/lib/types';
-import { PageHeader } from '@/components/ui/PageHeader';
 import { Card, CardHeader, Button } from '@/components/ui/Card';
-import { StatCard } from '@/components/ui/StatCard';
 import { Badge, StatusBadge } from '@/components/ui/Badge';
 import { RenewalCalendar } from '@/components/charts/RenewalCalendar';
 import { LineChart } from '@/components/charts/LineChart';
@@ -57,19 +54,6 @@ const liveLabel = (ms: number) =>
 
 const ASSET_COLORS: Record<string, string> = { Laptop: '#28469A', Monitor: '#3B82F6', Phone: '#22C55E', Vehicle: '#F59E0B' };
 
-function NoteBox({ children }: { children: React.ReactNode }) {
-  return (
-    <div className="note-box row-gap" style={{ marginBottom: 16 }}>
-      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.8}>
-        <path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2" />
-        <circle cx="9" cy="7" r="4" />
-        <path d="M22 21v-2a4 4 0 0 0-3-3.87" />
-      </svg>
-      <div>{children}</div>
-    </div>
-  );
-}
-
 function ApprovalRow({ r, onAct }: { r: EmployeeRequest; onAct: (id: string, status: EmployeeRequest['status']) => void }) {
   const e = employeeById(r.employeeId)!;
   return (
@@ -96,14 +80,10 @@ function ApprovalRow({ r, onAct }: { r: EmployeeRequest; onAct: (id: string, sta
   );
 }
 
-const initialsOf = (name: string) =>
-  name
-    .split(/\s+/)
-    .filter(Boolean)
-    .map((w) => w[0])
-    .slice(0, 2)
-    .join('')
-    .toUpperCase();
+const initialsOf = (name: string) => {
+  const w = name.split(/\s+/).filter(Boolean);
+  return (w.length === 1 ? w[0].slice(0, 2) : w.map((x) => x[0]).slice(0, 2).join('')).toUpperCase();
+};
 
 /** Days until the next occurrence of a month/day (used for birthdays and work anniversaries). */
 const daysToNext = (isoDate: string) => {
@@ -148,11 +128,431 @@ function AttentionRow({ href, icon, title, sub, count, tone }: { href: string; i
   );
 }
 
+
+const ATT_TONE = { Present: 'active', WFH: 'info', Leave: 'soon', Absent: 'expired' } as const;
+const ATT_LABEL = { Present: 'In office', WFH: 'Working from home', Leave: 'On leave', Absent: 'Absent' } as const;
+const fmtDay = (d: string) => new Date(d).toLocaleDateString('en-GB', { day: 'numeric', month: 'short' });
+const dueText = (n: number) => (n < 0 ? `Expired ${-n}d ago` : n === 0 ? 'Expires today' : `In ${n} days`);
+
+function QuickActions({ items }: { items: { href: string; label: string; icon: React.ReactNode; bg: string; fg: string }[] }) {
+  return (
+    <div className="qa-grid">
+      {items.map((a) => (
+        <Link key={a.href + a.label} href={a.href} className="qa">
+          <span className="qa-ic" style={{ background: a.bg, color: a.fg }}>
+            {a.icon}
+          </span>
+          {a.label}
+        </Link>
+      ))}
+    </div>
+  );
+}
+
+/* ---------- Employee: my day, my requests, my renewals ---------- */
+function EmployeeHome({ now }: { now: number }) {
+  const me = useCurrentEmployee();
+  const { locationDef, locationName } = useOrg();
+  const { visaExpiryOf } = useVisa();
+  const { requests } = useRequests();
+  const { reviews } = usePerformance();
+  const { records } = useLearning();
+  const { claims } = useExpense();
+  const { rowsFor, daysOf, stateOf: docState } = useExpiry();
+  const { isAssetReturned } = useSeparation();
+
+  const myRequests = requests.filter((r) => r.employeeId === me.id);
+  const pending = myRequests.filter((r) => r.status === 'Pending');
+  const today = ATTENDANCE_TODAY.find((a) => a.employeeId === me.id);
+  const upcomingLeave = LEAVE_REQUESTS.filter((r) => r.employeeId === me.id && r.status !== 'Rejected' && r.toDate >= REFERENCE_TODAY).sort((a, b) => (a.fromDate < b.fromDate ? -1 : 1));
+  const docs = rowsFor([me])
+    .map((r) => ({ r, days: daysOf(r) }))
+    .sort((a, b) => a.days - b.days);
+  const expiring = docs.filter((d) => d.days <= 90);
+  const visa = visaExpiryOf(me);
+  const visaDays = visa ? daysUntil(visa) : null;
+  const assets = ASSETS.filter((a) => a.assignedTo === me.employeeCode && a.status !== 'Returned' && !isAssetReturned(a.id));
+  const review = reviews.find((r) => r.employeeId === me.id && r.status !== 'Completed');
+  const courses = records.filter((r) => r.employeeId === me.id && r.status !== 'Completed');
+  const openClaims = claims.filter((c) => c.employeeId === me.id && c.status === 'Pending');
+  const hours = locationDef(me.location)?.workingHours ?? '—';
+
+  return (
+    <div>
+      <div className="dh">
+        <div className="dh-main">
+          <div className="dh-eyebrow" suppressHydrationWarning>{liveLabel(now)}</div>
+          <h1 className="dh-title">
+            {greetingAt(now)}, {me.name.split(' ')[0]}
+          </h1>
+          <p className="dh-sub">
+            {today ? (
+              <span className="dh-pill">
+                {ATT_LABEL[today.status]}
+                {today.checkIn ? ` · in ${today.checkIn}` : ''}
+              </span>
+            ) : (
+              <span className="dh-pill">No attendance record today</span>
+            )}
+            {pending.length > 0 && (
+              <Link href="/my/requests" className="dh-pill">
+                <b>{pending.length}</b> request{pending.length === 1 ? '' : 's'} pending
+              </Link>
+            )}
+            {expiring.length > 0 && (
+              <Link href="/my/expiry" className="dh-pill warn">
+                <b>{expiring.length}</b> document{expiring.length === 1 ? '' : 's'} expiring soon
+              </Link>
+            )}
+            <span className="dh-pill">
+              {locationName(me.location)} · {hours}
+            </span>
+          </p>
+        </div>
+        <div className="dh-side">
+          <div className="dh-acts">
+            <Link href="/modules/leave-attendance/leave/my/requests" className="dh-btn">
+              <ClockIcon /> Apply for leave
+            </Link>
+            <Link href="/requests" className="dh-btn solid">
+              <PlusIcon /> New request
+            </Link>
+          </div>
+        </div>
+      </div>
+
+      <div className="dk-grid">
+        <Kpi href="/my/requests" icon={<FolderIcon />} bg="#e7f0fc" fg="#2f6fd6" value={myRequests.length} label="My requests" foot={`${pending.length} waiting for HR`} />
+        <Kpi
+          href="/my/expiry"
+          icon={<IdIcon />}
+          bg={visaDays !== null && visaDays <= 90 ? '#fce9e7' : '#e7f6ee'}
+          fg={visaDays !== null && visaDays <= 90 ? '#d5493f' : '#1f9d63'}
+          value={visa ? (visaDays! < 0 ? 'Expired' : visaDays! <= 90 ? 'Renew soon' : 'Valid') : '—'}
+          label="Residence visa"
+          foot={visa ? `${visa} · ${dueText(visaDays!)}` : 'Not applicable'}
+        />
+        <Kpi href="/my/files" icon={<InboxIcon />} bg="#f0eafc" fg="#7a4bd0" value={me.documents.length} label="Documents on file" foot={expiring.length ? `${expiring.length} expiring within 90 days` : 'None expiring soon'} />
+        <Kpi href="/my/assets" icon={<PackageIcon />} bg="#fdf3df" fg="#c6851b" value={assets.length} label="Assets with me" foot={assets.length ? assets.map((a) => a.type).join(', ') : 'Nothing assigned'} />
+      </div>
+
+      <div className="dg2 row-gap">
+        <Card>
+          <CardHeader title="My requests" sub="Self-service items and where they are" action={<Link href="/my/requests" className="lnk">Open →</Link>} />
+          {myRequests.length ? (
+            <div className="da-list">
+              {myRequests.map((r) => (
+                <div key={r.id} className="da-row">
+                  <span className="da-ic t-info">
+                    <InboxIcon />
+                  </span>
+                  <div style={{ minWidth: 0, flex: 1 }}>
+                    <div className="da-t">{r.type}</div>
+                    <div className="da-s">
+                      {r.details} · raised {fmtDay(r.raisedOn)} · with {r.routedTo}
+                    </div>
+                  </div>
+                  <StatusBadge status={r.status} />
+                </div>
+              ))}
+            </div>
+          ) : (
+            <div className="empty">
+              <p>You have no requests. Raise one for an address change, a document or a bank update.</p>
+            </div>
+          )}
+        </Card>
+
+        <Card>
+          <CardHeader title="My renewals" sub="Your documents, soonest first" action={<Link href="/my/expiry" className="lnk">Open →</Link>} />
+          {docs.length ? (
+            <div className="da-list">
+              {docs.slice(0, 5).map(({ r, days }) => (
+                <div key={r.key} className="da-row">
+                  <span className={`da-ic t-${docState(r) === 'expired' ? 'expired' : docState(r) === 'soon' ? 'soon' : 'active'}`}>
+                    <ClockIcon />
+                  </span>
+                  <div style={{ minWidth: 0, flex: 1 }}>
+                    <div className="da-t">{r.type}</div>
+                    <div className="da-s">
+                      {r.expiry} · {dueText(days)}
+                    </div>
+                  </div>
+                  <Badge tone={docState(r) === 'expired' ? 'expired' : docState(r) === 'soon' ? 'soon' : 'active'}>{docState(r) === 'ok' ? 'Valid' : docState(r) === 'soon' ? 'Soon' : 'Expired'}</Badge>
+                </div>
+              ))}
+            </div>
+          ) : (
+            <div className="empty">
+              <p>No dated documents on file.</p>
+            </div>
+          )}
+        </Card>
+      </div>
+
+      <div className="dg3 row-gap">
+        <Card>
+          <CardHeader title="Today at work" sub={fmtDay(REFERENCE_TODAY)} action={<Link href="/modules/leave-attendance" className="lnk">Open →</Link>} />
+          <div className="at-body">
+            {today ? (
+              <>
+                <div className="me-status">
+                  <Badge tone={ATT_TONE[today.status]}>{ATT_LABEL[today.status]}</Badge>
+                  {today.checkIn && (
+                    <span>
+                      <b>{today.checkIn}</b> in{today.checkOut ? <> · <b>{today.checkOut}</b> out</> : null}
+                    </span>
+                  )}
+                </div>
+                <div className="at-d">Working hours {hours}</div>
+              </>
+            ) : (
+              <div className="at-d">No attendance recorded for today.</div>
+            )}
+            <div className="at-sub">Upcoming leave</div>
+            {upcomingLeave.length ? (
+              upcomingLeave.slice(0, 3).map((r) => (
+                <div key={r.id} className="at-leave">
+                  <span className="at-av">{r.days}d</span>
+                  <div style={{ minWidth: 0, flex: 1 }}>
+                    <div className="at-n">{r.type} leave</div>
+                    <div className="at-d">
+                      {fmtDay(r.fromDate)}
+                      {r.toDate !== r.fromDate ? ` → ${fmtDay(r.toDate)}` : ''} · {r.status}
+                    </div>
+                  </div>
+                </div>
+              ))
+            ) : (
+              <div className="at-d" style={{ padding: '6px 0' }}>No leave booked.</div>
+            )}
+          </div>
+        </Card>
+
+        <Card>
+          <CardHeader title="Growth" sub="Reviews, training and claims" />
+          <div className="da-list">
+            <AttentionRow href="/performance" icon={<StarIcon />} title="Performance review" sub={review ? `${review.cycle} · ${review.status} · due ${fmtDay(review.dueDate)}` : 'Nothing open'} count={review ? 1 : 0} tone="info" />
+            <AttentionRow href="/learning" icon={<BookIcon />} title="Training assigned" sub={courses.length ? courses.map((c) => c.course).slice(0, 2).join(', ') : 'You are all caught up'} count={courses.length} tone="pending" />
+            <AttentionRow href="/expense/claims" icon={<ReceiptIcon />} title="Expense claims" sub="Waiting for approval" count={openClaims.length} tone="soon" />
+          </div>
+        </Card>
+
+        <Card>
+          <CardHeader title="Quick actions" sub="Jump straight into a task" />
+          <QuickActions
+            items={[
+              { href: '/modules/leave-attendance/leave/my/requests', label: 'Apply for leave', icon: <ClockIcon />, bg: '#e7f0fc', fg: '#2f6fd6' },
+              { href: '/modules/leave-attendance/attendance/my/regularization', label: 'Regularize attendance', icon: <RefreshIcon />, bg: '#e7f6ee', fg: '#1f9d63' },
+              { href: '/requests', label: 'Raise a request', icon: <InboxIcon />, bg: '#f0eafc', fg: '#7a4bd0' },
+              { href: '/expense/new', label: 'New expense claim', icon: <ReceiptIcon />, bg: '#fce9e7', fg: '#d5493f' },
+              { href: '/my/payslips', label: 'My payslips', icon: <DownloadIcon />, bg: '#fdf3df', fg: '#c6851b' },
+              { href: `/directory/${me.employeeCode}`, label: 'My profile', icon: <PeopleIcon />, bg: '#e3f4f8', fg: '#0e8fa8' },
+            ]}
+          />
+        </Card>
+      </div>
+    </div>
+  );
+}
+
+/* ---------- Team Lead: my team today, what needs my decision ---------- */
+function TeamLeadHome({ now }: { now: number }) {
+  const me = useCurrentEmployee();
+  const { locationName } = useOrg();
+  const { requests, act } = useRequests();
+  const { reviews } = usePerformance();
+  const { records } = useLearning();
+  const { rowsFor, daysOf, stateOf: docState } = useExpiry();
+
+  const team = directReports(me.id).filter((t) => t.employmentStatus !== 'Inactive');
+  const ids = new Set(team.map((t) => t.id));
+  const awaiting = requests.filter((r) => r.status === 'Pending' && r.routedTo === 'Manager' && ids.has(r.employeeId));
+  const leavePending = LEAVE_REQUESTS.filter((r) => r.status === 'Pending' && ids.has(r.employeeId));
+  const todayRows = team.map((t) => ({ t, a: ATTENDANCE_TODAY.find((x) => x.employeeId === t.id) }));
+  const count = (k: string) => todayRows.filter((x) => x.a?.status === k).length;
+  const out = count('Leave') + count('Absent');
+  const renewals = rowsFor(team)
+    .map((r) => ({ r, days: daysOf(r) }))
+    .filter((d) => d.days <= 90)
+    .sort((a, b) => a.days - b.days);
+  const reviewsOpen = reviews.filter((r) => ids.has(r.employeeId) && (r.status === 'Self Assessment' || r.status === 'Manager Review'));
+  const reviewsOverdue = reviews.filter((r) => ids.has(r.employeeId) && r.status !== 'Completed' && r.dueDate < REFERENCE_TODAY).length;
+  const coursesOverdue = records.filter((r) => ids.has(r.employeeId) && r.status !== 'Completed' && !!r.dueDate && r.dueDate < REFERENCE_TODAY).length;
+  const needs = awaiting.length + leavePending.length;
+  const total = team.length || 1;
+
+  return (
+    <div>
+      <div className="dh">
+        <div className="dh-main">
+          <div className="dh-eyebrow" suppressHydrationWarning>{liveLabel(now)}</div>
+          <h1 className="dh-title">
+            {greetingAt(now)}, {me.name.split(' ')[0]}
+          </h1>
+          <p className="dh-sub">
+            {needs ? (
+              <Link href="/team/leave" className="dh-pill">
+                <b>{needs}</b> item{needs === 1 ? '' : 's'} need your decision
+              </Link>
+            ) : (
+              <span className="dh-pill">Nothing is waiting for your decision</span>
+            )}
+            {renewals.some((d) => d.days < 0) && (
+              <Link href="/team/expiry" className="dh-pill warn">
+                <b>{renewals.filter((d) => d.days < 0).length}</b> team renewal{renewals.filter((d) => d.days < 0).length === 1 ? '' : 's'} overdue
+              </Link>
+            )}
+            <span className="dh-pill">
+              <b>{team.length}</b> direct report{team.length === 1 ? '' : 's'} · {me.department}
+            </span>
+            <span className="dh-pill">{locationName(me.location)}</span>
+          </p>
+        </div>
+        <div className="dh-side">
+          <div className="dh-acts">
+            <Link href="/team/directory" className="dh-btn">
+              <PeopleIcon /> Team directory
+            </Link>
+            <Link href="/modules/leave-attendance/home/team/approvals" className="dh-btn solid">
+              <InboxIcon /> Review approvals
+            </Link>
+          </div>
+        </div>
+      </div>
+
+      <div className="dk-grid">
+        <Kpi href="/team/directory" icon={<PeopleIcon />} bg="#e7f0fc" fg="#2f6fd6" value={team.length} label="My team" foot={`in ${me.department}`} />
+        <Kpi href="/modules/leave-attendance/home/team/approvals" icon={<InboxIcon />} bg="#fdf3df" fg="#c6851b" value={needs} label="Waiting for my decision" foot={`${awaiting.length} request${awaiting.length === 1 ? '' : 's'} · ${leavePending.length} leave`} />
+        <Kpi href="/modules/leave-attendance/attendance/team/summary" icon={<ClockIcon />} bg="#e7f6ee" fg="#1f9d63" value={`${team.length - out}/${team.length}`} label="Working today" foot={`${count('Leave')} on leave · ${count('Absent')} absent`} />
+        <Kpi href="/team/expiry" icon={<RefreshIcon />} bg="#fce9e7" fg="#d5493f" value={renewals.length} label="Team renewals" foot={renewals.length ? `Next: ${renewals[0].r.type} · ${renewals[0].r.employee.name.split(' ')[0]}` : 'Nothing due in 90 days'} />
+      </div>
+
+      <div className="dg2 row-gap">
+        <Card>
+          <CardHeader title="Waiting for my decision" sub="Requests routed to me and leave to approve" />
+          <div>
+            {awaiting.map((r) => (
+              <ApprovalRow key={r.id} r={r} onAct={act} />
+            ))}
+            {leavePending.map((r) => {
+              const e = employeeById(r.employeeId);
+              return (
+                <div key={r.id} className="doc">
+                  <div className="fic">
+                    <ClockIcon />
+                  </div>
+                  <div>
+                    <div className="nm">
+                      {e?.name} {e && <EmpId code={e.employeeCode} />} · {r.type} leave
+                    </div>
+                    <div className="mt">
+                      {fmtDay(r.fromDate)}
+                      {r.toDate !== r.fromDate ? ` → ${fmtDay(r.toDate)}` : ''} · {r.days} day{r.days === 1 ? '' : 's'} · {r.reason}
+                    </div>
+                  </div>
+                  <div className="rt">
+                    <Link href="/modules/leave-attendance/home/team/approvals" className="btn sm">
+                      Review
+                    </Link>
+                  </div>
+                </div>
+              );
+            })}
+            {!needs && (
+              <div className="empty">
+                <p>Nothing is waiting for your decision.</p>
+              </div>
+            )}
+          </div>
+        </Card>
+
+        <Card>
+          <CardHeader title="My team today" sub={`${team.length} people · ${fmtDay(REFERENCE_TODAY)}`} action={<Link href="/team/attendance" className="lnk">Open →</Link>} />
+          <div className="at-body">
+            <div className="at-bar" aria-label="Team attendance today">
+              {(['Present', 'WFH', 'Leave', 'Absent'] as const).map((k) => (
+                <i key={k} style={{ width: `${(count(k) / total) * 100}%`, background: { Present: '#1f9d63', WFH: '#2f6fd6', Leave: '#c6851b', Absent: '#d5493f' }[k] }} title={`${ATT_LABEL[k]}: ${count(k)}`} />
+              ))}
+            </div>
+            {todayRows.map(({ t, a }) => (
+              <div key={t.id} className="at-leave">
+                <span className="at-av">{initialsOf(t.name)}</span>
+                <div style={{ minWidth: 0, flex: 1 }}>
+                  <div className="at-n">{t.name}</div>
+                  <div className="at-d">
+                    {t.designation}
+                    {a?.checkIn ? ` · in ${a.checkIn}` : ''}
+                  </div>
+                </div>
+                {a ? <Badge tone={ATT_TONE[a.status]}>{ATT_LABEL[a.status]}</Badge> : <Badge tone="inactive">No record</Badge>}
+              </div>
+            ))}
+            {!team.length && <div className="at-d">No one reports to you yet.</div>}
+          </div>
+        </Card>
+      </div>
+
+      <div className="dg3 row-gap">
+        <Card>
+          <CardHeader title="Team renewals" sub="Documents expiring within 90 days" action={<Link href="/team/expiry" className="lnk">Open →</Link>} />
+          {renewals.length ? (
+            <div className="da-list">
+              {renewals.slice(0, 5).map(({ r, days }) => (
+                <div key={r.key} className="da-row">
+                  <span className={`da-ic t-${docState(r) === 'expired' ? 'expired' : 'soon'}`}>
+                    <ClockIcon />
+                  </span>
+                  <div style={{ minWidth: 0, flex: 1 }}>
+                    <div className="da-t">
+                      {r.type} · {r.employee.name}
+                    </div>
+                    <div className="da-s">
+                      {r.expiry} · {dueText(days)}
+                    </div>
+                  </div>
+                  <Badge tone={docState(r) === 'expired' ? 'expired' : 'soon'}>{docState(r) === 'expired' ? 'Expired' : 'Soon'}</Badge>
+                </div>
+              ))}
+            </div>
+          ) : (
+            <div className="empty">
+              <p>No team documents expire in the next 90 days.</p>
+            </div>
+          )}
+        </Card>
+
+        <Card>
+          <CardHeader title="Team growth" sub="Reviews and training" />
+          <div className="da-list">
+            <AttentionRow href="/performance" icon={<StarIcon />} title="Reviews in progress" sub={`${reviewsOverdue} overdue`} count={reviewsOpen.length} tone="info" />
+            <AttentionRow href="/learning" icon={<BookIcon />} title="Training overdue" sub="Assigned courses past their due date" count={coursesOverdue} tone="expired" />
+            <AttentionRow href="/team/separation" icon={<ExitIcon />} title="Offboarding" sub="Team members leaving" count={team.filter((t) => t.employmentStatus === 'Offboarding').length} tone="soon" />
+          </div>
+        </Card>
+
+        <Card>
+          <CardHeader title="Quick actions" sub="Jump straight into a task" />
+          <QuickActions
+            items={[
+              { href: '/modules/leave-attendance/home/team/approvals', label: 'Approve leave', icon: <ClockIcon />, bg: '#e7f0fc', fg: '#2f6fd6' },
+              { href: '/team/attendance', label: 'Team attendance', icon: <PeopleIcon />, bg: '#e7f6ee', fg: '#1f9d63' },
+              { href: '/team/leave', label: 'Team leave', icon: <RefreshIcon />, bg: '#f0eafc', fg: '#7a4bd0' },
+              { href: '/performance', label: 'Review a teammate', icon: <StarIcon />, bg: '#fdf3df', fg: '#c6851b' },
+              { href: '/team/visa', label: 'Visa renewals', icon: <IdIcon />, bg: '#fce9e7', fg: '#d5493f' },
+              { href: '/requests', label: 'Raise a request', icon: <InboxIcon />, bg: '#e3f4f8', fg: '#0e8fa8' },
+            ]}
+          />
+        </Card>
+      </div>
+    </div>
+  );
+}
+
 export default function DashboardPage() {
   const { role } = useApp();
   const me = useCurrentEmployee();
   const { locations, locationName } = useOrg();
-  const { stateOf, visaExpiryOf } = useVisa();
   const { requests, act } = useRequests();
   const { cases, statusOf, isAssetReturned } = useSeparation();
   const { reviews } = usePerformance();
@@ -162,92 +562,8 @@ export default function DashboardPage() {
   const [loc, setLoc] = useState('All');
   const now = useNow();
 
-  if (role === 'Employee') {
-    const myRequests = requests.filter((r) => r.employeeId === me.id);
-    const pending = myRequests.filter((r) => r.status === 'Pending');
-    const docsOnFile = me.documents.length;
-    return (
-      <div>
-        <PageHeader eyebrow="My Space · Overview" title={`${greetingAt(now)}, ${me.name.split(' ')[0]}`} description="Your personal snapshot — requests, documents and expiry status." />
-        <NoteBox>
-          <b>Employee view.</b> {ROLE_SCOPE.Employee}
-        </NoteBox>
-        <div className="g4">
-          <StatCard icon={<FolderIcon />} bg="var(--primary-50)" fg="var(--primary)" value={myRequests.length} label="My requests" foot={`${pending.length} pending HR action`} />
-          <StatCard icon={<InboxIcon />} bg="var(--success-50)" fg="#15803D" value={`${docsOnFile}`} label="My documents" foot="on file" />
-          <StatCard
-            icon={<IdIcon />}
-            bg="var(--danger-50)"
-            fg="#B91C1C"
-            value={visaExpiryOf(me) ? (stateOf(me) === 'ok' ? 'Valid' : stateOf(me) === 'soon' ? 'Soon' : 'Expired') : '—'}
-            label="My visa status"
-            foot={visaExpiryOf(me) ?? 'Not applicable'}
-          />
-          <StatCard icon={<PeopleIcon />} bg="var(--primary-50)" fg="var(--primary)" value={me.department} label="Department" foot={me.designation} />
-        </div>
-        <Card className="row-gap">
-          <CardHeader title="My requests" sub="Self-service items" action={<Link href="/requests" className="lnk">Open →</Link>} />
-          <div style={{ padding: '12px 16px' }}>
-            {myRequests.length ? (
-              myRequests.map((r) => (
-                <div key={r.id} className="doc">
-                  <div className="fic">
-                    <InboxIcon />
-                  </div>
-                  <div>
-                    <div className="nm">{r.type}</div>
-                    <div className="mt">{r.details}</div>
-                  </div>
-                  <div className="rt">
-                    <StatusBadge status={r.status} />
-                  </div>
-                </div>
-              ))
-            ) : (
-              <div className="empty">
-                <p>No requests on file.</p>
-              </div>
-            )}
-          </div>
-        </Card>
-      </div>
-    );
-  }
-
-  if (role === 'Team Lead') {
-    const team = directReports(me.id);
-    const teamIds = new Set(team.map((t) => t.id));
-    const awaiting = requests.filter((r) => r.status === 'Pending' && r.routedTo === 'Manager' && teamIds.has(r.employeeId));
-    const teamDubai = team.filter((t) => t.location === 'Dubai');
-    const expiringTeam = teamDubai.filter((t) => stateOf(t) === 'soon' || stateOf(t) === 'expired');
-    const onboardingTeam = team.filter((t) => t.employmentStatus === 'Onboarding');
-    return (
-      <div>
-        <PageHeader eyebrow="My Space · Overview" title={`${greetingAt(now)}, ${me.name.split(' ')[0]}`} description="Your team's snapshot — approvals, visa renewals and onboarding." />
-        <NoteBox>
-          <b>Team Lead view.</b> {ROLE_SCOPE['Team Lead']}
-        </NoteBox>
-        <div className="g4">
-          <StatCard icon={<PeopleIcon />} bg="var(--primary-50)" fg="var(--primary)" value={team.length} label="My team members" foot={`in ${me.department}`} />
-          <StatCard icon={<InboxIcon />} bg="var(--warning-50)" fg="#B45309" value={awaiting.length} label="Pending my approval" foot="requests routed to me" />
-          <StatCard icon={<JoinIcon />} bg="var(--success-50)" fg="#15803D" value={onboardingTeam.length} label="Team onboarding" foot="in progress" />
-          <StatCard icon={<IdIcon />} bg="var(--danger-50)" fg="#B91C1C" value={teamDubai.length ? expiringTeam.length : '—'} label="Team visa renewals" foot={teamDubai.length ? 'Dubai team members' : 'No Dubai reports'} />
-        </div>
-        <Card className="row-gap">
-          <CardHeader title="Awaiting my approval" sub="Requests routed to Manager" />
-          <div style={{ padding: '12px 16px' }}>
-            {awaiting.length ? (
-              awaiting.map((r) => <ApprovalRow key={r.id} r={r} onAct={act} />)
-            ) : (
-              <div className="empty">
-                <p>Nothing pending your approval.</p>
-              </div>
-            )}
-          </div>
-        </Card>
-      </div>
-    );
-  }
+  if (role === 'Employee') return <EmployeeHome now={now} />;
+  if (role === 'Team Lead') return <TeamLeadHome now={now} />;
 
   // ---- Administrator / HR view: live across every module ----
   const inLoc = (employeeLocation: string) => loc === 'All' || employeeLocation === loc;
@@ -394,9 +710,6 @@ export default function DashboardPage() {
             )}
             <span className="dh-pill">
               <b>{people.length}</b> people · {scopeName}
-            </span>
-            <span className="dh-pill" title="The sample records in this workspace are dated to this day">
-              Records as of {new Date(REFERENCE_TODAY).toLocaleDateString('en-GB', { weekday: 'short', day: 'numeric', month: 'short', year: 'numeric' })}
             </span>
           </p>
         </div>

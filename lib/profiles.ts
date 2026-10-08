@@ -70,10 +70,34 @@ const DEPT_STUDY: Record<string, { course: string; field: string }> = {
 
 const UAE_NAMES = { male: ['Yousef', 'Hassan', 'Karim', 'Tariq', 'Khalid'], female: ['Amira', 'Layla', 'Nadia', 'Salma', 'Mariam'] };
 const IN_NAMES = { male: ['Suresh', 'Rajesh', 'Anil', 'Vijay', 'Mohan'], female: ['Lakshmi', 'Meera', 'Divya', 'Sreeja', 'Latha'] };
-const RELATIONS = ['Spouse', 'Father', 'Mother', 'Brother', 'Sister'];
 const OCCUPATIONS = ['Teacher', 'Engineer', 'Homemaker', 'Accountant', 'Business owner', 'Retired'];
 const PRIOR_COMPANIES = ['Orbit Systems', 'Blue Harbor Technologies', 'Northwind Solutions', 'Meridian Infotech', 'Keystone Services'];
-const PRIOR_PREFIX = ['Junior', 'Associate', 'Assistant'];
+/** Sensible earlier roles for a designation: [most recent previous job, the one before it]. */
+const PRIOR_TITLES: Record<string, [string, string]> = {
+  'General Manager': ['Assistant Manager', 'Operations Executive'],
+  'Solutions Architect': ['Systems Engineer', 'Technical Associate'],
+  'HR Executive': ['HR Assistant', 'Admin Assistant'],
+  'Procurement Officer': ['Procurement Assistant', 'Purchasing Clerk'],
+  'Network Engineer': ['Junior Network Engineer', 'NOC Technician'],
+  'Account Manager': ['Account Executive', 'Sales Associate'],
+  'Senior Sales Executive': ['Sales Executive', 'Junior Sales Executive'],
+  'Support Lead': ['Senior Support Engineer', 'Support Engineer'],
+  'Support Engineer': ['Junior Support Engineer', 'Helpdesk Technician'],
+  'Accounts Executive': ['Junior Accountant', 'Accounts Assistant'],
+  'Admin Executive': ['Admin Assistant', 'Office Assistant'],
+};
+const SENIORITY = /^(Senior|Junior|Associate|Assistant|Lead|Principal|Chief|Head of)\s+/i;
+
+/** A more junior title than the current designation, without stacking seniority prefixes. */
+const priorTitle = (designation: string, i: number) => {
+  const mapped = PRIOR_TITLES[designation];
+  if (mapped) return mapped[i % 2];
+  const hadSenior = /^(Senior|Lead|Principal|Chief|Head of)\s+/i.test(designation);
+  const base = designation.replace(SENIORITY, '');
+  if (hadSenior) return i === 0 ? base : `Junior ${base}`;
+  return i === 0 ? `Junior ${base}` : `Assistant ${base}`;
+};
+const FRIEND_SURNAMES = ['Nair', 'Khan', 'Fernandes', 'Hassan', 'Thomas', 'Mansoor'];
 const INSTITUTIONS = ['Al Noor University', 'Coastal Institute of Technology', 'Kerala Institute of Management', 'Meridian University'];
 
 export function buildProfile(e: Omit<Employee, 'profile'>): EmployeeProfile {
@@ -97,17 +121,40 @@ export function buildProfile(e: Omit<Employee, 'profile'>): EmployeeProfile {
         ? `+91 9${seedDigits(seed + 'a', 4)} ${seedDigits(seed + 'b', 5)}`
         : `${dial} ${seedDigits(seed + 'a', 3)} ${seedDigits(seed + 'b', 3)} ${seedDigits(seed + 'c', 4)}`;
 
+  const usedNames = new Set<string>();
   const personName = (relation: string, salt: number) => {
     const gender = relation === 'Father' || relation === 'Brother' ? 'male' : relation === 'Mother' || relation === 'Sister' ? 'female' : salt % 2 === 0 ? 'male' : 'female';
-    return `${pick(names[gender], code, salt)} ${last}`;
+    const pool = names[gender];
+    let n = 0;
+    while (n < pool.length - 1 && usedNames.has(`${pick(pool, code, salt + n)} ${last}`)) n++;
+    const name = `${pick(pool, code, salt + n)} ${last}`;
+    usedNames.add(name);
+    return name;
   };
 
   const mobile = phone(isIndia ? '+91' : '+971', code + 'pm');
 
-  const contact = (group: string, salt: number, dial: string) => {
-    const relationship = pick(RELATIONS, code, salt + 1);
-    return { group, name: personName(relationship, salt), relationship, mobile: phone(dial, code + group) };
+  // Family first: emergency contacts are drawn from this list so the two screens never disagree.
+  const family: EmployeeProfile['family'] = [];
+  if (base.marital === 'Married') {
+    family.push({ name: personName('Spouse', 7), relationship: 'Spouse', occupation: pick(OCCUPATIONS, code, 8) });
+  }
+  family.push({ name: personName('Father', 9), relationship: 'Father', occupation: 'Retired' });
+  family.push({ name: personName('Mother', 10), relationship: 'Mother', occupation: 'Homemaker' });
+
+  const member = (relationship: string) => family.find((f) => f.relationship === relationship) ?? family[family.length - 1];
+  const contactFrom = (group: string, relationship: string, dial: string) => {
+    const m = member(relationship);
+    return { group, name: m.name, relationship: m.relationship, mobile: phone(dial, code + group) };
   };
+  /** A colleague or friend who is not family, named separately. */
+  const friend = (group: string, dial: string) => ({
+    group,
+    name: `${pick(names[base.gender === 'Female' ? 'female' : 'male'], code, 15)} ${pick(FRIEND_SURNAMES, code, 16)}`,
+    relationship: 'Friend',
+    mobile: phone(dial, code + group),
+  });
+  const married = base.marital === 'Married';
 
   const priorCount = 1 + (hashInt(code) % 2);
   const experience: EmployeeProfile['experience'] = [];
@@ -121,7 +168,7 @@ export function buildProfile(e: Omit<Employee, 'profile'>): EmployeeProfile {
       location: isIndia ? 'Kochi, India' : 'Dubai, UAE',
       from,
       to: cursor,
-      title: `${pick(PRIOR_PREFIX, code, i + 3)} ${e.designation}`,
+      title: priorTitle(e.designation, i),
       mode: 'Onsite',
     });
     cursor = shift(from, 0, -1);
@@ -141,13 +188,6 @@ export function buildProfile(e: Omit<Employee, 'profile'>): EmployeeProfile {
       endYear: String(endYear),
     },
   ];
-
-  const family: EmployeeProfile['family'] = [];
-  if (base.marital === 'Married') {
-    family.push({ name: personName('Spouse', 7), relationship: 'Spouse', occupation: pick(OCCUPATIONS, code, 8) });
-  }
-  family.push({ name: personName('Father', 9), relationship: 'Father', occupation: 'Retired' });
-  family.push({ name: personName('Mother', 10), relationship: 'Mother', occupation: 'Homemaker' });
 
   const h = hashInt(code);
   const salary: EmployeeProfile['salary'] = isIndia
@@ -205,8 +245,8 @@ export function buildProfile(e: Omit<Employee, 'profile'>): EmployeeProfile {
     uan: isIndia ? e.pfUan ?? seedDigits(code + 'uan', 12) : undefined,
     paymentMode: isIndia ? 'Bank Transfer' : 'WPS Transfer',
     emergency: isIndia
-      ? [contact('Primary Emergency Contact', 11, '+91'), contact('Alternate Emergency Contact', 13, '+91')]
-      : [contact('Local Emergency Contact (UAE)', 11, '+971'), contact('Home Country Emergency Contact', 13, home.dial)],
+      ? [contactFrom('Primary Emergency Contact', married ? 'Spouse' : 'Father', '+91'), contactFrom('Alternate Emergency Contact', 'Mother', '+91')]
+      : [married ? contactFrom('Local Emergency Contact (UAE)', 'Spouse', '+971') : friend('Local Emergency Contact (UAE)', '+971'), contactFrom('Home Country Emergency Contact', married ? 'Father' : 'Mother', home.dial)],
     totalExperience: `${Math.floor(totalMonths / 12)} yr ${totalMonths % 12} mo`,
     experience,
     education,

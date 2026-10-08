@@ -130,6 +130,8 @@ export interface OnboardingRequest {
   step: number; // 1-10
   status: 'In Progress' | 'Pending Approval' | 'Approved';
   startDate: string;
+  /** System role the new joiner will sign in with. */
+  role: Role;
 }
 
 export interface OffboardingRequest {
@@ -153,6 +155,10 @@ export interface EmployeeRequest {
   status: 'Pending' | 'Approved' | 'Rejected';
   raisedOn: string;
   routedTo: 'HR' | 'Manager';
+  /** Proposed new values for the employee record (keys from the employee form, e.g. bankName). Applied only on approval. */
+  changes?: Record<string, string>;
+  decidedBy?: string;
+  decidedOn?: string;
 }
 
 export interface PerformanceReview {
@@ -267,4 +273,6 @@ export interface AuditEntry {
   to: string;
   changedBy: string;
   changedOn: string;
+  /** Area of the app the event belongs to (Employee, Access, Approvals, ...). Older entries omit it. */
+  module?: string;
 }

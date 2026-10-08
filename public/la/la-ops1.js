@@ -11,6 +11,13 @@
   const sc = (arr, key) => arr.filter((x) => L.inLoc(x[key || 'emp']));
   const locsOfScope = () => L.locIds();
 
+  /* ---------- shared list-page helpers (toolbar, search, tables) ---------- */
+  const sb = (k, ph) => `<label class="lbar-s">${ic('search')}<input id="sb-${k}" value="${esc(L.ui(k, ''))}" placeholder="${esc(ph)}" oninput="LA.searchInput('${k}',this)"></label>`;
+  const rst = (keys) => `<button class="btn sm ghost" onclick="LA.resetUi(${JSON.stringify(keys).replace(/"/g, '&quot;')})">${ic('refresh')} Reset</button>`;
+  const bars = (main, sub, count) => listBar(main, count) + (sub ? `<div class="lbar op1-sub">${sub}</div>` : '');
+  const tb = (head, rows, msg) => (rows ? `<div class="tbl-wrap"><table class="tbl"><thead><tr>${head.map((h) => (h[0] === '>' ? `<th class="num">${h.slice(1)}</th>` : `<th>${h}</th>`)).join('')}</tr></thead><tbody>${rows}</tbody></table></div>` : L.empty(msg));
+  const showing = (x, y, w) => `Showing ${x} of ${y} ${w}`;
+
   /* ---------- attendance processing ---------- */
   const STEPS = ['Identify employee, company, location & policy', 'Identify shift & time zone', 'Check weekly off & public holiday', 'Retrieve biometric/web/mobile/manual punches', 'Detect duplicates & invalid punches', 'Determine first check-in / last check-out', 'Calculate gross presence hours', 'Deduct breaks → net working hours', 'Apply grace → late & early minutes', 'Check approved leave / on-duty / WFH / permission', 'Determine status & unauthorized absence', 'Calculate approved overtime & comp-off', 'Evaluate deviations & occurrence counters', 'Calculate payroll impact', 'Store breakdown & audit history'];
   const failedPunches = () => db().rawPunches.filter((p) => p.st.startsWith('Failed') && L.hasLoc([p.loc])).length;
@@ -47,12 +54,22 @@
   L.goOps = (k) => { MODULE = 'operations'; SCOPE = null; TAB = null; OPS = k; renderAll(); };
   function attProcessing() {
     const ids = locsOfScope();
-    const lastAt = ids.map((l) => L.lastRunOf(l).at).sort().pop();
+    const lastAt = ids.map((l) => L.lastRunOf(l).at).sort().pop() || '';
     const n = scopeEmps();
-    return pageHead('Attendance Processing Engine', '15-step calculation pipeline · preserves raw records', `<button class="btn" onclick="LA.runProcessing(true)">Dry run</button><button class="btn pri" onclick="LA.runProcessing(false)">${ic('refresh')} Run for today · ${esc(L.loc() === 'all' ? 'all locations' : L.locCity(L.loc()))}</button>`, 'Attendance Ops')
-      + `<div class="row"><div style="flex:1.1">${card('Pipeline (FRS §7)', `<ol style="list-style:none">${STEPS.map((s) => `<li style="display:flex;gap:12px;padding:8px 0;border-bottom:1px solid var(--line-2)"><span style="width:24px;height:24px;border-radius:50%;background:var(--g-bg);color:var(--g);display:grid;place-items:center;font-size:11px;font-weight:700;flex:none">✓</span><span style="font-size:13px">${s}</span></li>`).join('')}</ol>`)}</div>
-      <div style="flex:1">${card('Last run summary', `<div class="grid g-2" style="gap:12px"><div><div class="k-val" style="font-size:22px">${n}</div><div class="muted">Employees in scope</div></div><div><div class="k-val" style="font-size:22px;color:var(--a)">${openEx()}</div><div class="muted">Open exceptions</div></div><div><div class="k-val" style="font-size:22px;color:var(--r)">${failedPunches()}</div><div class="muted">Failed records</div></div><div><div class="k-val" style="font-size:22px;color:var(--g)">${Math.max(0, n - openEx() - failedPunches())}</div><div class="muted">Clean</div></div></div><div class="divider"></div><button class="btn" onclick="LA.goOps('exceptions')">${ic('alert')} Review ${openEx()} exception${openEx() === 1 ? '' : 's'}</button>`, { sub: lastAt || '' })}
-      <div style="height:16px"></div>${tableCard('Work calendars used', ['Location', 'Work week & hours', 'Employees'], ids.map((l) => `<tr><td class="fw6">${esc(L.locName(l))}</td><td>${esc(L.workLabel(l))}</td><td class="num">${EMP.filter((e) => e.loc === l).length}</td></tr>`).join(''))}
+    const ex = openEx();
+    const fl = failedPunches();
+    const q = L.ui('pcQ', '');
+    const cals = ids.filter((l) => L.matches(q, L.locName(l), L.locCity(l), L.workLabel(l)));
+    return pageHead('Attendance Processing Engine', '15-step calculation pipeline · preserves raw records', `<button class="btn" onclick="LA.runProcessing(true)">Dry run</button><button class="btn pri" onclick="LA.runProcessing(false)">${ic('refresh')} Run for today · ${esc(L.loc() === 'all' ? 'all locations' : L.locCity(L.loc()))}</button>`, 'Attendance')
+      + statStrip([
+        { lbl: 'Employees in scope', val: n, icon: 'users', tone: 'b', hint: lastAt ? 'Last run ' + esc(lastAt) : 'No run recorded yet' },
+        { lbl: 'Clean records', val: Math.max(0, n - ex - fl), icon: 'check', tone: 'g', hint: 'Ready for finalization' },
+        { lbl: 'Open exceptions', val: ex, icon: 'alert', tone: ex ? 'a' : 'g', hint: ex ? 'Review before locking' : 'Nothing to review' },
+        { lbl: 'Failed punches', val: fl, icon: 'device', tone: fl ? 'r' : 'g', hint: fl ? 'Can be reprocessed' : 'All punches processed' },
+      ])
+      + `<div class="row"><div style="flex:1.1">${card('Pipeline (FRS §7)', `<ol class="op1-steps">${STEPS.map((s, i) => `<li><span class="op1-sn">${i + 1}</span><span>${s}</span></li>`).join('')}</ol>`, { sub: STEPS.length + ' steps' })}</div>
+      <div style="flex:1">${card('Last run', `<div class="op1-kv"><span>Last processed</span><b>${esc(lastAt || '—')}</b></div><div class="op1-kv"><span>Scope</span><b>${esc(L.locLabel())}</b></div><div class="op1-kv"><span>Employees processed</span><b>${n}</b></div><div class="op1-kv"><span>Raw records</span><b>${bdg('s-g', 'Preserved')}</b></div><div class="divider"></div><button class="btn" onclick="LA.goOps('exceptions')">${ic('alert')} Review ${ex} exception${ex === 1 ? '' : 's'}</button>`, { sub: ids.length + ' location' + (ids.length === 1 ? '' : 's') })}
+      <div style="height:16px"></div>${card('Work calendars used', listBar(sb('pcQ', 'Search location or work week'), showing(cals.length, ids.length, 'locations')) + tb(['Location', 'Work week & hours', '>Employees', 'Last run'], cals.map((l) => `<tr><td class="fw6">${esc(L.locName(l))}</td><td>${esc(L.workLabel(l))}</td><td class="num">${EMP.filter((e) => e.loc === l).length}</td><td class="muted">${esc(L.lastRunOf(l).at || '—')}</td></tr>`).join(''), 'No locations match'), { pad: false })}
       <div style="height:16px"></div>${note('info', 'Failed biometric records support <b>reprocessing</b>. Every modification preserves the original transaction and writes to the audit log.')}</div></div>`;
   }
 
@@ -63,13 +80,24 @@
     const stF = L.ui('exSt', 'Open');
     const base = sc(db().exceptions).filter((e) => L.deptOk(e.emp, 'exDept2') && L.dateOk(e.date, 'exFrom', 'exTo'));
     const open = (g) => base.filter((e) => e.st === 'Open' && (g === 'all' || e.group === g)).length;
-    const rows = base.filter((e) => (tab === 'all' || e.group === tab) && (stF === 'All' || e.st === stF) && L.matches(q, e.emp, e.kind, e.detail));
-    const stPill = (e) => (e.st === 'Open' ? bdg('s-a', 'Open') : e.st === 'Resolved' ? bdg('s-g', 'Resolved') : bdg('s-b', 'Case ' + (e.caseId || '')));
-    return pageHead('Attendance Exceptions', 'Missing punches, duplicates, invalid records and unauthorized absences', `<button class="btn" onclick="LA.reprocess()">${ic('refresh')} Reprocess failed</button>`, 'Attendance Ops')
-      + `<div class="tabs">${[['all', `All (${open('all')})`], ['miss', `Missing punch (${open('miss')})`], ['unauth', `Unauthorized (${open('unauth')})`], ['dup', `Duplicate / invalid (${open('dup')})`]].map((t) => `<div class="tab ${t[0] === tab ? 'active' : ''}" onclick="LA.setUi('exTab','${t[0]}')">${t[1]}</div>`).join('')}</div>`
-      + `<div class="filters">${L.fLoc()}${L.fDept('exDept2')}${L.fSel('exSt', 'Status', ['Open', 'Resolved', 'Case', 'All'], 'Open')}${L.fDate('exFrom', 'From')}${L.fDate('exTo', 'To')}${L.searchBox('exQ2', 'Member or exception')}${L.fReset(['exDept2', 'exSt', 'exFrom', 'exTo', 'exQ2', 'exTab', 'loc'])}</div>`
-      + tableCard('', ['Member', 'Location', 'Date', 'Exception', 'Detail', 'Status', 'Action'], rows.map((e) => `<tr><td>${L.empCell(e.emp)}</td><td>${L.locChip(L.locOf(e.emp))}</td><td>${fmt(e.date)}</td><td>${statusBadge(e.kind === 'Duplicate punch' || e.kind === 'Invalid record' ? 'Attendance Pending' : e.kind)}</td><td class="muted">${esc(e.detail)}</td><td>${stPill(e)}</td>
-        <td>${e.st !== 'Open' ? '—' : e.group === 'unauth' ? `<button class="btn sm danger" onclick="LA.caseFromEx('${e.id}')">Create case</button>` : `<button class="btn sm" onclick="LA.manualNew('${esc(e.emp)}','${e.date}')">Manual correct</button>`}</td></tr>`).join('') || emptyRow(7, 'No exceptions match'), { sub: `${rows.length} record(s)` })
+    const inSt = (e) => stF === 'All' || e.st === stF;
+    const nIn = (g) => base.filter((e) => inSt(e) && (g === 'all' || e.group === g)).length;
+    const rows = base.filter((e) => (tab === 'all' || e.group === tab) && inSt(e) && L.matches(q, e.emp, e.kind, e.detail));
+    const stPill = (e) => (e.st === 'Open' ? bdg('s-a', 'Open') : e.st === 'Resolved' ? bdg('s-g', 'Resolved') : bdg('s-b', 'Case ' + esc(e.caseId || '')));
+    const resolved = base.filter((e) => e.st !== 'Open').length;
+    return pageHead('Attendance Exceptions', 'Missing punches, duplicates, invalid records and unauthorized absences', `<button class="btn" onclick="LA.reprocess()">${ic('refresh')} Reprocess failed</button>`, 'Attendance')
+      + statStrip([
+        { lbl: 'Open exceptions', val: open('all'), icon: 'alert', tone: open('all') ? 'a' : 'g', hint: open('all') ? 'Awaiting HR action' : 'Nothing outstanding' },
+        { lbl: 'Missing punches', val: open('miss'), icon: 'clock', tone: open('miss') ? 'a' : 'g', hint: 'Open · manual correction' },
+        { lbl: 'Unauthorized absences', val: open('unauth'), icon: 'shield', tone: open('unauth') ? 'r' : 'g', hint: 'Open · may need a case' },
+        { lbl: 'Resolved / escalated', val: resolved, icon: 'check', tone: 'g', hint: `of ${base.length} in view` },
+      ])
+      + card('Exception queue', bars(
+        sb('exQ2', 'Search member or exception') + L.chips('exTab', [{ v: 'all', l: 'All', n: nIn('all') }, { v: 'miss', l: 'Missing punch', n: nIn('miss') }, { v: 'unauth', l: 'Unauthorized', n: nIn('unauth') }, { v: 'dup', l: 'Duplicate / invalid', n: nIn('dup') }], 'all'),
+        `${L.fSel('exSt', 'Status', ['Open', 'Resolved', 'Case', 'All'], 'Open')}${L.fDept('exDept2')}${L.fDate('exFrom', 'From')}${L.fDate('exTo', 'To')}${rst(['exDept2', 'exSt', 'exFrom', 'exTo', 'exQ2', 'exTab'])}`,
+        showing(rows.length, base.length, 'exceptions'))
+        + tb(['Member', 'Date', 'Exception', 'Detail', 'Status', 'Action'], rows.map((e) => `<tr><td>${L.empCell(e.emp)}</td><td>${fmt(e.date)}</td><td>${statusBadge(e.kind === 'Duplicate punch' || e.kind === 'Invalid record' ? 'Attendance Pending' : e.kind)}</td><td class="muted">${esc(e.detail)}</td><td>${stPill(e)}</td>
+        <td>${e.st !== 'Open' ? '<span class="muted">—</span>' : e.group === 'unauth' ? `<button class="btn sm danger" onclick="LA.caseFromEx('${e.id}')">Create case</button>` : `<button class="btn sm" onclick="LA.manualNew('${esc(e.emp)}','${e.date}')">Manual correct</button>`}</td></tr>`).join(''), 'No exceptions match these filters'), { pad: false })
       + '<div style="height:16px"></div>' + note('warn', 'Manual HR attendance requires a <b>mandatory reason and supporting attachment</b>, and never overwrites the raw record (FRS §5).');
   }
   L.reprocess = () => {
@@ -103,12 +131,26 @@
   function occurrenceMgmt() {
     const q = L.ui('ocQ', '');
     const tF = L.ui('ocType', 'All types');
-    const sF = L.ui('ocSt', 'All');
-    const rows = sc(db().occ).filter((o) => L.deptOk(o.emp, 'ocDept') && (tF === 'All types' || o.type === tF) && (sF === 'All' || (sF === 'At / over threshold' ? o.count - o.waived >= o.thr : sF === 'Near threshold' ? occCls(o) === 's-a' : occCls(o) === 's-gray' && o.count - o.waived < o.thr)) && L.matches(q, o.emp, o.type, o.id));
-    return pageHead('Occurrence Management', 'Create, waive and monitor occurrences against thresholds', `<button class="btn pri" onclick="LA.occNew()">${ic('plus')} Record occurrence</button>`, 'Attendance Ops')
-      + `<div class="filters">${L.fLoc()}${L.fDept('ocDept')}${L.fSel('ocType', 'Deviation type', ['All types'].concat(OCC_TYPES), 'All types')}${L.fSel('ocSt', 'Level', ['All', 'At / over threshold', 'Near threshold', 'Under watch'], 'All')}${L.searchBox('ocQ', 'Member or type')}${L.fReset(['ocDept', 'ocType', 'ocSt', 'ocQ', 'loc'])}</div>`
-      + tableCard('Occurrences (rolling 12 months)', ['Member', 'Location', 'Type', 'Count', 'Threshold', 'Recommended action', 'Manage'], rows.map((o) => `<tr><td>${L.empCell(o.emp, o.id)}</td><td>${L.locChip(L.locOf(o.emp))}</td><td>${esc(o.type)}</td><td class="num fw6">${o.count - o.waived}${o.waived ? ` <span class="muted" style="font-weight:400">(−${o.waived} waived)</span>` : ''}</td><td class="num">${o.thr}</td><td>${bdg(occCls(o), esc(recommend(o)))}</td>
-        <td><div class="hb"><button class="btn sm" onclick="LA.occAdd('${esc(o.emp)}','${esc(o.type)}')">Create</button><button class="btn sm ghost" onclick="LA.occWaive('${esc(o.emp)}','${esc(o.type)}')" ${o.count - o.waived <= 0 ? 'disabled' : ''}>Waive</button></div></td></tr>`).join('') || emptyRow(7, 'No occurrences match'), { sub: `${rows.length} record(s)` })
+    const lv = L.ui('ocLvl', 'all');
+    const base = sc(db().occ).filter((o) => L.deptOk(o.emp, 'ocDept'));
+    const lvl = (o) => (o.count - o.waived >= o.thr ? 'over' : occCls(o) === 's-a' ? 'near' : 'watch');
+    const typed = base.filter((o) => tF === 'All types' || o.type === tF);
+    const nL = (v) => typed.filter((o) => v === 'all' || lvl(o) === v).length;
+    const rows = typed.filter((o) => (lv === 'all' || lvl(o) === lv) && L.matches(q, o.emp, o.type, o.id));
+    const members = new Set(base.map((o) => o.emp)).size;
+    return pageHead('Occurrence Management', 'Create, waive and monitor occurrences against thresholds', `<button class="btn pri" onclick="LA.occNew()">${ic('plus')} Record occurrence</button>`, 'Compliance')
+      + statStrip([
+        { lbl: 'Tracked counters', val: base.length, icon: 'chart', tone: 'b', hint: `${members} member${members === 1 ? '' : 's'}` },
+        { lbl: 'At / over threshold', val: base.filter((o) => lvl(o) === 'over').length, icon: 'shield', tone: base.some((o) => lvl(o) === 'over') ? 'r' : 'g', hint: 'Action recommended' },
+        { lbl: 'Near threshold', val: base.filter((o) => lvl(o) === 'near').length, icon: 'alert', tone: 'a', hint: '70% or more of the limit' },
+        { lbl: 'Waived', val: base.reduce((a, o) => a + (o.waived || 0), 0), icon: 'check', tone: 'g', hint: 'Occurrences waived by HR' },
+      ])
+      + card('Occurrences (rolling 12 months)', bars(
+        sb('ocQ', 'Search member or type') + L.chips('ocLvl', [{ v: 'all', l: 'All', n: nL('all') }, { v: 'over', l: 'At / over', n: nL('over') }, { v: 'near', l: 'Near', n: nL('near') }, { v: 'watch', l: 'Under watch', n: nL('watch') }], 'all'),
+        `${L.fSel('ocType', 'Deviation type', ['All types'].concat(OCC_TYPES), 'All types')}${L.fDept('ocDept')}${rst(['ocDept', 'ocType', 'ocLvl', 'ocQ'])}`,
+        showing(rows.length, base.length, 'counters'))
+        + tb(['Member', 'Type', '>Count', '>Threshold', 'Recommended action', 'Manage'], rows.map((o) => { const n = o.count - o.waived; const pct = Math.min(100, Math.round((n / (o.thr || 1)) * 100)); return `<tr><td>${L.empCell(o.emp)}</td><td>${esc(o.type)}</td><td class="num"><span class="fw6">${n}</span>${o.waived ? ` <span class="muted" style="font-weight:400">(−${o.waived} waived)</span>` : ''}<div class="op1-meter"><i class="${occCls(o)}" style="width:${pct}%"></i></div></td><td class="num">${o.thr}</td><td>${bdg(occCls(o), esc(recommend(o)))}</td>
+        <td><div class="hb"><button class="btn sm" onclick="LA.occAdd('${esc(o.emp)}','${esc(o.type)}')">Create</button><button class="btn sm ghost" onclick="LA.occWaive('${esc(o.emp)}','${esc(o.type)}')" ${n <= 0 ? 'disabled' : ''}>Waive</button></div></td></tr>`; }).join(''), 'No occurrences match these filters'), { pad: false })
       + '<div style="height:16px"></div><div class="row"><div style="flex:1">'
       + tableCard('General deviation thresholds', ['Occurrences (12 mo)', 'Recommended action'], [['2', 'Verbal Warning'], ['3', 'First Written Warning'], ['6', 'Second Written Warning'], ['8', 'Final Written Warning'], ['10', 'Termination Review']].map((r) => `<tr><td class="num">${r[0]}</td><td>${r[1]}</td></tr>`).join(''))
       + '</div><div style="flex:1">' + tableCard('Unauthorized absence thresholds', ['Occurrences', 'Recommended action'], [['1', 'First Written Warning'], ['2', 'Second Written Warning'], ['3', 'Final Written Warning'], ['4', 'Termination Review']].map((r) => `<tr><td class="num">${r[0]}</td><td>${r[1]}</td></tr>`).join('')) + '</div></div>'
@@ -136,12 +178,26 @@
   function discipline() {
     const q = L.ui('dcQ', '');
     const sF = L.ui('dcSt', 'All');
-    const rows = sc(db().cases).filter((c) => L.deptOk(c.emp, 'dcDept') && (sF === 'All' || (sF === 'Pending') === (c.st === 'Pending')) && L.matches(q, c.id, c.emp, c.trigger, c.rec));
-    return pageHead('Disciplinary Review Cases', 'Recommendations only — HR confirmation is mandatory, no automated termination', '', 'Attendance Ops')
+    const base = sc(db().cases).filter((c) => L.deptOk(c.emp, 'dcDept'));
+    const pend = (c) => c.st === 'Pending';
+    const waived = (c) => c.st === 'Done' && String(c.decision || '').startsWith('Waive');
+    const nS = (v) => base.filter((c) => v === 'All' || (v === 'Pending') === pend(c)).length;
+    const rows = base.filter((c) => (sF === 'All' || (sF === 'Pending') === pend(c)) && L.matches(q, c.id, c.emp, c.trigger, c.rec));
+    return pageHead('Disciplinary Review Cases', 'Recommendations only — HR confirmation is mandatory, no automated termination', '', 'Compliance')
+      + statStrip([
+        { lbl: 'Total cases', val: base.length, icon: 'scale', tone: 'b', hint: 'In the selected scope' },
+        { lbl: 'Pending HR decision', val: nS('Pending'), icon: 'clock', tone: nS('Pending') ? 'a' : 'g', hint: nS('Pending') ? 'Awaiting confirmation' : 'Queue is clear' },
+        { lbl: 'Warnings issued', val: base.filter((c) => c.st === 'Done' && !waived(c)).length, icon: 'alert', tone: 'r', hint: 'Decided by HR' },
+        { lbl: 'Waived', val: base.filter(waived).length, icon: 'check', tone: 'g', hint: 'No action taken' },
+      ])
       + note('warn', 'The system <b>never automatically terminates</b> an employee. Each case captures manager comments, HR decision, warning reference, waiver option and full audit history (FRS §10).')
-      + `<div class="filters" style="margin-top:16px">${L.fLoc()}${L.fDept('dcDept')}${L.fSel('dcSt', 'Status', ['All', 'Pending', 'Decided'], 'All')}${L.searchBox('dcQ', 'Case, member, trigger')}${L.fReset(['dcDept', 'dcSt', 'dcQ', 'loc'])}</div>`
-      + tableCard('Review cases', ['Case', 'Member', 'Location', 'Trigger', 'Recommended', 'Manager note', 'HR decision'], rows.map((r) => `<tr><td class="fw6 mono">${r.id}</td><td>${L.empCell(r.emp)}</td><td>${L.locChip(L.locOf(r.emp))}</td><td>${esc(r.trigger)}</td><td>${bdg('s-a', esc(r.rec))}</td><td class="muted">${esc(r.note)}</td>
-        <td>${r.st === 'Done' ? `<span title="${esc(r.decision)}">${bdg('s-g', r.decision.startsWith('Waive') ? 'Waived' : 'Warning issued')}</span>${r.ref ? ` <span class="mono muted" style="font-size:11.5px">${esc(r.ref)}</span>` : ''}` : `<div class="hb"><button class="btn sm ok" onclick="LA.caseDecide('${r.id}','confirm')">Confirm</button><button class="btn sm ghost" onclick="LA.caseDecide('${r.id}','waive')">Waive</button></div>`}</td></tr>`).join('') || emptyRow(7, 'No cases match'));
+      + '<div style="height:16px"></div>'
+      + card('Review cases', bars(
+        sb('dcQ', 'Search case, member or trigger') + L.chips('dcSt', [{ v: 'All', l: 'All', n: nS('All') }, { v: 'Pending', l: 'Pending', n: nS('Pending') }, { v: 'Decided', l: 'Decided', n: nS('Decided') }], 'All'),
+        `${L.fDept('dcDept')}${rst(['dcDept', 'dcSt', 'dcQ'])}`,
+        showing(rows.length, base.length, 'cases'))
+        + tb(['Case', 'Member', 'Trigger', 'Recommended', 'Manager note', 'HR decision'], rows.map((r) => `<tr><td class="fw6 mono">${esc(r.id)}</td><td>${L.empCell(r.emp)}</td><td>${esc(r.trigger)}</td><td>${bdg('s-a', esc(r.rec))}</td><td class="muted">${esc(r.note)}</td>
+        <td>${r.st === 'Done' ? `<span title="${esc(r.decision)}">${bdg('s-g', waived(r) ? 'Waived' : 'Warning issued')}</span>${r.ref ? ` <span class="mono muted" style="font-size:11.5px">${esc(r.ref)}</span>` : ''}` : `<div class="hb"><button class="btn sm ok" onclick="LA.caseDecide('${r.id}','confirm')">Confirm</button><button class="btn sm ghost" onclick="LA.caseDecide('${r.id}','waive')">Waive</button></div>`}</td></tr>`).join(''), 'No cases match these filters'), { pad: false });
   }
   L.caseDecide = (id, kind) => {
     const c = db().cases.find((x) => x.id === id);
@@ -161,17 +217,29 @@
   const allRows = () => locsOfScope().flatMap((loc) => L.periodsOf(loc).map((p) => ({ loc, p })));
   const medPending = () => db().med.filter((m) => m.st === 'Pending' && L.inLoc(m.emp)).length;
   function finalization() {
-    const open = allRows().filter((r) => r.p.status === 'Open');
+    const all = allRows();
+    const open = all.filter((r) => r.p.status === 'Open');
     const eom = parse(`${TODAY.slice(0, 7)}-01`); eom.setMonth(eom.getMonth() + 1); eom.setDate(0);
     const cutoff = daysBetween(TODAY, L.iso(eom)) + 1;
     const sF = L.ui('fnSt', 'All');
-    const rows = allRows().filter((r) => sF === 'All' || r.p.status === sF);
-    return pageHead('Finalize & Lock Attendance', 'Lock the monthly period before payroll export — each location has its own payroll cycle', `<button class="btn danger" onclick="LA.reopenDlg()">${ic('lockOpen')} Reopen period</button><button class="btn pri" onclick="LA.lockDlg()" ${open.length ? '' : 'disabled'}>${ic('lock')} ${open.length === 1 ? 'Lock ' + open[0].p.name + ' · ' + esc(L.locCity(open[0].loc)) : open.length ? 'Lock a period…' : 'No open period'}</button>`, 'Attendance Ops')
-      + `<div class="grid g-4" style="margin-bottom:16px">${kpi({ icon: 'check', acc: 'g', val: scopeEmps() - openEx(), lbl: 'Finalized records' })}${kpi({ icon: 'alert', acc: 'a', val: openEx(), lbl: 'Open exceptions' })}${kpi({ icon: 'doc', acc: 'b', val: medPending(), lbl: 'Pending verification' })}${kpi({ icon: 'lock', acc: 'p', val: cutoff, lbl: 'Days to cut-off' })}</div>`
+    const q = L.ui('fnQ', '');
+    const nS = (v) => all.filter((r) => v === 'All' || r.p.status === v).length;
+    const rows = all.filter((r) => (sF === 'All' || r.p.status === sF) && L.matches(q, L.locCity(r.loc), L.locName(r.loc), r.p.name));
+    const ex = openEx();
+    return pageHead('Finalize & Lock Attendance', 'Lock the monthly period before payroll export — each location has its own payroll cycle', `<button class="btn danger" onclick="LA.reopenDlg()">${ic('lockOpen')} Reopen period</button><button class="btn pri" onclick="LA.lockDlg()" ${open.length ? '' : 'disabled'}>${ic('lock')} ${open.length === 1 ? 'Lock ' + esc(open[0].p.name) + ' · ' + esc(L.locCity(open[0].loc)) : open.length ? 'Lock a period…' : 'No open period'}</button>`, 'Payroll & Output')
+      + statStrip([
+        { lbl: 'Finalized records', val: Math.max(0, scopeEmps() - ex), icon: 'check', tone: 'g', hint: 'Clean and ready for lock' },
+        { lbl: 'Open exceptions', val: ex, icon: 'alert', tone: ex ? 'a' : 'g', hint: ex ? 'Resolve or override at lock' : 'Nothing blocking the lock' },
+        { lbl: 'Pending verification', val: medPending(), icon: 'doc', tone: medPending() ? 'b' : 'g', hint: 'Medical documents' },
+        { lbl: 'Days to cut-off', val: cutoff, icon: 'lock', tone: 'p', hint: 'Month end ' + fmt(L.iso(eom)) },
+      ])
       + note('warn', 'Monthly attendance must be locked before payroll export. Any post-lock change requires <b>HR authorization, a reopening reason, audit history</b> and current/next-cycle adjustment (FRS §20).')
-      + `<div class="filters" style="margin-top:16px">${L.fLoc()}${L.fSel('fnSt', 'Status', ['All', 'Open', 'Locked', 'Not started'], 'All')}${L.fReset(['fnSt', 'loc'])}</div>`
-      + tableCard('Period readiness', ['Location', 'Period', 'Records', 'Exceptions', 'Status', 'Action'], rows.map(({ loc, p }) => `<tr><td class="fw6">${esc(L.locCity(loc))}</td><td>${p.name}</td><td class="num">${p.status === 'Not started' ? '—' : EMP.filter((e) => e.loc === loc).length}</td><td class="num">${p.status === 'Open' ? exOf(loc) : p.status === 'Locked' ? 0 : '—'}</td><td>${p.status === 'Locked' ? bdg('s-g', 'Locked') : p.status === 'Open' ? bdg('s-a', 'Open') : bdg('s-gray', 'Not started')}</td>
-        <td>${p.status === 'Open' ? `<button class="btn sm pri" onclick="LA.lockDlg('${loc}','${p.key}')">Lock</button>` : p.status === 'Locked' ? `<button class="btn sm ghost" onclick="LA.setUiRaw('payLoc','${loc}');LA.setUiRaw('payPeriod','${p.key}');LA.goOps('payroll')">Export</button>` : `<button class="btn sm ghost" onclick="LA.openPeriodDlg('${loc}','${p.key}')" ${L.periodsOf(loc).some((x) => x.status === 'Open') ? 'disabled' : ''}>Open period</button>`}</td></tr>`).join('') || emptyRow(6, 'No periods match'));
+      + '<div style="height:16px"></div>'
+      + card('Period readiness', bars(
+        sb('fnQ', 'Search location or period') + L.chips('fnSt', [{ v: 'All', l: 'All', n: nS('All') }, { v: 'Open', l: 'Open', n: nS('Open') }, { v: 'Locked', l: 'Locked', n: nS('Locked') }, { v: 'Not started', l: 'Not started', n: nS('Not started') }], 'All'),
+        '', showing(rows.length, all.length, 'periods'))
+        + tb(['Location', 'Period', '>Records', '>Exceptions', 'Status', 'Action'], rows.map(({ loc, p }) => { const xo = p.status === 'Open' ? exOf(loc) : p.status === 'Locked' ? 0 : null; return `<tr><td class="fw6">${esc(L.locCity(loc))}</td><td>${esc(p.name)}</td><td class="num">${p.status === 'Not started' ? '<span class="muted">—</span>' : EMP.filter((e) => e.loc === loc).length}</td><td class="num">${xo === null ? '<span class="muted">—</span>' : `<span style="${xo ? 'color:var(--a);font-weight:600' : ''}">${xo}</span>`}</td><td>${p.status === 'Locked' ? bdg('s-g', 'Locked') : p.status === 'Open' ? bdg('s-a', 'Open') : bdg('s-gray', 'Not started')}</td>
+        <td>${p.status === 'Open' ? `<button class="btn sm pri" onclick="LA.lockDlg('${loc}','${p.key}')">Lock</button>` : p.status === 'Locked' ? `<button class="btn sm ghost" onclick="LA.setUiRaw('payLoc','${loc}');LA.setUiRaw('payPeriod','${p.key}');LA.goOps('payroll')">Export</button>` : `<button class="btn sm ghost" onclick="LA.openPeriodDlg('${loc}','${p.key}')" ${L.periodsOf(loc).some((x) => x.status === 'Open') ? 'disabled' : ''}>Open period</button>`}</td></tr>`; }).join(''), 'No periods match these filters'), { pad: false });
   }
   L.openPeriodDlg = (loc, key) => L.confirm('Open period', `Start attendance collection for <b>${periodRow(loc, key).name}</b> (${esc(L.locName(loc))})?`, 'Open period', () => { const p = periodRow(loc, key); p.status = 'Open'; L.audit('Period opened', p.name, 'Not started → Open', L.locCity(loc), loc); toast(p.name + ' opened'); L.rr(); });
   const pick = (kind, rows, run) => {
@@ -241,10 +309,23 @@
     const rows = payrollRows(key, loc);
     const locked = per.status === 'Locked';
     const cur = (L.locDef(loc) || {}).currency || '';
+    const q = L.ui('payQ', '');
+    const shown = rows.filter((r) => L.matches(q, r[0], L.codeOf(r[0])));
+    const sum = (i) => R1(rows.reduce((a, r) => a + (Number(r[i]) || 0), 0));
     return pageHead('Payroll Export', 'Payroll-ready attendance, leave, LOP, overtime and encashment output', `<button class="btn" onclick="LA.payCsv()">${ic('download')} CSV</button><button class="btn pri" onclick="LA.payExport()">${ic('lock')} ${locked ? 'Export to payroll' : 'Lock & export'}</button>`, 'Payroll & Output')
-      + note('info', `${per.name} (${esc(L.locName(loc))}) must be locked before export. Payroll currency <b>${esc(cur)}</b>. Status: ${locked ? bdg('s-g', 'Locked') : bdg('s-a', esc(per.status))}`)
-      + `<div class="filters" style="margin-top:16px">${L.fSel('payLoc', 'Payroll location', L.locOptions(false), loc)}${L.fSel('payPeriod', 'Period', periods.map((p) => ({ v: p.key, l: `${p.name} (${p.status})` })), key)}${L.fDept('payDept')}${L.fReset(['payDept'])}</div>`
-      + tableCard(`Payroll output preview — ${per.name} · ${L.locCity(loc)}`, ['Member', 'Sched.', 'Present', 'Paid', 'LOP', 'OT h', 'Comp-off', 'Encash', 'Payable'], rows.map((r) => `<tr><td>${L.empCell(r[0], L.codeOf(r[0]))}</td><td class="num">${r[1]}</td><td class="num">${r[2]}</td><td class="num">${r[3]}</td><td class="num" style="color:${r[4] ? 'var(--r)' : ''}">${r[4]}</td><td class="num">${r[5]}</td><td class="num">${r[6]}</td><td class="num">${r[7]}</td><td class="num fw6">${r[8]}</td></tr>`).join('') || emptyRow(9, 'No employees in this location / department'), { sub: `${(db().exports || []).filter((x) => x.loc === loc).length} previous export(s)` })
+      + statStrip([
+        { lbl: 'Employees', val: rows.length, icon: 'users', tone: 'b', hint: `${esc(per.name)} · ${esc(per.status)}` },
+        { lbl: 'Payable days', val: sum(8), icon: 'calendar', tone: 'g', hint: 'Scheduled less loss of pay' },
+        { lbl: 'Loss-of-pay days', val: sum(4), icon: 'alert', tone: sum(4) ? 'r' : 'g', hint: sum(4) ? 'Deducted at payroll' : 'No deductions' },
+        { lbl: 'Overtime hours', val: sum(5), icon: 'clock', tone: 'a', hint: `${sum(6)} comp-off day(s)` },
+      ])
+      + note('info', `${esc(per.name)} (${esc(L.locName(loc))}) must be locked before export. Payroll currency <b>${esc(cur)}</b>. Status: ${locked ? bdg('s-g', 'Locked') : bdg('s-a', esc(per.status))}`)
+      + '<div style="height:16px"></div>'
+      + card(`Payroll output preview — ${esc(per.name)} · ${esc(L.locCity(loc))}`, bars(
+        sb('payQ', 'Search member or code'),
+        `${L.fSel('payLoc', 'Payroll location', L.locOptions(false), loc)}${L.fSel('payPeriod', 'Period', periods.map((p) => ({ v: p.key, l: `${p.name} (${p.status})` })), key)}${L.fDept('payDept')}${rst(['payDept', 'payQ'])}`,
+        showing(shown.length, rows.length, 'employees') + ` · ${(db().exports || []).filter((x) => x.loc === loc).length} previous export(s)`)
+        + tb(['Member', '>Sched.', '>Present', '>Paid', '>LOP', '>OT h', '>Comp-off', '>Encash', '>Payable'], shown.map((r) => `<tr><td>${L.empCell(r[0], L.codeOf(r[0]))}</td><td class="num">${r[1]}</td><td class="num">${r[2]}</td><td class="num">${r[3]}</td><td class="num" style="color:${r[4] ? 'var(--r)' : ''}">${r[4]}</td><td class="num">${r[5]}</td><td class="num">${r[6]}</td><td class="num">${r[7]}</td><td class="num fw6">${r[8]}</td></tr>`).join(''), rows.length ? 'No employees match this search' : 'No employees in this location / department'), { pad: false })
       + '<div style="height:16px"></div>' + note('info', 'This is a link-out boundary to the <b>Payroll Management</b> module — computed values are handed off, not re-implemented here.');
   }
   L.payCsv = () => { const { loc, key } = payCtx(); L.csv(`payroll_attendance_${loc}_${key}.csv`, ['Member', 'Scheduled', 'Present', 'Paid', 'LOP', 'OT hours', 'Comp-off', 'Encash', 'Payable'], payrollRows(key, loc)); };
@@ -310,41 +391,77 @@
   L.schedDel = (id) => { db().sched = db().sched.filter((s) => s.id !== id); L.audit('Schedule removed', id, '—', ''); toast('Schedule removed'); L.rr(); };
   function reports() {
     const q = L.ui('repQ', '');
-    const list = (arr, ic2, bgc, fg) => arr.filter((r) => L.matches(q, r)).map((r) => `<div class="lrow" style="padding:10px 0"><div class="li-ic" style="width:30px;height:30px;background:${bgc};color:${fg}">${ic(ic2)}</div><div class="li-t" style="font-size:13px">${r}</div><div class="li-r"><button class="btn sm ghost" onclick="LA.runReport('${r.replace(/'/g, "\\'")}')">Run</button></div></div>`).join('') || L.empty('No reports match');
+    const hit = (arr) => arr.filter((r) => L.matches(q, r));
+    const list = (arr, ic2, bgc, fg) => arr.map((r) => `<div class="lrow op1-rep" style="padding:10px 0"><div class="li-ic" style="width:30px;height:30px;background:${bgc};color:${fg}">${ic(ic2)}</div><div class="li-t" style="font-size:13px">${r}</div><div class="li-r"><button class="btn sm ghost" onclick="LA.runReport('${r.replace(/'/g, "\\'")}')">${ic('chevR')} Run</button></div></div>`).join('') || L.empty('No reports match your search');
     const runs = db().reportRuns || [];
     const scheds = (db().sched || []).filter((s) => L.hasLoc(s.loc === 'all' || !s.loc ? ['all'] : [s.loc]));
+    const aRows = hit(ATT_REPORTS);
+    const lRows = hit(LV_REPORTS);
+    const total = ATT_REPORTS.length + LV_REPORTS.length;
     return pageHead('Reports & Analytics', 'Filter by location, department and period · export CSV', `<button class="btn" onclick="LA.schedNew()">${ic('clock')} Schedule delivery</button>`, 'Payroll & Output')
-      + `<div class="filters">${L.fLoc()}${L.fDept('rpDept')}${L.fDate('rpFrom', 'Period from', `${TODAY.slice(0, 7)}-01`, `max="${TODAY}"`)}${L.fDate('rpTo', 'to', TODAY)}${L.searchBox('repQ', 'Find a report')}${L.fReset(['rpDept', 'rpFrom', 'rpTo', 'repQ', 'loc'])}</div>`
-      + `<div class="row"><div style="flex:1">${card('Attendance reports', list(ATT_REPORTS, 'chart', 'var(--brand-050)', 'var(--brand)'), { sub: 'FRS §22.1' })}</div><div style="flex:1">${card('Leave reports', list(LV_REPORTS, 'pie', 'var(--p-bg)', 'var(--p)'), { sub: 'FRS §22.2' })}</div></div>`
+      + statStrip([
+        { lbl: 'Attendance reports', val: ATT_REPORTS.length, icon: 'chart', tone: 'b', hint: 'FRS §22.1' },
+        { lbl: 'Leave reports', val: LV_REPORTS.length, icon: 'doc', tone: 'p', hint: 'FRS §22.2' },
+        { lbl: 'Reports generated', val: runs.length, icon: 'download', tone: 'g', hint: runs.length ? 'Last: ' + esc(runs[0].name) : 'Nothing generated yet' },
+        { lbl: 'Scheduled deliveries', val: scheds.length, icon: 'clock', tone: scheds.length ? 'a' : 'x', hint: scheds.length ? 'Recurring email delivery' : 'None scheduled' },
+      ])
+      + `<div class="op1-solo">${card('', bars(sb('repQ', 'Search reports'), `${L.fDept('rpDept')}${L.fDate('rpFrom', 'Period from', `${TODAY.slice(0, 7)}-01`, `max="${TODAY}"`)}${L.fDate('rpTo', 'to', TODAY)}${rst(['rpDept', 'rpFrom', 'rpTo', 'repQ'])}`, showing(aRows.length + lRows.length, total, 'reports')), { pad: false })}</div>`
       + '<div style="height:16px"></div>'
-      + `<div class="row"><div style="flex:1">${tableCard('Scheduled deliveries', ['Report', 'Location', 'Frequency', 'Format', 'Recipients', ''], scheds.map((s) => `<tr><td class="fw6">${esc(s.r)}</td><td>${s.loc && s.loc !== 'all' ? esc(L.locCity(s.loc)) : 'All'}</td><td>${s.f}</td><td>${s.fmt}</td><td class="muted">${esc(s.to)}</td><td><button class="btn sm ghost" onclick="LA.schedDel('${s.id}')">${ic('x')}</button></td></tr>`).join('') || emptyRow(6, 'No scheduled deliveries'))}</div>
-        <div style="flex:1">${tableCard('Recent runs', ['Report', 'Rows', 'When', ''], runs.map((r) => `<tr><td class="fw6">${esc(r.name)}</td><td class="num">${r.rows}</td><td>${fmt(r.at)}</td><td><button class="btn sm ghost" onclick="LA.runReport('${r.name.replace(/'/g, "\\'")}')">Re-run</button></td></tr>`).join('') || emptyRow(4, 'Nothing generated yet'))}</div></div>`;
+      + `<div class="row"><div style="flex:1">${card('Attendance reports', list(aRows, 'chart', 'var(--brand-050)', 'var(--brand)'), { sub: `${aRows.length} of ${ATT_REPORTS.length}` })}</div><div style="flex:1">${card('Leave reports', list(lRows, 'pie', 'var(--p-bg)', 'var(--p)'), { sub: `${lRows.length} of ${LV_REPORTS.length}` })}</div></div>`
+      + '<div style="height:16px"></div>'
+      + `<div class="row"><div style="flex:1">${card('Scheduled deliveries', tb(['Report', 'Location', 'Frequency', 'Format', 'Recipients', ''], scheds.map((s) => `<tr><td class="fw6">${esc(s.r)}</td><td>${s.loc && s.loc !== 'all' ? esc(L.locCity(s.loc)) : 'All'}</td><td>${esc(s.f)}</td><td>${bdg('s-gray', esc(s.fmt))}</td><td class="muted">${esc(s.to)}</td><td><button class="btn sm ghost" title="Remove schedule" onclick="LA.schedDel('${s.id}')">${ic('x')}</button></td></tr>`).join(''), 'No scheduled deliveries'), { pad: false, sub: `${scheds.length} active` })}</div>
+        <div style="flex:1">${card('Recent runs', tb(['Report', '>Rows', 'When', ''], runs.map((r) => `<tr><td class="fw6">${esc(r.name)}</td><td class="num">${r.rows}</td><td>${fmt(r.at)}</td><td><button class="btn sm ghost" onclick="LA.runReport('${r.name.replace(/'/g, "\\'")}')">Re-run</button></td></tr>`).join(''), 'Nothing generated yet'), { pad: false, sub: `${runs.length} of last 8` })}</div></div>`;
   }
 
   /* ---------- audit logs ---------- */
   function auditView(system) {
-    const a = db().audit;
+    const a = db().audit || [];
     const k = system ? 'sa' : 'au';
     const act = L.ui(k + 'Act', 'All actions');
     const usr = L.ui(k + 'Usr', 'All users');
     const q = L.ui(k + 'Q', '');
-    const rows = a.filter((r) => L.hasLoc([r.loc]) && (act === 'All actions' || r.action === act) && (usr === 'All users' || r.user === usr) && L.dateOk(r.at || TODAY, k + 'From', k + 'To') && L.matches(q, r.entity, r.action, r.reason, r.change, r.user));
+    const scoped = a.filter((r) => L.hasLoc([r.loc]));
+    const rows = scoped.filter((r) => (act === 'All actions' || r.action === act) && (usr === 'All users' || r.user === usr) && L.dateOk(r.at || TODAY, k + 'From', k + 'To') && L.matches(q, r.entity, r.action, r.reason, r.change, r.user));
     const acts = ['All actions', ...new Set(a.map((r) => r.action))];
     const users = ['All users', ...new Set(a.map((r) => r.user))];
     const filters = `<div class="filters">${L.fLoc()}${L.fSel(k + 'Act', 'Action', acts, 'All actions')}${L.fSel(k + 'Usr', 'User', users, 'All users')}${L.fDate(k + 'From', 'From')}${L.fDate(k + 'To', 'To')}${L.searchBox(k + 'Q', 'Entity, reason…')}${L.fReset([k + 'Act', k + 'Usr', k + 'From', k + 'To', k + 'Q', 'loc'])}<div class="fld"><label>&nbsp;</label><button class="btn" onclick="LA.auditCsv(${system ? 1 : 0})">${ic('download')} Export</button></div></div>`;
-    return { rows, filters };
+    return { rows, filters, scoped, acts, users, k };
   }
   L.auditCsv = (system) => { const { rows } = auditView(!!system); L.csv('audit_log.csv', ['Timestamp', 'Location', 'User', 'Action', 'Entity', 'Change', 'Reason', 'IP'], rows.map((r) => [r.ts, L.locName(r.loc), r.user, r.action, r.entity, r.change, r.reason, r.ip])); };
   function audit() {
-    const { rows, filters } = auditView(false);
-    return pageHead('Audit Logs', 'Immutable trail of edits, verifications, locks and policy changes', '', 'Payroll & Output') + filters
-      + tableCard('', ['Timestamp', 'Location', 'User', 'Action', 'Entity', 'Original → Modified', 'Reason', 'IP'], rows.map((r) => `<tr><td class="mono" style="font-size:12px">${esc(r.ts)}</td><td>${L.locChip(r.loc)}</td><td>${esc(r.user)}</td><td>${bdg('s-b', esc(r.action))}</td><td>${esc(r.entity)}</td><td class="mono" style="font-size:12px">${esc(r.change)}</td><td class="muted">${esc(r.reason)}</td><td class="mono" style="font-size:12px">${esc(r.ip)}</td></tr>`).join('') || emptyRow(8, 'No entries match'), { sub: `${rows.length} of ${db().audit.length} entries` });
+    const { rows, scoped, acts, users, k } = auditView(false);
+    const total = (db().audit || []).length;
+    const people = new Set(scoped.map((r) => r.user)).size;
+    const locks = scoped.filter((r) => /lock|reopen|override|waiv/i.test(String(r.action))).length;
+    return pageHead('Audit Logs', 'Immutable trail of edits, verifications, locks and policy changes', `<button class="btn" onclick="LA.auditCsv(0)">${ic('download')} Export CSV</button>`, 'Payroll & Output')
+      + statStrip([
+        { lbl: 'Entries in scope', val: scoped.length, icon: 'doc', tone: 'b', hint: `${total} in the full log` },
+        { lbl: 'Logged today', val: scoped.filter((r) => r.at === TODAY).length, icon: 'clock', tone: 'g', hint: 'Append-only · cannot be edited' },
+        { lbl: 'Active users', val: people, icon: 'users', tone: 'p', hint: 'Including system jobs' },
+        { lbl: 'Lock & override events', val: locks, icon: 'lock', tone: locks ? 'a' : 'x', hint: 'Locks, reopens, waivers' },
+      ])
+      + card('Audit trail', bars(
+        sb(k + 'Q', 'Search entity, reason or user'),
+        `${L.fSel(k + 'Act', 'Action', acts, 'All actions')}${L.fSel(k + 'Usr', 'User', users, 'All users')}${L.fDate(k + 'From', 'From')}${L.fDate(k + 'To', 'To')}${rst([k + 'Act', k + 'Usr', k + 'From', k + 'To', k + 'Q'])}`,
+        showing(rows.length, scoped.length, 'entries'))
+        + tb(['Timestamp', 'Location', 'User', 'Action', 'Entity', 'Original → Modified', 'Reason'], rows.map((r) => `<tr><td class="mono" style="font-size:12px;white-space:nowrap">${esc(r.ts)}</td><td>${L.locChip(r.loc)}</td><td>${personCell(esc(r.user), `<span class="mono">${esc(r.ip)}</span>`)}</td><td>${bdg('s-b', esc(r.action))}</td><td>${esc(r.entity)}</td><td class="mono" style="font-size:12px">${esc(r.change)}</td><td class="muted">${esc(r.reason)}</td></tr>`).join(''), 'No audit entries match these filters'), { pad: false });
   }
   function sysAudit() {
-    const { rows, filters } = auditView(true);
-    return pageHead('System Audit & Security', 'Cross-company audit trail and security configuration', '', 'Administration')
-      + `<div class="grid g-4" style="margin-bottom:16px">${kpi({ icon: 'shield', acc: 'g', val: 'On', lbl: 'Audit logging' })}${kpi({ icon: 'lock', acc: 'g', val: 'AES-256', lbl: 'Encryption at rest' })}${kpi({ icon: 'clock', acc: 'b', val: '30 min', lbl: 'Session timeout' })}${kpi({ icon: 'device', acc: 'p', val: db().devices.filter((d) => d.online && L.hasLoc([d.loc])).length + '/' + db().devices.filter((d) => L.hasLoc([d.loc])).length, lbl: 'Devices online' })}</div>` + filters
-      + tableCard('System-wide audit', ['Timestamp', 'Location', 'User', 'Action', 'Detail'], rows.map((r) => `<tr><td class="mono" style="font-size:12px">${esc(r.ts)}</td><td>${L.locChip(r.loc)}</td><td>${esc(r.user)}</td><td>${bdg('s-b', esc(r.action))}</td><td class="muted">${esc(r.entity)}${r.change !== '—' ? ' · ' + esc(r.change) : ''}</td></tr>`).join('') || emptyRow(5, 'No entries match'), { sub: `${rows.length} entries` });
+    const { rows, scoped, acts, users, k } = auditView(true);
+    const devs = db().devices.filter((d) => L.hasLoc([d.loc]));
+    const online = devs.filter((d) => d.online).length;
+    return pageHead('System Audit & Security', 'Cross-company audit trail and security configuration', `<button class="btn" onclick="LA.auditCsv(1)">${ic('download')} Export CSV</button>`, 'Administration')
+      + statStrip([
+        { lbl: 'Audit logging', val: 'On', icon: 'shield', tone: 'g', hint: 'Append-only · every change recorded' },
+        { lbl: 'Encryption at rest', val: 'AES-256', icon: 'lock', tone: 'g', hint: 'Applies to all company data' },
+        { lbl: 'Session timeout', val: '30 min', icon: 'clock', tone: 'b', hint: 'Idle sessions are signed out' },
+        { lbl: 'Devices online', val: `${online}/${devs.length}`, icon: 'device', tone: online === devs.length ? 'g' : 'a', hint: devs.length - online ? `${devs.length - online} offline` : 'All devices reporting' },
+      ])
+      + card('System-wide audit', bars(
+        sb(k + 'Q', 'Search entity, reason or user'),
+        `${L.fSel(k + 'Act', 'Action', acts, 'All actions')}${L.fSel(k + 'Usr', 'User', users, 'All users')}${L.fDate(k + 'From', 'From')}${L.fDate(k + 'To', 'To')}${rst([k + 'Act', k + 'Usr', k + 'From', k + 'To', k + 'Q'])}`,
+        showing(rows.length, scoped.length, 'entries'))
+        + tb(['Timestamp', 'Location', 'User', 'Action', 'Detail'], rows.map((r) => `<tr><td class="mono" style="font-size:12px;white-space:nowrap">${esc(r.ts)}</td><td>${L.locChip(r.loc)}</td><td>${personCell(esc(r.user), `<span class="mono">${esc(r.ip || '')}</span>`)}</td><td>${bdg('s-b', esc(r.action))}</td><td class="muted">${esc(r.entity)}${r.change !== '—' ? ' · ' + esc(r.change) : ''}</td></tr>`).join(''), 'No audit entries match these filters'), { pad: false });
   }
 
   /* ---------- wire up ---------- */

@@ -5,9 +5,10 @@ import { useApp } from '@/context/AppContext';
 import { useOrg } from '@/context/OrgContext';
 import { LocationDef } from '@/lib/types';
 import { PageHeader } from '@/components/ui/PageHeader';
-import { Card, CardHeader, Button } from '@/components/ui/Card';
+import { Card, CardHeader, EmptyState, Button } from '@/components/ui/Card';
+import { StatStrip } from '@/components/ui/StatStrip';
 import { Drawer } from '@/components/ui/Drawer';
-import { EditIcon, MapPinIcon, PlusIcon, ShieldIcon, XIcon } from '@/components/icons';
+import { BuildingIcon, EditIcon, MapPinIcon, PeopleIcon, PlusIcon, ReceiptIcon, SearchIcon, ShieldIcon, XIcon } from '@/components/icons';
 
 const CURRENCIES = ['AED', 'INR', 'USD', 'SAR', 'QAR', 'OMR', 'KWD', 'BHD', 'GBP', 'EUR'];
 
@@ -50,6 +51,13 @@ export default function AdminSettingsPage() {
   const [locError, setLocError] = useState('');
   const [locNotice, setLocNotice] = useState('');
   const [seatInput, setSeatInput] = useState('');
+  const [locQ, setLocQ] = useState('');
+  const [locTpl, setLocTpl] = useState<'all' | LocationDef['template']>('all');
+
+  const locNeedle = locQ.trim().toLowerCase();
+  const shownLocs = locations.filter(
+    (l) => (locTpl === 'all' || l.template === locTpl) && (!locNeedle || `${l.name} ${l.city} ${l.currency} ${l.phoneCode}`.toLowerCase().includes(locNeedle))
+  );
 
   const openAddLoc = () => {
     setLocDraft(blankLoc());
@@ -129,7 +137,7 @@ export default function AdminSettingsPage() {
       <PageHeader
         eyebrow="Administration"
         title="System Settings"
-        description="Locations your organization operates in."
+        description="Locations your organization operates in — currency, phone format, working hours and seating."
         actions={
           <Button variant="primary" onClick={openAddLoc}>
             <PlusIcon /> Add location
@@ -137,42 +145,130 @@ export default function AdminSettingsPage() {
         }
       />
 
+      <div className="ad-strip">
+        <StatStrip
+          items={[
+            { label: 'Locations', value: locations.length, icon: <MapPinIcon />, tone: 'blue', hint: `${locations.filter((l) => l.system).length} built-in` },
+            { label: 'Currencies', value: new Set(locations.map((l) => l.currency)).size, icon: <ReceiptIcon />, tone: 'green' },
+            { label: 'Seating locations', value: locations.reduce((n, l) => n + l.seating.length, 0), icon: <BuildingIcon />, tone: 'purple' },
+            { label: 'Employees covered', value: locations.reduce((n, l) => n + locationUsage(l.id).employees, 0), icon: <PeopleIcon />, tone: 'amber' },
+          ]}
+        />
+      </div>
+
       <Card>
-        <CardHeader title="Locations" sub={`${locations.length} on file · offices and countries you operate in`} />
+        <CardHeader title="Locations" sub="Offices and countries you operate in" />
+        <div className="tbar">
+          <div className="tsearch">
+            <SearchIcon />
+            <input value={locQ} onChange={(e) => setLocQ(e.target.value)} placeholder="Find a location, city or currency…" />
+          </div>
+          <div className="subseg" style={{ margin: 0 }} role="group" aria-label="Form rules">
+            <button className={locTpl === 'all' ? 'on' : ''} onClick={() => setLocTpl('all')}>
+              All
+            </button>
+            <button className={locTpl === 'uae' ? 'on' : ''} onClick={() => setLocTpl('uae')}>
+              UAE-style
+            </button>
+            <button className={locTpl === 'india' ? 'on' : ''} onClick={() => setLocTpl('india')}>
+              India-style
+            </button>
+          </div>
+          <span className="ad-tb-ct">
+            {shownLocs.length} of {locations.length} locations
+          </span>
+        </div>
         {locNotice && (
           <div className="note-box warn" style={{ margin: '12px 16px 0' }}>
             <ShieldIcon />
             <div>{locNotice}</div>
           </div>
         )}
-        {locations.map((l) => (
-          <div key={l.id} className="doc">
-            <div className="fic">
-              <MapPinIcon />
-            </div>
-            <div>
-              <div className="nm">
-                {l.name} {l.system && <span style={{ fontWeight: 400, color: 'var(--faint)' }}>· Built-in</span>}
-              </div>
-              <div className="mt">{[l.city, l.currency, `${l.phoneCode} (${l.phoneDigits} digits)`, l.workingHours].filter(Boolean).join(' · ')}</div>
-              <div style={{ fontSize: 11.5, color: 'var(--faint)', marginTop: 2 }}>{TEMPLATE_LABEL[l.template]} · {l.seating.length} seating location(s)</div>
-            </div>
-            <div className="rt" style={{ gap: 6 }}>
-              <button className="icon-act" onClick={() => openEditLoc(l)} title="Edit">
-                <EditIcon />
-              </button>
-              {l.system ? (
-                <span className="icon-act" title="Built-in locations can't be deleted" style={{ cursor: 'default', color: 'var(--faint)' }}>
-                  <ShieldIcon />
-                </span>
-              ) : (
-                <button className="icon-act" onClick={() => deleteLoc(l)} title="Delete">
-                  <XIcon />
-                </button>
-              )}
-            </div>
+        {shownLocs.length === 0 ? (
+          <EmptyState
+            icon={<MapPinIcon />}
+            title={locations.length === 0 ? 'No locations yet' : 'No locations match'}
+            description={locations.length === 0 ? 'Add the first office or country your organization operates in.' : 'Try a different search or switch the form rules filter back to All.'}
+          />
+        ) : (
+          <div className="ad-locs">
+            {shownLocs.map((l) => {
+              const u = locationUsage(l.id);
+              return (
+                <div key={l.id} className="ad-loc">
+                  <div className="ad-loc-h">
+                    <span className="ad-ic" style={{ background: l.template === 'uae' ? '#e7f0fc' : '#e7f6ee', color: l.template === 'uae' ? '#2f6fd6' : '#1f9d63' }}>
+                      <MapPinIcon />
+                    </span>
+                    <div className="tx">
+                      <div className="nm">
+                        {l.name}
+                        {l.system && <span className="ad-pill">Built-in</span>}
+                        {currentLocation === l.id && <span className="ad-pill blue">Selected</span>}
+                      </div>
+                      <div className="ct">{l.city || 'No city set'}</div>
+                    </div>
+                  </div>
+                  <div className="ad-loc-b">
+                    <div>
+                      <div className="k">Currency</div>
+                      <div className="v">{l.currency}</div>
+                    </div>
+                    <div>
+                      <div className="k">Phone</div>
+                      <div className="v">
+                        {l.phoneCode} · {l.phoneDigits} digits
+                      </div>
+                    </div>
+                    <div className="full">
+                      <div className="k">Working hours</div>
+                      <div className="v">{l.workingHours || 'Not set'}</div>
+                    </div>
+                    <div className="full">
+                      <div className="k">Employee form rules</div>
+                      <div className="v">{TEMPLATE_LABEL[l.template]}</div>
+                    </div>
+                    <div className="full">
+                      <div className="k">Seating locations ({l.seating.length})</div>
+                      {l.seating.length === 0 ? (
+                        <div className="v" style={{ color: 'var(--faint)', fontWeight: 400 }}>
+                          None added yet
+                        </div>
+                      ) : (
+                        <div className="ad-seats">
+                          {l.seating.map((s) => (
+                            <span key={s} className="ad-pill">
+                              {s}
+                            </span>
+                          ))}
+                        </div>
+                      )}
+                    </div>
+                  </div>
+                  <div className="ad-loc-f">
+                    <span>
+                      {u.employees} employee{u.employees === 1 ? '' : 's'} · {u.departments} dept{u.departments === 1 ? '' : 's'} · {u.companies} compan{u.companies === 1 ? 'y' : 'ies'}
+                    </span>
+                    <div className="rt">
+                      <button className="icon-act" onClick={() => openEditLoc(l)} title="Edit">
+                        <EditIcon />
+                      </button>
+                      {l.system ? (
+                        <span className="icon-act" title="Built-in locations can't be deleted" style={{ cursor: 'default', color: 'var(--faint)' }}>
+                          <ShieldIcon />
+                        </span>
+                      ) : (
+                        <button className="icon-act" onClick={() => deleteLoc(l)} title="Delete">
+                          <XIcon />
+                        </button>
+                      )}
+                    </div>
+                  </div>
+                </div>
+              );
+            })}
           </div>
-        ))}
+        )}
       </Card>
 
       <Drawer

@@ -1,13 +1,15 @@
 'use client';
 
 import { useState } from 'react';
+import Link from 'next/link';
 import { useCurrentEmployee } from '@/context/AppContext';
 import { useVisa } from '@/context/VisaContext';
-import { managerOf } from '@/lib/data';
+import { ASSETS, LEAVE_BALANCES, REFERENCE_TODAY, managerOf } from '@/lib/data';
 import { PageHeader } from '@/components/ui/PageHeader';
 import { Card, CardHeader, Button } from '@/components/ui/Card';
 import { ExpiryBadge, StatusBadge } from '@/components/ui/Badge';
-import { CheckIcon, ShieldIcon } from '@/components/icons';
+import { StatStrip } from '@/components/ui/StatStrip';
+import { CheckIcon, ClockIcon, FileTextIcon, PackageIcon, ShieldIcon, UserIcon } from '@/components/icons';
 
 function Field({ k, v }: { k: string; v: React.ReactNode }) {
   return (
@@ -16,6 +18,16 @@ function Field({ k, v }: { k: string; v: React.ReactNode }) {
       <span className="v">{v}</span>
     </div>
   );
+}
+
+/** Whole years and months between a joining date and the reference date, e.g. "3y 4m". */
+function tenureOf(joined: string) {
+  const a = new Date(joined);
+  const b = new Date(REFERENCE_TODAY);
+  const months = Math.max(0, (b.getFullYear() - a.getFullYear()) * 12 + b.getMonth() - a.getMonth() - (b.getDate() < a.getDate() ? 1 : 0));
+  const y = Math.floor(months / 12);
+  const m = months % 12;
+  return y ? `${y}y ${m}m` : `${m}m`;
 }
 
 export default function ProfilePage() {
@@ -27,9 +39,13 @@ export default function ProfilePage() {
   const [editing, setEditing] = useState(false);
   const [submitted, setSubmitted] = useState(false);
 
+  const annual = LEAVE_BALANCES.find((b) => b.employeeId === e.id && b.type === 'Annual');
+  const assets = ASSETS.filter((a) => a.assignedTo === e.id).length;
+  const docAlerts = e.documents.filter((d) => d.state === 'soon' || d.state === 'expired').length;
+
   return (
     <div>
-      <PageHeader eyebrow="Self-service" title="My Profile" description="Your own record. Editable fields are limited to a self-service subset — sensitive changes route to HR for approval." />
+      <PageHeader eyebrow="My Space" title="My Profile" description="Your own record. Editable fields are limited to a self-service subset — sensitive changes route to HR for approval." />
 
       <Card>
         <div className="profile-hd">
@@ -49,11 +65,35 @@ export default function ProfilePage() {
         </div>
       </Card>
 
+      <div className="row-gap">
+        <StatStrip
+          items={[
+            { label: 'Tenure', value: tenureOf(e.dateOfJoining), icon: <UserIcon />, tone: 'blue', hint: `Joined ${e.dateOfJoining}` },
+            { label: 'Annual leave left', value: annual ? annual.entitled - annual.taken : '—', icon: <ClockIcon />, tone: 'green', hint: annual ? `of ${annual.entitled} days` : undefined, href: '/my/leave-attendance' },
+            { label: 'Documents on file', value: e.documents.length, icon: <FileTextIcon />, tone: docAlerts ? 'amber' : 'purple', hint: docAlerts ? `${docAlerts} need attention` : 'All up to date', href: '/my/files' },
+            { label: 'Assets assigned', value: assets, icon: <PackageIcon />, tone: 'teal', hint: 'IT and office equipment', href: '/my/assets' },
+          ]}
+        />
+      </div>
+
       <div className="g2 row-gap">
         <Card>
           <CardHeader title="Employment" />
           <div style={{ padding: '4px 18px' }}>
-            <Field k="Reporting manager" v={mgr?.name ?? '—'} />
+            <Field
+              k="Reporting manager"
+              v={
+                mgr ? (
+                  <Link href={`/directory/${mgr.employeeCode}`} className="ss-mgr">
+                    <span className="ss-ic av">{mgr.avatarInitials}</span>
+                    {mgr.name}
+                  </Link>
+                ) : (
+                  '—'
+                )
+              }
+            />
+            <Field k="Work email" v={e.email} />
             <Field k="Date of joining" v={e.dateOfJoining} />
             <Field k="Employment type" v={e.employmentType} />
             <Field k="Seating location" v={e.seatingLocation} />
@@ -62,7 +102,7 @@ export default function ProfilePage() {
         </Card>
 
         <Card>
-          <CardHeader title="Editable details" action={!editing && <button className="lnk" onClick={() => setEditing(true)}>Edit</button>} />
+          <CardHeader title="Editable details" sub="Self-service fields" action={!editing && <button className="lnk" onClick={() => setEditing(true)}>Edit</button>} />
           <div style={{ padding: 18 }}>
             <div className="fg" style={{ marginBottom: 12 }}>
               <label>Mobile number</label>
@@ -86,7 +126,7 @@ export default function ProfilePage() {
               </div>
             )}
 
-            <div style={{ marginTop: 18, borderTop: '1px solid var(--border-soft)', paddingTop: 16 }}>
+            <div className="ss-lock">
               <div className="note-box" style={{ marginBottom: 10, background: 'var(--gray-50)', borderColor: 'var(--border)', color: 'var(--text-2)' }}>
                 <ShieldIcon style={{ color: 'var(--faint)' }} />
                 Bank details, address and identity documents are locked. Changes to these route to HR as a request.

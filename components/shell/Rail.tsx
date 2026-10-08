@@ -7,7 +7,7 @@ import { useApp } from '@/context/AppContext';
 import { APP_MODULES, PERS, RAIL_LABEL, RailModule, resolveLocation } from '@/lib/nav';
 import { getLaLastRail, laCall, laIcon, useLaChrome } from '@/lib/laStore';
 import { lastModule } from '@/lib/lastModule';
-import { ClockIcon, GearIcon, GridIcon, HomeIcon, OpsIcon, PackageIcon, PeopleIcon, ReceiptIcon, RefreshIcon, ReportsIcon } from '@/components/icons';
+import { CheckIcon, ChevronRightIcon, ClockIcon, GearIcon, GridIcon, HomeIcon, OpsIcon, PackageIcon, PeopleIcon, ReceiptIcon, RefreshIcon, ReportsIcon } from '@/components/icons';
 
 const MODULE_ICON: Record<string, React.ComponentType<{ className?: string }>> = {
   employee: PeopleIcon,
@@ -15,6 +15,14 @@ const MODULE_ICON: Record<string, React.ComponentType<{ className?: string }>> =
   'leave-attendance': ClockIcon,
   payroll: ReceiptIcon,
   renewals: RefreshIcon,
+};
+
+const MODULE_TONE: Record<string, { bg: string; fg: string }> = {
+  employee: { bg: '#e7f0fc', fg: '#2f6fd6' },
+  'asset-management': { bg: '#fdf3df', fg: '#c6851b' },
+  'leave-attendance': { bg: '#e7f6ee', fg: '#1f9d63' },
+  payroll: { bg: '#f0eafc', fg: '#7a4bd0' },
+  renewals: { bg: '#fce9e7', fg: '#d5493f' },
 };
 
 const RAIL_ICON: Record<RailModule, React.ComponentType<{ className?: string }>> = {
@@ -116,11 +124,28 @@ export function Rail({ open, onClose }: { open: boolean; onClose: () => void }) 
       {switcherOpen && (
         <>
           <div className="zmod-ov" onClick={() => setSwitcherOpen(false)} />
-          <div className="zmod-pop" role="menu">
-            <div className="zmod-head">Switch module</div>
+          <div className="zmod-pop" role="menu" aria-label="Switch module">
+            <div className="zmod-head">
+              <span>Switch module</span>
+              <kbd>Esc</kbd>
+            </div>
             {APP_MODULES.map((m) => {
               const Icon = MODULE_ICON[m.slug];
               const current = m.slug === currentModule.slug;
+              const tone = MODULE_TONE[m.slug] ?? { bg: '#eef1fa', fg: '#28469a' };
+              if (m.soon)
+                return (
+                  <div key={m.slug} role="menuitem" aria-disabled="true" className="zmod-item off" title={`${m.name} isn't available yet`}>
+                    <span className="zmod-ic">
+                      <Icon />
+                    </span>
+                    <span style={{ flex: 1 }}>
+                      <span className="zmod-nm">{m.name}</span>
+                      <span className="zmod-ds">{m.desc}</span>
+                    </span>
+                    <span className="zmod-soon">Coming soon</span>
+                  </div>
+                );
               return (
                 <Link
                   key={m.slug}
@@ -132,17 +157,26 @@ export function Rail({ open, onClose }: { open: boolean; onClose: () => void }) 
                     onClose();
                   }}
                 >
-                  <span className="zmod-ic">
+                  <span className="zmod-ic" style={{ background: tone.bg, color: tone.fg }}>
                     <Icon />
                   </span>
                   <span style={{ flex: 1 }}>
                     <span className="zmod-nm">{m.name}</span>
                     <span className="zmod-ds">{m.desc}</span>
                   </span>
-                  {current && <span className="zmod-cur">Current</span>}
+                  {current ? (
+                    <span className="zmod-cur">
+                      <CheckIcon /> Current
+                    </span>
+                  ) : (
+                    <span className="zmod-go">
+                      <ChevronRightIcon />
+                    </span>
+                  )}
                 </Link>
               );
             })}
+            <div className="zmod-foot">Modules you can open depend on your role ({role}).</div>
           </div>
         </>
       )}

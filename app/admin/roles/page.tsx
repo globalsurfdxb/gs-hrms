@@ -2,7 +2,9 @@
 
 import { useMemo, useState } from 'react';
 import { ROLE_SCOPE } from '@/lib/data';
-import { AccessCategory, AccessFeature, AccessModule, SYSTEM_ROLES, buildCatalog, defaultGrants } from '@/lib/access';
+import { logAudit } from '@/lib/employeeStore';
+import { useCurrentEmployee } from '@/context/AppContext';
+import { ACTIONS, AccessAction, AccessCategory, AccessFeature, AccessModule, EXTRA_ACTIONS, ExtraAction, SYSTEM_ROLES, buildCatalog, defaultGrants, permKey } from '@/lib/access';
 import { PageHeader } from '@/components/ui/PageHeader';
 import { Button } from '@/components/ui/Card';
 import { Drawer } from '@/components/ui/Drawer';
@@ -36,9 +38,19 @@ const MODULE_COLOR: Record<string, { bg: string; fg: string }> = {
 const MODULE_SHORT: Record<string, string> = { administration: 'Admin', employee: 'Employee', 'leave-attendance': 'Leave', 'asset-management': 'Asset', payroll: 'Payroll', renewals: 'Renewal' };
 const ROLE_COLORS = ['#7a4bd0', '#2f6fd6', '#1f9d63', '#c6851b', '#d5493f', '#0e8fa8', '#6b7690'];
 
+/** Plain-English list of permission keys ("Directory (Edit), Leave Requests (View) +2 more") for the audit log. */
+const describePerms = (keys: string[], catalog: AccessModule[]) => {
+  const labels = new Map<string, string>();
+  catalog.forEach((m) => m.categories.forEach((c) => c.features.forEach((f) => labels.set(f.id, f.label))));
+  const names = keys.map((k) => {
+    const [id, a] = k.split('#');
+    return `${labels.get(id) ?? id} (${a ? a.charAt(0).toUpperCase() + a.slice(1) : 'View'})`;
+  });
+  return names.length > 3 ? `${names.slice(0, 3).join(', ')} +${names.length - 3} more` : names.join(', ');
+};
+
 const NEW_CATEGORY = '__new__';
 const blankRole = (): RoleDef => ({ id: '', name: '', description: '', system: false, perms: [] });
-const ids = (fs: AccessFeature[]) => fs.map((f) => f.id);
 const catFeatures = (c: AccessCategory) => c.features;
 const modFeatures = (m: AccessModule) => m.categories.flatMap(catFeatures);
 
@@ -54,6 +66,73 @@ function Check({ checked, some, onChange, title }: { checked: boolean; some?: bo
       onChange={onChange}
       style={{ width: 15, height: 15, accentColor: 'var(--primary)', cursor: 'pointer' }}
     />
+  );
+}
+
+/** Every permission key a feature can have: View plus whichever of Add/Edit/Delete apply. */
+const fullKeys = (f: AccessFeature) => [f.id, ...(f.actions ?? []).map((a) => permKey(f.id, a))];
+const fullStat = (perms: string[], list: AccessFeature[]) => {
+  const keys = list.flatMap(fullKeys);
+  const n = keys.filter((k) => perms.includes(k)).length;
+  return { n, all: n === keys.length && keys.length > 0, some: n > 0 };
+};
+/** Add/Edit/Delete need View, so ticking one ticks View and clearing View clears them all. */
+const flipAction = (perms: string[], f: AccessFeature, a: AccessAction): string[] => {
+  if (a === 'view') return perms.includes(f.id) ? perms.filter((p) => p !== f.id && !p.startsWith(`${f.id}#`)) : [...perms, f.id];
+  const k = permKey(f.id, a);
+  return perms.includes(k) ? perms.filter((p) => p !== k) : [...new Set([...perms, f.id, k])];
+};
+const flipFull = (perms: string[], list: AccessFeature[]): string[] => {
+  const keys = list.flatMap(fullKeys);
+  return keys.every((k) => perms.includes(k)) ? perms.filter((p) => !keys.includes(p)) : [...new Set([...perms, ...keys])];
+};
+const countAction = (perms: string[], list: AccessFeature[], a: ExtraAction) => list.filter((f) => perms.includes(permKey(f.id, a))).length;
+
+/** How many of the features that support an action have it ticked (View applies to every feature). */
+const groupStat = (perms: string[], list: AccessFeature[], a: AccessAction) => {
+  const sup = list.filter((f) => a === 'view' || (f.actions ?? []).includes(a as ExtraAction));
+  const n = sup.filter((f) => perms.includes(permKey(f.id, a))).length;
+  return { n, total: sup.length, all: sup.length > 0 && n === sup.length, some: n > 0 };
+};
+const flipGroup = (perms: string[], list: AccessFeature[], a: AccessAction): string[] => {
+  const sup = list.filter((f) => a === 'view' || (f.actions ?? []).includes(a as ExtraAction));
+  if (!sup.length) return perms;
+  const all = sup.every((f) => perms.includes(permKey(f.id, a)));
+  return sup.reduce((p, f) => (all ? (a === 'view' ? flipAction(p, f, 'view') : p.filter((x) => x !== permKey(f.id, a))) : p.includes(permKey(f.id, a)) ? p : flipAction(p, f, a)), perms);
+};
+
+/** One View / Add / Edit / Delete button per action for a whole module or category (all, some or none ticked). */
+function GroupActs({ list, perms, who, onToggle }: { list: AccessFeature[]; perms: string[]; who: string; onToggle: (a: AccessAction) => void }) {
+  return (
+    <span className="acts">
+      {ACTIONS.map((a) => {
+        const g = groupStat(perms, list, a.key);
+        if (!g.total) return <span key={a.key} className="act-gap" />;
+        return (
+          <button key={a.key} type="button" className={`act act-${a.key} ${g.all ? 'on' : g.some ? 'part' : ''}`} aria-pressed={g.all} title={`${who}: ${a.label} — ${g.n} of ${g.total} features`} onClick={() => onToggle(a.key)}>
+            {a.short}
+          </button>
+        );
+      })}
+    </span>
+  );
+}
+
+/** View / Add / Edit / Delete toggles for one feature and one role. */
+function Acts({ f, perms, who, onToggle }: { f: AccessFeature; perms: string[]; who: string; onToggle: (a: AccessAction) => void }) {
+  return (
+    <span className="acts">
+      {ACTIONS.map((a) => {
+        const applies = a.key === 'view' || (f.actions ?? []).includes(a.key as ExtraAction);
+        if (!applies) return <span key={a.key} className="act-gap" />;
+        const on = perms.includes(permKey(f.id, a.key));
+        return (
+          <button key={a.key} type="button" className={`act act-${a.key} ${on ? 'on' : ''}`} aria-pressed={on} title={`${who}: ${a.label} — ${a.hint}`} onClick={() => onToggle(a.key)}>
+            {a.short}
+          </button>
+        );
+      })}
+    </span>
   );
 }
 
@@ -73,6 +152,7 @@ function Acc({ open, onToggle, level, title, meta, icon, badge, children }: { op
 }
 
 export default function AdminRolesPage() {
+  const me = useCurrentEmployee();
   const [catalog, setCatalog] = useState<AccessModule[]>(buildCatalog);
   const [roles, setRoles] = useState<RoleDef[]>(() => {
     const cat = buildCatalog();
@@ -93,6 +173,7 @@ export default function AdminRolesPage() {
   const [featCat, setFeatCat] = useState('');
   const [featNewCat, setFeatNewCat] = useState('');
   const [featRoles, setFeatRoles] = useState<string[]>(['Super Admin']);
+  const [featActs, setFeatActs] = useState<ExtraAction[]>(['add', 'edit', 'delete']);
   const [featError, setFeatError] = useState('');
 
   const searching = q.trim().length > 0;
@@ -119,10 +200,18 @@ export default function AdminRolesPage() {
     setOpen(next);
   };
 
-  const mutate = (roleId: string, fn: (p: string[]) => string[]) => setRoles((prev) => prev.map((r) => (r.id === roleId ? { ...r, perms: fn(r.perms) } : r)));
-  const toggleSet = (roleId: string, list: string[]) =>
-    mutate(roleId, (p) => (list.every((id) => p.includes(id)) ? p.filter((x) => !list.includes(x)) : [...new Set([...p, ...list])]));
-  const toggleOne = (roleId: string, id: string) => mutate(roleId, (p) => (p.includes(id) ? p.filter((x) => x !== id) : [...p, id]));
+  /** Write grant and revoke entries to the audit log for one role's permission change. */
+  const auditPerms = (roleName: string, before: string[], after: string[]) => {
+    const granted = after.filter((k) => !before.includes(k));
+    const revoked = before.filter((k) => !after.includes(k));
+    if (granted.length) logAudit({ employeeId: `role:${roleName}`, field: 'Permission granted', to: describePerms(granted, catalog), changedBy: me.name, module: 'Access' });
+    if (revoked.length) logAudit({ employeeId: `role:${roleName}`, field: 'Permission revoked', from: describePerms(revoked, catalog), to: 'Removed', changedBy: me.name, module: 'Access' });
+  };
+  const mutate = (roleId: string, fn: (p: string[]) => string[]) => {
+    const r = roles.find((x) => x.id === roleId);
+    if (r) auditPerms(r.name, r.perms, fn(r.perms));
+    setRoles((prev) => prev.map((x) => (x.id === roleId ? { ...x, perms: fn(x.perms) } : x)));
+  };
   const stat = (perms: string[], list: AccessFeature[]) => {
     const n = list.filter((f) => perms.includes(f.id)).length;
     return { n, all: n === list.length && list.length > 0, some: n > 0 };
@@ -143,16 +232,25 @@ export default function AdminRolesPage() {
     setRoleError('');
     setRoleDrawer(true);
   };
-  const draftSet = (list: string[]) =>
-    setDraft((d) => ({ ...d, perms: list.every((id) => d.perms.includes(id)) ? d.perms.filter((x) => !list.includes(x)) : [...new Set([...d.perms, ...list])] }));
-  const draftOne = (id: string) => setDraft((d) => ({ ...d, perms: d.perms.includes(id) ? d.perms.filter((x) => x !== id) : [...d.perms, id] }));
+  const draftFull = (list: AccessFeature[]) => setDraft((d) => ({ ...d, perms: flipFull(d.perms, list) }));
+  const draftAct = (f: AccessFeature, a: AccessAction) => setDraft((d) => ({ ...d, perms: flipAction(d.perms, f, a) }));
 
   const saveRole = () => {
     const name = draft.name.trim();
     if (!name) return setRoleError('Role name is required.');
     if (mode === 'add' && roles.some((r) => r.name.toLowerCase() === name.toLowerCase())) return setRoleError('A role with that name already exists.');
-    if (mode === 'add') setRoles((prev) => [...prev, { ...draft, id: `role-${Date.now()}`, name, system: false }]);
-    else setRoles((prev) => prev.map((r) => (r.id === draft.id ? { ...draft, name: r.system ? r.name : name } : r)));
+    if (mode === 'add') {
+      logAudit({ employeeId: `role:${name}`, field: 'Role created', to: `${name} · ${draft.perms.length} permissions`, changedBy: me.name, module: 'Access' });
+      setRoles((prev) => [...prev, { ...draft, id: `role-${Date.now()}`, name, system: false }]);
+    } else {
+      const before = roles.find((r) => r.id === draft.id);
+      if (before) {
+        auditPerms(before.name, before.perms, draft.perms);
+        if (!before.system && before.name !== name) logAudit({ employeeId: `role:${name}`, field: 'Role renamed', from: before.name, to: name, changedBy: me.name, module: 'Access' });
+        if (before.description !== draft.description) logAudit({ employeeId: `role:${before.name}`, field: 'Role description changed', from: before.description || '—', to: draft.description || '—', changedBy: me.name, module: 'Access' });
+      }
+      setRoles((prev) => prev.map((r) => (r.id === draft.id ? { ...draft, name: r.system ? r.name : name } : r)));
+    }
     setRoleDrawer(false);
   };
 
@@ -165,6 +263,7 @@ export default function AdminRolesPage() {
     setFeatCat(m.categories[0]?.id ?? NEW_CATEGORY);
     setFeatNewCat('');
     setFeatRoles(['Super Admin']);
+    setFeatActs(['add', 'edit', 'delete']);
     setFeatError('');
     setFeatDrawer(true);
   };
@@ -186,20 +285,23 @@ export default function AdminRolesPage() {
       }
     }
     const fid = `${m.id}:${catId}:custom-${Date.now()}`;
+    logAudit({ employeeId: `feature:${label}`, field: 'Feature added', to: `${label} · ${m.name}${featRoles.length ? ` · granted to ${roles.filter((r) => featRoles.includes(r.id)).map((r) => r.name).join(', ')}` : ''}`, changedBy: me.name, module: 'Access' });
     setCatalog((prev) =>
       prev.map((x) => {
         if (x.id !== m.id) return x;
         const cats = newCat ? [...x.categories, newCat] : x.categories;
-        return { ...x, categories: cats.map((c) => (c.id === catId ? { ...c, features: [...c.features, { id: fid, label, custom: true }] } : c)) };
+        return { ...x, categories: cats.map((c) => (c.id === catId ? { ...c, features: [...c.features, { id: fid, label, custom: true, actions: featActs }] } : c)) };
       })
     );
-    setRoles((prev) => prev.map((r) => (featRoles.includes(r.id) ? { ...r, perms: [...r.perms, fid] } : r)));
+    setRoles((prev) => prev.map((r) => (featRoles.includes(r.id) ? { ...r, perms: [...r.perms, fid, ...featActs.map((a) => permKey(fid, a))] } : r)));
     setOpen((o) => ({ ...o, [m.id]: true, [`${m.id}/${catId}`]: true }));
     setFeatDrawer(false);
   };
   const removeFeature = (id: string) => {
+    const label = catalog.flatMap(modFeatures).find((f) => f.id === id)?.label ?? id;
+    logAudit({ employeeId: `feature:${label}`, field: 'Feature removed', from: label, to: 'Removed', changedBy: me.name, module: 'Access' });
     setCatalog((prev) => prev.map((m) => ({ ...m, categories: m.categories.map((c) => ({ ...c, features: c.features.filter((f) => f.id !== id) })) })));
-    setRoles((prev) => prev.map((r) => ({ ...r, perms: r.perms.filter((p) => p !== id) })));
+    setRoles((prev) => prev.map((r) => ({ ...r, perms: r.perms.filter((p) => p !== id && !p.startsWith(`${id}#`)) })));
   };
 
   return (
@@ -207,7 +309,7 @@ export default function AdminRolesPage() {
       <PageHeader
         eyebrow="Administration"
         title="Roles & Permissions"
-        description="One access model for every module. Open a module, then a category, and tick the features each role may use."
+        description="One access model for every module. For each feature choose exactly what a role can do: View, Add, Edit or Delete."
         actions={
           <>
             <Button variant="ghost" onClick={() => expandAll(true)}>
@@ -292,7 +394,14 @@ export default function AdminRolesPage() {
                     <ShieldIcon />
                   </span>
                 ) : (
-                  <button className="icon-act" onClick={() => setRoles((prev) => prev.filter((x) => x.id !== r.id))} title="Delete role">
+                  <button
+                    className="icon-act"
+                    onClick={() => {
+                      logAudit({ employeeId: `role:${r.name}`, field: 'Role deleted', from: r.name, to: 'Removed', changedBy: me.name, module: 'Access' });
+                      setRoles((prev) => prev.filter((x) => x.id !== r.id));
+                    }}
+                    title="Delete role"
+                  >
                     <XIcon />
                   </button>
                 )}
@@ -303,6 +412,18 @@ export default function AdminRolesPage() {
               </div>
               <div className="rc-pct">
                 <b>{g}</b> of {totalFeatures} features · {pct}%
+              </div>
+              <div className="rc-acts">
+                <span title={`Features ${r.name} can view`}>
+                  <b>{g}</b>
+                  <em>View</em>
+                </span>
+                {EXTRA_ACTIONS.map((a) => (
+                  <span key={a} title={`Features where ${r.name} can ${a}`}>
+                    <b>{catalog.reduce((n, m) => n + countAction(r.perms, modFeatures(m), a), 0)}</b>
+                    <em>{ACTIONS.find((x) => x.key === a)?.label}</em>
+                  </span>
+                ))}
               </div>
               <div className="rc-mods">
                 {catalog.map((m) => {
@@ -321,7 +442,7 @@ export default function AdminRolesPage() {
 
       <div className="rp-sec" style={{ marginTop: 26 }}>
         <h3>Access matrix</h3>
-        <span>Module → category → feature. Tick a module or category to grant everything inside it.</span>
+        <span>Module → category → feature. Add, Edit and Delete include View. The V A E D buttons on a module or category set that action for everything inside it.</span>
       </div>
       <div className="rp-card">
         <div className="tbar">
@@ -330,9 +451,11 @@ export default function AdminRolesPage() {
             <input value={q} onChange={(e) => setQ(e.target.value)} placeholder="Find a feature, category or module…" />
           </div>
           <div className="rp-legend">
-            <span><i className="lg full" /> All</span>
-            <span><i className="lg part" /> Some</span>
-            <span><i className="lg none" /> None</span>
+            {ACTIONS.map((a) => (
+              <span key={a.key} title={a.hint}>
+                <i className={`act-key act-${a.key}`}>{a.short}</i> {a.label}
+              </span>
+            ))}
           </div>
         </div>
 
@@ -354,6 +477,12 @@ export default function AdminRolesPage() {
                   </span>
                   <b>{r.name}</b>
                   <small>{pct}%</small>
+                  <span className="acts cap" aria-hidden="true">
+                    <i>V</i>
+                    <i>A</i>
+                    <i>E</i>
+                    <i>D</i>
+                  </span>
                 </div>
               );
             })}
@@ -384,13 +513,9 @@ export default function AdminRolesPage() {
                     </div>
                   </div>
                   {roles.map((r) => {
-                    const st = stat(r.perms, mf);
                     return (
                       <div key={r.id} className="rp-rc" onClick={(e) => e.stopPropagation()}>
-                        <Check checked={st.all} some={st.some} onChange={() => toggleSet(r.id, ids(mf))} title={`${r.name}: ${st.n}/${mf.length} in ${m.name}`} />
-                        <small>
-                          {st.n}/{mf.length}
-                        </small>
+                        <GroupActs list={mf} perms={r.perms} who={`${r.name} · ${m.name}`} onToggle={(a) => mutate(r.id, (p) => flipGroup(p, mf, a))} />
                       </div>
                     );
                   })}
@@ -409,10 +534,9 @@ export default function AdminRolesPage() {
                             <span className="rp-cnt">{c.features.length}</span>
                           </div>
                           {roles.map((r) => {
-                            const st = stat(r.perms, c.features);
                             return (
                               <div key={r.id} className="rp-rc" onClick={(e) => e.stopPropagation()}>
-                                <Check checked={st.all} some={st.some} onChange={() => toggleSet(r.id, ids(c.features))} title={`${r.name}: ${st.n}/${c.features.length} in ${c.label}`} />
+                                <GroupActs list={c.features} perms={r.perms} who={`${r.name} · ${c.label}`} onToggle={(a) => mutate(r.id, (p) => flipGroup(p, c.features, a))} />
                               </div>
                             );
                           })}
@@ -433,7 +557,7 @@ export default function AdminRolesPage() {
                               </div>
                               {roles.map((r) => (
                                 <div key={r.id} className="rp-rc">
-                                  <Check checked={r.perms.includes(fe.id)} onChange={() => toggleOne(r.id, fe.id)} title={`${r.name} → ${fe.label}`} />
+                                  <Acts f={fe} perms={r.perms} who={r.name} onToggle={(a) => mutate(r.id, (p) => flipAction(p, fe, a))} />
                                 </div>
                               ))}
                             </div>
@@ -498,28 +622,30 @@ export default function AdminRolesPage() {
           {catalog.map((m) => {
             const mf = modFeatures(m);
             const ms = stat(draft.perms, mf);
+            const mfl = fullStat(draft.perms, mf);
             const Icon = MODULE_ICON[m.id] ?? KeyIcon;
             return (
               <Acc key={m.id} level={1} open={!!draftOpen[m.id]} onToggle={() => setDraftOpen((o) => ({ ...o, [m.id]: !o[m.id] }))} icon={<Icon />} title={m.name} badge={m.common ? 'Common' : undefined} meta={`${ms.n}/${mf.length}`}>
                 <label className="perm-item" style={{ marginBottom: 8, background: 'var(--bg)' }}>
-                  <Check checked={ms.all} some={ms.some} onChange={() => draftSet(ids(mf))} />
-                  <div className="nm">Entire module</div>
+                  <Check checked={mfl.all} some={mfl.some} onChange={() => draftFull(mf)} />
+                  <div className="nm">Full access to the entire module</div>
                 </label>
                 {m.categories.map((c) => {
                   const cs = stat(draft.perms, c.features);
+                  const cfl = fullStat(draft.perms, c.features);
                   const key = `${m.id}/${c.id}`;
                   return (
                     <Acc key={c.id} level={2} open={!!draftOpen[key]} onToggle={() => setDraftOpen((o) => ({ ...o, [key]: !o[key] }))} title={c.label} meta={`${cs.n}/${c.features.length}`}>
                       <label className="perm-item" style={{ marginBottom: 6, background: 'var(--bg)' }}>
-                        <Check checked={cs.all} some={cs.some} onChange={() => draftSet(ids(c.features))} />
-                        <div className="nm">All in {c.label}</div>
+                        <Check checked={cfl.all} some={cfl.some} onChange={() => draftFull(c.features)} />
+                        <div className="nm">Full access to all in {c.label}</div>
                       </label>
-                      <div className="perm-grid">
+                      <div className="perm-grid" style={{ gridTemplateColumns: '1fr' }}>
                         {c.features.map((f) => (
-                          <label key={f.id} className="perm-item">
-                            <input type="checkbox" checked={draft.perms.includes(f.id)} onChange={() => draftOne(f.id)} />
+                          <div key={f.id} className="perm-item perm-acts">
                             <div className="nm">{f.label}</div>
-                          </label>
+                            <Acts f={f} perms={draft.perms} who={draft.name || 'Role'} onToggle={(a) => draftAct(f, a)} />
+                          </div>
                         ))}
                       </div>
                     </Acc>
@@ -602,7 +728,23 @@ export default function AdminRolesPage() {
         {featError && <div style={{ marginTop: 6, fontSize: 12, color: 'var(--danger)' }}>{featError}</div>}
 
         <div style={{ marginTop: 18 }}>
-          <div style={{ fontSize: 12.5, fontWeight: 700, color: 'var(--muted)', textTransform: 'uppercase', letterSpacing: '.03em', marginBottom: 8 }}>Grant to</div>
+          <div style={{ fontSize: 12.5, fontWeight: 700, color: 'var(--muted)', textTransform: 'uppercase', letterSpacing: '.03em', marginBottom: 8 }}>Actions this feature supports</div>
+          <div className="perm-grid">
+            <label className="perm-item">
+              <input type="checkbox" checked disabled />
+              <div className="nm">View</div>
+            </label>
+            {EXTRA_ACTIONS.map((a) => (
+              <label key={a} className="perm-item">
+                <input type="checkbox" checked={featActs.includes(a)} onChange={() => setFeatActs((p) => (p.includes(a) ? p.filter((x) => x !== a) : [...p, a]))} />
+                <div className="nm">{ACTIONS.find((x) => x.key === a)?.label}</div>
+              </label>
+            ))}
+          </div>
+        </div>
+
+        <div style={{ marginTop: 18 }}>
+          <div style={{ fontSize: 12.5, fontWeight: 700, color: 'var(--muted)', textTransform: 'uppercase', letterSpacing: '.03em', marginBottom: 8 }}>Grant to (all selected actions)</div>
           <div className="perm-grid">
             {roles.map((r) => (
               <label key={r.id} className="perm-item">

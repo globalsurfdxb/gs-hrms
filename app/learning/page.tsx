@@ -14,7 +14,9 @@ import { Badge } from '@/components/ui/Badge';
 import { Drawer } from '@/components/ui/Drawer';
 import { SearchSelect } from '@/components/ui/SearchSelect';
 import { EmpId } from '@/components/ui/EmployeeBits';
-import { BookIcon, PlusIcon, SearchIcon, XIcon } from '@/components/icons';
+import { Avatar } from '@/components/ui/Avatar';
+import { StatStrip } from '@/components/ui/StatStrip';
+import { BookIcon, CheckIcon, ClockIcon, PlusIcon, ReportsIcon, SearchIcon, WarnIcon, XIcon } from '@/components/icons';
 
 const TONE: Record<LearningRecord['status'], 'inactive' | 'pending' | 'active'> = {
   'Not Started': 'inactive',
@@ -81,6 +83,8 @@ export default function LearningPage() {
   const inProgress = allRows.filter((r) => r.status === 'In Progress').length;
   const notStarted = allRows.filter((r) => r.status === 'Not Started').length;
   const rate = allRows.length ? Math.round((completed / allRows.length) * 100) : 0;
+  const overdueCount = allRows.filter((r) => r.status !== 'Completed' && !!r.dueDate && r.dueDate < REFERENCE_TODAY).length;
+  const filtersOn = !!q.trim() || loc !== 'All' || category !== 'All' || statusFilter !== 'All';
 
   const open = records.find((r) => r.id === openId);
   const openEmp = open ? employeeById(open.employeeId) : undefined;
@@ -112,6 +116,8 @@ export default function LearningPage() {
   const chosenCategory = mode === 'existing' ? courses.find((c) => c.name === courseName)?.category ?? '' : newCategory;
   const eligible = EMPLOYEES.filter((e) => statusOf(e) === 'Active' && !(chosenCourse && records.some((r) => r.course.toLowerCase() === chosenCourse.toLowerCase() && r.employeeId === e.id)));
   const shown = eligible.filter((e) => matchesEmployee(e, pickQ));
+  /** Training can't be assigned before the person's joining date. */
+  const notJoined = (e: (typeof EMPLOYEES)[number]) => e.dateOfJoining > REFERENCE_TODAY;
 
   const openAssign = () => {
     setMode('existing');
@@ -142,6 +148,11 @@ export default function LearningPage() {
       setAssignError('Select at least one employee.');
       return;
     }
+    const early = ids.map((id) => employeeById(id)).filter((e): e is NonNullable<typeof e> => !!e && notJoined(e));
+    if (early.length) {
+      setAssignError(`${early.map((e) => `${e.name} (joins ${e.dateOfJoining})`).join(', ')} cannot be assigned training before their joining date.`);
+      return;
+    }
     if (!due || due < REFERENCE_TODAY) {
       setAssignError('Choose a due date that is today or later.');
       return;
@@ -164,26 +175,14 @@ export default function LearningPage() {
         }
       />
 
-      <div className="g3">
-        <div className="compcard">
-          <div className="ttl">Completed</div>
-          <div className="num" style={{ fontSize: 24, fontWeight: 700, color: '#15803D' }}>
-            {completed}
-          </div>
-        </div>
-        <div className="compcard">
-          <div className="ttl">In progress</div>
-          <div className="num" style={{ fontSize: 24, fontWeight: 700, color: '#B45309' }}>
-            {inProgress}
-          </div>
-        </div>
-        <div className="compcard">
-          <div className="ttl">Not started</div>
-          <div className="num" style={{ fontSize: 24, fontWeight: 700, color: 'var(--muted)' }}>
-            {notStarted}
-          </div>
-        </div>
-      </div>
+      <StatStrip
+        items={[
+          { label: 'Completion rate', value: `${rate}%`, icon: <ReportsIcon />, tone: 'blue', hint: `${allRows.length} assignment${allRows.length === 1 ? '' : 's'}` },
+          { label: 'Completed', value: completed, icon: <CheckIcon />, tone: 'green', hint: 'Finished courses' },
+          { label: 'In progress', value: inProgress, icon: <ClockIcon />, tone: 'amber', hint: `${notStarted} not started` },
+          { label: 'Overdue', value: overdueCount, icon: <WarnIcon />, tone: overdueCount ? 'red' : 'gray', hint: overdueCount ? 'Past their due date' : 'Nothing overdue' },
+        ]}
+      />
 
       <Card className="row-gap">
         <CardHeader title="Course assignments" sub={`${allRows.length} assignment(s) · ${rate}% complete`} />
@@ -213,8 +212,22 @@ export default function LearningPage() {
               </option>
             ))}
           </select>
+          {filtersOn && (
+            <button
+              type="button"
+              className="chip"
+              onClick={() => {
+                setQ('');
+                setLoc('All');
+                setCategory('All');
+                setStatusFilter('All');
+              }}
+            >
+              <XIcon /> Clear filters
+            </button>
+          )}
           <span className="sp" />
-          <span style={{ fontSize: 12, color: 'var(--muted)' }}>
+          <span className="lc-count">
             {rows.length} of {allRows.length}
           </span>
         </div>
@@ -235,12 +248,13 @@ export default function LearningPage() {
             )}
           </div>
         ) : (
+          <>
+          <div className="lc-scroll">
           <table>
             <thead>
               <tr>
                 <th>Employee</th>
                 <th>Course</th>
-                <th>Category</th>
                 <th>Status</th>
                 <th>Due</th>
                 <th>Completed</th>
@@ -252,35 +266,44 @@ export default function LearningPage() {
                 const e = employeeById(r.employeeId)!;
                 const overdue = r.status !== 'Completed' && !!r.dueDate && r.dueDate < REFERENCE_TODAY;
                 return (
-                  <tr key={r.id}>
+                  <tr key={r.id} className={`lc-row ${overdue ? 'expired' : ''}`}>
                     <td>
                       <Link href={`/directory/${e.employeeCode}`} className="person">
-                        <div className="av" style={{ background: 'var(--primary-100)', color: 'var(--primary)' }}>
-                          {e.avatarInitials}
-                        </div>
+                        <Avatar initials={e.avatarInitials} seed={e.department} />
                         <div>
                           <div className="nm">
                             {e.name}
                             <EmpId code={e.employeeCode} />
                           </div>
-                          <div className="sb">{locationName(e.location)}</div>
+                          <div className="sb">
+                            {e.department} · {locationName(e.location)}
+                          </div>
                         </div>
                       </Link>
                     </td>
-                    <td>{r.course}</td>
-                    <td>{r.category}</td>
+                    <td>
+                      <div className="lc-cell">
+                        <span className="lc-ic">
+                          <BookIcon />
+                        </span>
+                        <div>
+                          <div className="nm">{r.course}</div>
+                          <div className="sb">{r.category}</div>
+                        </div>
+                      </div>
+                    </td>
                     <td>
                       <Badge tone={TONE[r.status]}>{r.status}</Badge>
                     </td>
                     <td className="mono">
                       {r.dueDate ?? '—'}
-                      {overdue && <span style={{ marginLeft: 6, fontSize: 11, fontWeight: 700, color: '#B91C1C' }}>Overdue</span>}
+                      {overdue && <span className="lc-over">Overdue</span>}
                     </td>
                     <td className="mono">
                       {r.completedOn ?? '—'}
                       {r.score !== undefined && <span style={{ marginLeft: 6, color: 'var(--muted)' }}>· {r.score}%</span>}
                     </td>
-                    <td style={{ textAlign: 'right', whiteSpace: 'nowrap' }}>
+                    <td className="lc-right">
                       {r.status === 'Not Started' && (
                         <>
                           <Button size="sm" variant="primary" onClick={() => start(r.id)}>
@@ -312,6 +335,14 @@ export default function LearningPage() {
               })}
             </tbody>
           </table>
+          </div>
+          <div className="tfoot lc-foot">
+            <span>
+              Showing {rows.length} of {allRows.length} assignment{allRows.length === 1 ? '' : 's'}
+            </span>
+            <span>{rate}% complete</span>
+          </div>
+          </>
         )}
       </Card>
 
@@ -458,7 +489,7 @@ export default function LearningPage() {
             <input value={pickQ} onChange={(e) => setPickQ(e.target.value)} placeholder="Search by name or employee ID…" style={{ border: 'none', background: 'none', outline: 'none', fontSize: 13, width: '100%' }} />
           </div>
           <div style={{ display: 'flex', gap: 8, marginBottom: 8 }}>
-            <Button size="sm" onClick={() => setPicked(new Set(shown.map((e) => e.id)))}>
+            <Button size="sm" onClick={() => setPicked(new Set(shown.filter((e) => !notJoined(e)).map((e) => e.id)))}>
               Select all{pickQ.trim() ? ' shown' : ''}
             </Button>
             <Button size="sm" onClick={() => setPicked(new Set())} disabled={!picked.size}>
@@ -469,7 +500,7 @@ export default function LearningPage() {
           <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
             {shown.map((e) => (
               <label key={e.id} className="perm-item" style={{ alignItems: 'center' }}>
-                <input type="checkbox" checked={picked.has(e.id)} onChange={() => togglePick(e.id)} style={{ marginTop: 0 }} />
+                <input type="checkbox" checked={picked.has(e.id)} disabled={notJoined(e)} onChange={() => togglePick(e.id)} style={{ marginTop: 0 }} />
                 <div style={{ flex: 1 }}>
                   <div className="nm">
                     {e.name}
@@ -477,6 +508,7 @@ export default function LearningPage() {
                   </div>
                   <div className="ds">
                     {e.designation} · {e.department} · {locationName(e.location)}
+                    {notJoined(e) && ` · joins ${e.dateOfJoining}, available from then`}
                   </div>
                 </div>
               </label>

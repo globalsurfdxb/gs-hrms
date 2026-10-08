@@ -10,12 +10,13 @@ import { usePathname, useRouter } from 'next/navigation';
 import { Rail } from './Rail';
 import { TopBar } from './TopBar';
 import { SubTabs } from './SubTabs';
-import { useApp } from '@/context/AppContext';
-import { PERS, resolveLocation } from '@/lib/nav';
+import { useApp, useCurrentEmployee } from '@/context/AppContext';
+import { routeAllowed } from '@/lib/guard';
 
 export function AppShell({ children }: { children: React.ReactNode }) {
   const [open, setOpen] = useState(false);
   const { role } = useApp();
+  const me = useCurrentEmployee();
   const pathname = usePathname();
   const router = useRouter();
   const back = hubBackFor(pathname);
@@ -31,17 +32,15 @@ export function AppShell({ children }: { children: React.ReactNode }) {
     if (auth.status === 'out' && !isLogin) router.replace(`/login?next=${encodeURIComponent(pathname)}`);
   }, [auth.status, isLogin, pathname, router]);
 
+  // Decided while rendering, so a page this role may not open is never drawn before the redirect.
+  const allowed = isLogin || auth.status !== 'in' || routeAllowed(role, pathname, me);
+
   useEffect(() => {
-    if (isLogin || auth.status !== 'in') return;
-    const loc = resolveLocation(pathname);
-    const persona = PERS[role];
-    if (loc.module !== 'modules' && (!persona.modules.includes(loc.module) || (loc.scope && !persona.scopes.includes(loc.scope)))) {
-      router.replace('/dashboard');
-    }
-  }, [role, pathname, router, isLogin, auth.status]);
+    if (!allowed) router.replace('/dashboard');
+  }, [allowed, router]);
 
   if (isLogin) return <>{children}</>;
-  if (auth.status !== 'in') return <div className="boot" aria-busy="true" />;
+  if (auth.status !== 'in' || !allowed) return <div className="boot" aria-busy="true" />;
 
   return (
     <div className="app">
