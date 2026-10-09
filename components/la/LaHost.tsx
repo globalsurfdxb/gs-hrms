@@ -87,7 +87,7 @@ export function LaHost() {
       persona: PERSONA_FOR[role] ?? 'employee',
       locations: locations.map((l) => ({ id: l.id, name: l.name, city: l.city, template: l.template, workingHours: l.workingHours, currency: l.currency })),
       companies: companies.map((c) => ({ id: c.id, name: c.name, code: c.shortCode, location: c.location, status: c.status })),
-      employees: EMPLOYEES.map((e) => ({ id: e.id, code: e.employeeCode, name: e.name, company: e.company, department: e.department, designation: e.designation, location: e.location, managerId: e.reportingManagerId, status: e.employmentStatus, email: e.email, phone: e.phone, doj: e.dateOfJoining, exitDate: e.exitDate, exitReason: e.exitReason })),
+      employees: EMPLOYEES.map((e) => ({ id: e.id, code: e.employeeCode, name: e.name, company: e.company, department: e.department, designation: e.designation, location: e.location, managerId: e.reportingManagerId, status: e.employmentStatus, email: e.email, phone: e.phone, gender: e.profile.gender, doj: e.dateOfJoining, exitDate: e.exitDate, exitReason: e.exitReason })),
     }),
     // eslint-disable-next-line react-hooks/exhaustive-deps
     [locations, companies, me.employeeCode, role, empVersion],

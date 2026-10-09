@@ -8413,3 +8413,114 @@ td.sd-date {
   font-size: 11px;
   color: var(--muted);
 }
+
+/* ============ SELECT BOXES (every dropdown in the app) ============
+   Closed state: a clean field with our own chevron.
+   Open state: in browsers that support customizable selects (Chrome / Edge 135+) the list becomes a
+   rounded popover with comfortable rows, a hover tint and a tick on the chosen option.
+   Other browsers keep their own list, with the same closed field. */
+select:not([multiple]):not([size]) {
+  appearance: none;
+  -webkit-appearance: none;
+  cursor: pointer;
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%236b7280' stroke-width='2.2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='m6 9 6 6 6-6'/%3E%3C/svg%3E");
+  background-repeat: no-repeat;
+  background-position: right 10px center;
+  background-size: 14px;
+  padding-right: 32px;
+  text-overflow: ellipsis;
+}
+select:not([multiple]):not([size]):hover {
+  border-color: #c7cfdf;
+}
+select:not([multiple]):not([size]):disabled {
+  cursor: not-allowed;
+  opacity: 0.6;
+}
+
+@supports (appearance: base-select) {
+  select:not([multiple]):not([size]),
+  select:not([multiple]):not([size])::picker(select) {
+    appearance: base-select;
+  }
+  select:not([multiple]):not([size]) {
+    background-image: none;
+    padding-right: 10px;
+    align-items: center;
+    gap: 8px;
+  }
+  select:not([multiple]):not([size])::picker-icon {
+    content: '';
+    width: 14px;
+    height: 14px;
+    flex: none;
+    margin-left: auto;
+    background: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%236b7280' stroke-width='2.2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='m6 9 6 6 6-6'/%3E%3C/svg%3E") center / 14px no-repeat;
+    transition: transform 0.16s;
+  }
+  select:not([multiple]):not([size]):open::picker-icon {
+    transform: rotate(180deg);
+  }
+  select:not([multiple]):not([size])::picker(select) {
+    box-sizing: border-box;
+    min-width: anchor-size(width);
+    max-height: min(340px, 60vh);
+    margin-top: 6px;
+    padding: 6px;
+    border: 1px solid #dfe3ec;
+    border-radius: 12px;
+    background: #fff;
+    box-shadow: 0 16px 40px rgba(15, 23, 42, 0.18), 0 2px 8px rgba(15, 23, 42, 0.06);
+    opacity: 0;
+    transform: translateY(-4px);
+    transition: opacity 0.14s, transform 0.14s, overlay 0.14s allow-discrete, display 0.14s allow-discrete;
+  }
+  select:not([multiple]):not([size]):open::picker(select) {
+    opacity: 1;
+    transform: none;
+  }
+  @starting-style {
+    select:not([multiple]):not([size]):open::picker(select) {
+      opacity: 0;
+      transform: translateY(-4px);
+    }
+  }
+  select:not([multiple]):not([size]) option {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    padding: 9px 12px;
+    border-radius: 8px;
+    font-size: 13px;
+    font-weight: 500;
+    color: #374151;
+    cursor: pointer;
+    white-space: nowrap;
+  }
+  select:not([multiple]):not([size]) option:hover,
+  select:not([multiple]):not([size]) option:focus-visible {
+    background: #eef1fa;
+    color: #28469a;
+    outline: none;
+  }
+  select:not([multiple]):not([size]) option:checked {
+    background: #eef1fa;
+    color: #28469a;
+    font-weight: 700;
+  }
+  select:not([multiple]):not([size]) option::checkmark {
+    content: '';
+    order: 2;
+    margin-left: auto;
+    width: 14px;
+    height: 14px;
+    background: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%2328469a' stroke-width='2.6' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='m5 12 5 5L20 7'/%3E%3C/svg%3E") center / 14px no-repeat;
+  }
+  select:not([multiple]):not([size]) option:disabled {
+    color: #aab2c3;
+    cursor: not-allowed;
+  }
+  select:not([multiple]):not([size]) option[value='']:checked {
+    color: #6b7280;
+  }
+}

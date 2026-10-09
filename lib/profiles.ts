@@ -59,7 +59,7 @@ const HOME: Record<string, { address: string; dial: string }> = {
 };
 
 const DEPT_STUDY: Record<string, { course: string; field: string }> = {
-  'HR & Admin': { course: 'MBA Human Resources', field: 'Human Resource Management' },
+  HR: { course: 'MBA Human Resources', field: 'Human Resource Management' },
   Sales: { course: 'BBA Marketing', field: 'Marketing' },
   'Cloud & Infra': { course: 'B.Tech Computer Science', field: 'Computer Science' },
   'Network Engineering': { course: 'B.Tech Electronics & Communication', field: 'Networking' },

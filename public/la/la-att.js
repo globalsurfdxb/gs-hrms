@@ -72,6 +72,14 @@
   const weekDays = () => range(weekStart(), addD(weekStart(), 6));
   L.attWeekMove = (n) => L.setUi('attWeek', addD(weekStart(), 7 * n));
   const weekLabel = () => `${fmt(weekStart())} – ${fmt(addD(weekStart(), 6))}`;
+  /* Week or whole month. The month is the same one the calendar view shows (calState). */
+  const inMonthMode = () => L.ui('attRange', 'week') === 'month';
+  const monthDays = () => { const { y, m } = calState; return range(`${y}-${pad(m + 1)}-01`, `${y}-${pad(m + 1)}-${pad(new Date(y, m + 1, 0).getDate())}`); };
+  const viewDays = () => (inMonthMode() ? monthDays() : weekDays());
+  const monthValue = () => `${calState.y}-${pad(calState.m + 1)}`;
+  L.attRange = (mode) => { if (mode === 'month') { const d = parse(weekStart()); d.setDate(d.getDate() + 3); calState.y = d.getFullYear(); calState.m = d.getMonth(); } else { const first = `${calState.y}-${pad(calState.m + 1)}-01`; const inCur = parse(TODAY).getFullYear() === calState.y && parse(TODAY).getMonth() === calState.m; const d = parse(inCur ? TODAY : first); d.setDate(d.getDate() - d.getDay()); L.setUiRaw('attWeek', L.iso(d)); } L.setUi('attRange', mode); };
+  L.attMonthPick = (v) => { const m = /^(\d{4})-(\d{2})$/.exec(v || ''); if (!m) return; calState.y = Number(m[1]); calState.m = Number(m[2]) - 1; if (L.ui('attView', 'list') !== 'calendar') L.setUiRaw('attRange', 'month'); L.rr(); };
+  L.attMove = (n) => { if (L.ui('attView', 'list') === 'calendar' || inMonthMode()) window.calMove(n); else L.attWeekMove(n); };
   const FILTERS = ['All', 'Present', 'Weekend', 'Holiday', 'Leave', 'Missing punch'];
   const passFilter = (r) => { const f = L.ui('attFilter', 'All'); return f === 'All' || (f === 'Present' && r.kind === 'present') || (f === 'Weekend' && r.kind === 'weekend') || (f === 'Holiday' && r.kind === 'holiday') || (f === 'Leave' && r.kind === 'leave') || (f === 'Missing punch' && r.kind === 'missing'); };
 
@@ -85,27 +93,55 @@
   function toolbar() {
     const v = L.ui('attView', 'list');
     const cm = typeof calState !== 'undefined' ? calState : { y: 2026, m: 6 };
-    const lbl = v === 'calendar' ? `${MONTHS[cm.m]} ${cm.y}` : weekLabel();
-    const nav = v === 'calendar' ? ['calMove(-1)', 'calMove(1)'] : ['LA.attWeekMove(-1)', 'LA.attWeekMove(1)'];
-    const f = L.ui('attFilter', 'All');
-    return `<div class="toolbar">
-      <div class="daterange"><button class="dr-nav" onclick="${nav[0]}">${ic('chevL')}</button><span class="dr-lbl">${lbl}</span><button class="dr-nav" onclick="${nav[1]}">${ic('chevR')}</button></div>
-      <div class="hb" style="margin-left:auto">
-        <button class="btn sm ghost" onclick="LA.attToday()">Today</button>
-        <div class="vtoggle">
-          <button class="${v === 'timeline' ? 'on' : ''}" title="Timeline" onclick="LA.setUi('attView','timeline')">${ic('chart')}</button>
-          <button class="${v === 'list' ? 'on' : ''}" title="List" onclick="LA.setUi('attView','list')">${ic('grid')}</button>
-          <button class="${v === 'calendar' ? 'on' : ''}" title="Calendar" onclick="LA.setUi('attView','calendar')">${ic('calendar')}</button>
+    const monthly = v === 'calendar' || inMonthMode();
+    const lbl = monthly ? `${MONTHS[cm.m]} ${cm.y}` : weekLabel();
+    const rng = L.ui('attRange', 'week');
+    const recs = viewDays().map((d) => L.dayRec(d));
+    const n = (k) => recs.filter((r) => r.kind === k).length;
+    const opts = [{ v: 'All', l: 'All days', n: recs.length }, { v: 'Present', l: 'Present', n: n('present') }, { v: 'Missing punch', l: 'Missing punch', n: n('missing') }, { v: 'Leave', l: 'Leave', n: n('leave') }, { v: 'Holiday', l: 'Holiday', n: n('holiday') }, { v: 'Weekend', l: 'Weekend', n: n('weekend') }];
+    return `<div class="lt-bar">
+      <div class="lt-bar-r">
+        <div class="daterange"><button class="dr-nav" onclick="LA.attMove(-1)" aria-label="Previous">${ic('chevL')}</button><span class="dr-lbl">${lbl}</span><button class="dr-nav" onclick="LA.attMove(1)" aria-label="Next">${ic('chevR')}</button></div>
+        ${v === 'calendar' ? '' : `<div class="vtoggle" title="Show a week or the whole month"><button class="${rng === 'week' ? 'on' : ''}" onclick="LA.attRange('week')">Week</button><button class="${rng === 'month' ? 'on' : ''}" onclick="LA.attRange('month')">Month</button></div>`}
+        <label class="lt-month" title="Pick a month">${ic('calendar')}<input type="month" value="${monthValue()}" onchange="LA.attMonthPick(this.value)" aria-label="Month"></label>
+        <button class="btn sm ghost" onclick="LA.attToday()">${monthly ? 'This month' : 'Today'}</button>
+        <div class="hb" style="margin-left:auto">
+          <div class="vtoggle">
+            <button class="${v === 'list' ? 'on' : ''}" title="List" onclick="LA.setUi('attView','list')">${ic('grid')}<span>List</span></button>
+            <button class="${v === 'timeline' ? 'on' : ''}" title="Timeline" onclick="LA.setUi('attView','timeline')">${ic('chart')}<span>Timeline</span></button>
+            <button class="${v === 'calendar' ? 'on' : ''}" title="Calendar" onclick="LA.setUi('attView','calendar')">${ic('calendar')}<span>Calendar</span></button>
+          </div>
+          <button class="btn sm" title="Export this ${monthly ? 'month' : 'week'} (CSV)" onclick="LA.attExport()">${ic('download')} Export</button>
         </div>
-        <button class="iconbtn" title="Filter" onclick="LA.attFilterDlg()" style="${f !== 'All' ? 'background:var(--brand-050);color:var(--brand)' : ''}">${ic('filter')}</button>
-        <button class="iconbtn" title="Export week (CSV)" onclick="LA.attExport()">${ic('download')}</button>
-      </div></div>${f !== 'All' ? `<div class="muted" style="font-size:12.5px;margin:-6px 0 12px">Filtered: <b>${esc(f)}</b> · <a style="color:var(--brand);cursor:pointer" onclick="LA.setUi('attFilter','All')">clear</a></div>` : ''}`;
+      </div>
+      ${v === 'calendar' ? '' : `<div class="lt-bar-c">${L.chips('attFilter', opts, 'All')}</div>`}
+    </div>`;
+  }
+  /* four tiles for whatever range is on screen */
+  function tiles() {
+    const recs = viewDays().map((d) => L.dayRec(d));
+    const cnt = (f) => recs.filter(f).length;
+    const present = cnt((r) => r.kind === 'present' || r.kind === 'missing');
+    const leave = cnt((r) => r.kind === 'leave');
+    const payable = recs.filter((r) => r.kind === 'present' || r.kind === 'missing' || r.kind === 'holiday' || r.kind === 'weekend' || (r.kind === 'leave' && r.st !== 'Unpaid Leave')).length;
+    const worked = recs.reduce((a, r) => a + (r.total || 0), 0);
+    const days = Math.max(1, cnt((r) => r.total != null));
+    const over = recs.reduce((a, r) => a + (r.dev > 0 ? r.dev : 0), 0);
+    const short = recs.reduce((a, r) => a + (r.dev < 0 && r.kind !== 'missing' ? -r.dev : 0), 0);
+    const missing = cnt((r) => r.kind === 'missing');
+    const scope = L.ui('attView', 'list') === 'calendar' || inMonthMode() ? 'this month' : 'this week';
+    return statStrip([
+      { lbl: 'Payable days', val: payable, icon: 'check', tone: 'g', hint: `${present} present · ${leave} on leave · ${cnt((r) => r.kind === 'holiday')} holiday` },
+      { lbl: 'Hours worked', val: hm(worked), icon: 'clock', tone: 'b', hint: `Average ${hm(Math.round(worked / days))} a day ${scope}` },
+      { lbl: 'Overtime', val: hm(over), icon: 'refresh', tone: over ? 'p' : 'x', hint: over ? 'Above the shift length' : 'None' },
+      { lbl: missing ? 'Missing punches' : 'Shortfall', val: missing ? missing : hm(short), icon: missing ? 'alert' : 'scale', tone: missing ? 'r' : short ? 'a' : 'x', hint: missing ? 'Regularize them below' : short ? 'Under the shift length' : 'None' },
+    ]);
   }
   L.attToday = () => { DB_set_today(); };
-  function DB_set_today() { const d = parse(TODAY); d.setDate(d.getDate() - d.getDay()); L.setUiRaw('attWeek', L.iso(d)); calState.y = 2026; calState.m = 6; L.rr(); }
+  function DB_set_today() { const d = parse(TODAY); calState.y = d.getFullYear(); calState.m = d.getMonth(); d.setDate(d.getDate() - d.getDay()); L.setUiRaw('attWeek', L.iso(d)); L.rr(); }
   L.attExport = () => {
-    const rows = weekDays().map((d) => { const r = L.dayRec(d); return [fmtL(d), t12(r.in), t12(r.out), hm(r.total), hm(r.pay), devHtml(r), r.st, r.shift]; });
-    L.csv(`attendance_${weekStart()}.csv`, ['Date', 'First In', 'Last Out', 'Total Hours', 'Payable Hours', 'Deviation', 'Status', 'Shift'], rows);
+    const rows = viewDays().map((d) => { const r = L.dayRec(d); return [fmtL(d), t12(r.in), t12(r.out), hm(r.total), hm(r.pay), devHtml(r), r.st, r.shift]; });
+    L.csv(`attendance_${inMonthMode() || L.ui('attView', 'list') === 'calendar' ? monthValue() : weekStart()}.csv`, ['Date', 'First In', 'Last Out', 'Total Hours', 'Payable Hours', 'Deviation', 'Status', 'Shift'], rows);
   };
 
   function regCell(d) {
@@ -115,15 +151,15 @@
     return rec.kind === 'missing' || (rec.kind === 'present' && !rec.live) ? `<button class="btn sm ghost" onclick="event.stopPropagation();LA.regNew('${d}')">Regularize</button>` : '<span class="muted">—</span>';
   }
   function list() {
-    const days = weekDays().map((d) => ({ d, r: L.dayRec(d) })).filter((x) => passFilter(x.r));
-    const rows = days.map(({ d, r }) => `<tr style="cursor:pointer" onclick="LA.dayDetail('${d}')"><td class="fw6">${fmtL(d)}${d === TODAY ? ' <span class="bdg s-b">Today</span>' : ''}</td><td class="mono">${t12(r.in)}</td><td class="mono">${r.live ? '<span class="muted">in progress</span>' : t12(r.out)}</td><td class="mono">${hm(r.total)}</td><td class="mono">${hm(r.pay)}</td>
+    const days = viewDays().map((d) => ({ d, r: L.dayRec(d) })).filter((x) => passFilter(x.r));
+    const rows = days.map(({ d, r }) => `<tr class="${d === TODAY ? 'lt-today' : r.kind === 'weekend' || r.kind === 'holiday' ? 'lt-off' : ''}" style="cursor:pointer" onclick="LA.dayDetail('${d}')"><td class="fw6">${fmtL(d)}${d === TODAY ? ' <span class="bdg s-b">Today</span>' : ''}</td><td class="mono">${t12(r.in)}</td><td class="mono">${r.live ? '<span class="muted">in progress</span>' : t12(r.out)}</td><td class="mono">${hm(r.total)}</td><td class="mono">${hm(r.pay)}</td>
       <td class="mono" style="color:${devCls(r)}">${devHtml(r)}</td><td>${r.st ? `<span class="bdg s-${r.stc}"><span class="d"></span>${esc(r.st)}</span>` : ''}</td><td>${r.shift}</td><td>${regCell(d)}</td></tr>`).join('');
     return tableCard('', ['Date', 'First In', 'Last Out', 'Total Hours', 'Payable Hours', 'Overtime/Deviation', 'Status', 'Shift(s)', 'Regularization'], rows || `<tr><td colspan="9">${L.empty('No days match this filter')}</td></tr>`);
   }
   function timeline() {
     const axis = ['08AM', '09AM', '10AM', '11AM', '12PM', '01PM', '02PM', '03PM', '04PM', '05PM', '06PM', '07PM', '08PM'];
     const span = 12 * 60;
-    const rows = weekDays().map((d) => ({ d, r: L.dayRec(d) })).filter((x) => passFilter(x.r)).map(({ d, r }) => {
+    const rows = viewDays().map((d) => ({ d, r: L.dayRec(d) })).filter((x) => passFilter(x.r)).map(({ d, r }) => {
       let barH = '';
       if (r.in != null) {
         const s = Math.max(0, (r.in - 480) / span);
@@ -162,7 +198,7 @@
     return `<div class="cal"><div class="cal-grid">${DOWL.map((d) => `<div class="cal-dow">${d}</div>`).join('')}${cells}</div></div>`;
   }
   function strip() {
-    const recs = weekDays().map((d) => L.dayRec(d));
+    const recs = viewDays().map((d) => L.dayRec(d));
     const mode = L.ui('ssMode', 'days');
     const cnt = (f) => recs.filter(f).length;
     const payable = recs.filter((r) => r.kind === 'present' || r.kind === 'missing' || r.kind === 'holiday' || r.kind === 'weekend' || (r.kind === 'leave' && r.st !== 'Unpaid Leave')).length;
@@ -172,7 +208,7 @@
     return `<div class="summary-strip"><div class="ss-toggle"><button class="${mode === 'days' ? 'on' : ''}" onclick="LA.setUi('ssMode','days')">Days</button><button class="${mode === 'hours' ? 'on' : ''}" onclick="LA.setUi('ssMode','hours')">Hours</button></div>
       ${items.map((i) => `<div class="ss-item"><div class="l">${i[0]}</div><div class="v">${i[1]}</div></div>`).join('')}<div class="ss-shift">${shiftLabel(L.myLoc())}</div></div>`;
   }
-  const attSummary = () => { const v = L.ui('attView', 'list'); return toolbar() + (v === 'list' ? list() : v === 'timeline' ? timeline() : calendar()) + (v === 'calendar' ? '' : strip()); };
+  const attSummary = () => { const v = L.ui('attView', 'list'); return pageHead('My Attendance', `Your daily punches, hours and deviations · ${shiftLabel(L.myLoc())}`, '', 'My data') + tiles() + toolbar() + `<div class="lt-att">${v === 'list' ? list() : v === 'timeline' ? timeline() : calendar()}</div>`; };
 
   window.calMove = (n) => { calState.m += n; if (calState.m < 0) { calState.m = 11; calState.y--; } if (calState.m > 11) { calState.m = 0; calState.y++; } L.rr(); };
 
@@ -291,12 +327,7 @@
     const sh = shiftTimes(e.loc);
     return { ...base, in: hm(sh.from + (x === 3 ? 25 : x % 6) - 3), out: hm(sh.to - 18 + (x % 25)), st: x === 3 ? 'Unscheduled Late Login' : x === 7 ? 'Work from Home' : 'Present', late: x === 3 ? 25 : 0 };
   });
-  const teamFilters = () => `<div class="filters">
-    ${L.fLoc()}${L.fDept('tDept')}
-    <div class="fld"><label>Date</label><input id="tdate" type="date" value="${L.ui('teamDate', TODAY)}" onchange="LA.setUi('teamDate',this.value||'${TODAY}')"></div>
-    ${L.fSel('teamStat', 'Status', ['All statuses', 'Present', 'On leave', 'Late', 'Absent', 'Not yet joined', 'Weekly Off / holiday'], 'All statuses')}
-    ${L.searchBox('teamQ', 'Name or ID')}
-    ${L.fReset(['teamStat', 'teamQ', 'teamDate', 'tDept', 'loc'])}</div>`;
+  L.teamDateMove = (n) => L.setUi('teamDate', addD(L.ui('teamDate', TODAY), n));
   function teamAtt() {
     const date = L.ui('teamDate', TODAY);
     const stat = L.ui('teamStat', 'All statuses');
@@ -306,24 +337,46 @@
     const hires = L.org().employees.filter((o) => o.status === 'Onboarding' && o.doj && o.doj > date && !EMP.some((e) => e.id === o.code))
       .map((o) => ({ n: o.name, id: o.code, desig: o.designation, dept: o.department, loc: o.location, in: '—', out: '—', st: 'Not Yet Joined', late: 0, early: 0, extra: true }));
     const scoped = L.teamDay(date).concat(hires).filter((r) => (L.loc() === 'all' || r.loc === L.loc()) && (dept === 'All departments' || r.dept === dept));
-    const rows = scoped.filter((r) => (stat === 'All statuses' || (stat === 'Weekly Off / holiday' ? ['Weekly Off', 'Public Holiday'].includes(r.st) : (STAT_GROUP[stat] || []).includes(r.st))) && L.matches(q, r.n, r.id, r.dept));
+    const inGroup = (r, g) => (g === 'All statuses' ? true : g === 'Weekly Off / holiday' ? ['Weekly Off', 'Public Holiday'].includes(r.st) : (STAT_GROUP[g] || []).includes(r.st));
+    const rows = scoped.filter((r) => inGroup(r, stat) && L.matches(q, r.n, r.id, r.dept));
     // counts never include people who have not joined yet, and "everyone accounted for" is only said when it is true
     const cnt = (g) => scoped.filter((r) => STAT_GROUP[g].includes(r.st)).length;
     const nj = cnt('Not yet joined');
     const absent = cnt('Absent');
     const unknown = scoped.filter((r) => r.st === '—').length;
+    const present = cnt('Present');
+    const leave = cnt('On leave');
+    const off = scoped.filter((r) => ['Weekly Off', 'Public Holiday'].includes(r.st)).length;
+    const joined = Math.max(1, scoped.length - nj);
     const summary = L.statStrip([
-      { lbl: 'Present', val: cnt('Present'), icon: 'check', tone: 'g', hint: date > TODAY ? 'Future date' : 'Checked in or working remotely' },
-      { lbl: 'On leave', val: cnt('On leave'), icon: 'calendar', tone: 'b', hint: 'Approved leave' },
+      { lbl: 'Present', val: present, icon: 'check', tone: 'g', hint: date > TODAY ? 'Future date' : `${Math.round((present / joined) * 100)}% of ${joined} joined · in office or remote` },
+      { lbl: 'On leave', val: leave, icon: 'calendar', tone: 'b', hint: 'Approved leave' },
       { lbl: 'Absent', val: absent, icon: 'alert', tone: absent ? 'r' : 'g', hint: absent ? 'No check-in recorded' : unknown ? `${unknown} with no record yet` : 'Everyone accounted for' },
       { lbl: 'Not yet joined', val: nj, icon: 'users', tone: 'a', hint: nj ? 'Joining date is after this day — not counted as absent' : 'No upcoming joiners' },
     ]);
+    const chips = [
+      { v: 'All statuses', l: 'All', n: scoped.length }, { v: 'Present', l: 'Present', n: present }, { v: 'On leave', l: 'On leave', n: leave },
+      { v: 'Late', l: 'Late', n: cnt('Late') }, { v: 'Absent', l: 'Absent', n: absent }, { v: 'Weekly Off / holiday', l: 'Off / holiday', n: off }, { v: 'Not yet joined', l: 'Not yet joined', n: nj },
+    ];
+    const seg = [['Present', present, '#1f9d63'], ['On leave', leave, '#2f6fd6'], ['Weekly off / holiday', off, '#c6851b'], ['Absent', absent, '#d5493f'], ['Not yet joined', nj, '#aab4c8']].filter((x) => x[1] > 0);
+    const total = seg.reduce((n, x) => n + x[1], 0) || 1;
+    const bar = `<div class="lt-split" title="How the team splits on this day"><div class="lt-split-bar">${seg.map((x) => `<i style="width:${(x[1] / total) * 100}%;background:${x[2]}" title="${x[0]}: ${x[1]}"></i>`).join('')}</div><div class="lt-split-key">${seg.map((x) => `<span><i style="background:${x[2]}"></i>${x[0]} <b>${x[1]}</b></span>`).join('')}</div></div>`;
+    const toolbarHtml = `<div class="lt-bar">
+      <div class="lt-bar-r">
+        <div class="daterange"><button class="dr-nav" onclick="LA.teamDateMove(-1)" aria-label="Previous day">${ic('chevL')}</button><span class="dr-lbl">${fmt(date)}${date === TODAY ? ' · Today' : ''}</span><button class="dr-nav" onclick="LA.teamDateMove(1)" aria-label="Next day">${ic('chevR')}</button></div>
+        <label class="lt-month" title="Pick a date">${ic('calendar')}<input id="tdate" type="date" value="${date}" onchange="LA.setUi('teamDate',this.value||'${TODAY}')" aria-label="Date"></label>
+        <button class="btn sm ghost" onclick="LA.setUi('teamDate','${TODAY}')">Today</button>
+        <label class="lt-dept">${ic('users')}<select onchange="LA.setUi('tDept',this.value)" aria-label="Department">${['All departments'].concat(L.depts()).map((d) => `<option ${d === dept ? 'selected' : ''}>${esc(d)}</option>`).join('')}</select></label>
+        <div class="hb" style="margin-left:auto">${L.searchBox('teamQ', 'Search name, ID or department')}<button class="btn sm ghost" onclick="LA.resetUi(['teamStat','teamQ','teamDate','tDept'])">${ic('refresh')} Reset</button></div>
+      </div>
+      <div class="lt-bar-c">${L.chips('teamStat', chips, 'All statuses')}</div>
+    </div>`;
     return pageHead('Team Attendance', 'Real-time attendance and availability for your team', `<button class="btn" onclick="LA.teamExport()">${ic('download')} Export</button>`, 'Team')
-      + teamFilters()
       + summary
-      + tableCard(`Team · ${fmt(date)}`, ['Member', 'Location', 'Check-in', 'Check-out', 'Status', 'Late', 'Early', 'Action'],
-        rows.map((e) => `<tr><td>${personCell(e.n, e.id + ' · ' + esc(e.dept))}</td><td>${L.locChip(e.loc)}</td><td class="mono">${e.in}</td><td class="mono">${e.out}</td><td>${e.st === '—' ? '—' : statusBadge(e.st)}${e.corrected ? ' <span class="muted" title="Manually corrected">✎</span>' : ''}</td><td class="num">${e.late || '—'}</td><td class="num">${e.early || '—'}</td><td>${e.extra ? '<span class="muted">—</span>' : `<button class="btn sm ghost" onclick="LA.teamDetail('${esc(e.n)}')">Detail</button>`}</td></tr>`).join('') || `<tr><td colspan="8">${L.empty('No team members match')}</td></tr>`,
-        { sub: `${rows.length} of ${scoped.length}` });
+      + toolbarHtml
+      + `<div class="lt-att">${card(`Team · ${fmt(date)}`, bar + `<div class="tbl-wrap"><table class="tbl"><thead><tr>${['Member', 'Location', 'Check-in', 'Check-out', 'Status', 'Late', 'Early', 'Action'].map((h) => `<th class="${h === 'Late' || h === 'Early' ? 'num' : ''}">${h}</th>`).join('')}</tr></thead><tbody>${
+        rows.map((e) => `<tr ${e.extra ? '' : `style="cursor:pointer" onclick="LA.teamDetail('${esc(e.n)}')"`}><td>${personCell(e.n, e.id + ' · ' + esc(e.dept))}</td><td>${L.locChip(e.loc)}</td><td class="mono">${e.in}</td><td class="mono">${e.out}</td><td>${e.st === '—' ? '—' : statusBadge(e.st)}${e.corrected ? ' <span class="muted" title="Manually corrected">✎</span>' : ''}</td><td class="num">${e.late ? e.late + ' min' : '—'}</td><td class="num">${e.early ? e.early + ' min' : '—'}</td><td>${e.extra ? '<span class="muted">—</span>' : `<button class="btn sm ghost" onclick="event.stopPropagation();LA.teamDetail('${esc(e.n)}')">Detail</button>`}</td></tr>`).join('') || `<tr><td colspan="8">${L.empty('No team members match')}</td></tr>`
+      }</tbody></table></div>`, { sub: `${rows.length} of ${scoped.length}`, pad: false })}</div>`;
   }
   L.teamExport = () => { const date = L.ui('teamDate', TODAY); L.csv(`team_attendance_${date}.csv`, ['Member', 'ID', 'Location', 'Department', 'Check-in', 'Check-out', 'Status', 'Late (min)', 'Early (min)'], L.teamDay(date).filter((r) => L.inLoc(r.n) && L.deptOk(r.n, 'tDept')).map((r) => [r.n, r.id, L.locName(r.loc), r.dept, r.in, r.out, r.st, r.late, r.early])); };
   L.teamDetail = (name) => {

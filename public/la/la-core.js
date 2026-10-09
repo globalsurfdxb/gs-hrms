@@ -5,7 +5,7 @@
    file/CSV helpers, location + filter helpers and an audit trail. Exposed as window.LA. */
 (function () {
   const LA = (window.LA = window.LA || {});
-  const KEY = 'la.db.v5';
+  const KEY = 'la.db.v6';
   const LKEY = 'la.ledger.v1';
 
   /* ---------- organisation (published by the host page) ---------- */
@@ -88,6 +88,176 @@
   LA.weekStartOf = (d) => addD(d, -dow(d));
   LA.annualKey = () => (tplOf(myLoc()) === 'india' ? 'Earned Leave' : 'Annual Leave');
 
+  /* ---------- leave model: one source for calendar rules, names, eligibility and bookings ----------
+     Every Leave Tracker screen (summary cards, booked total, upcoming, history, team calendar, apply-form checks) reads
+     these helpers, so the numbers cannot drift apart. They only touch DB lazily (never while seed() runs). */
+  const R1m = (n) => Math.round(n * 10) / 10;
+  const ACTIVE = (st) => st === 'Pending' || st === 'Approved';
+  LA.R1 = R1m;
+  LA.isActive = ACTIVE;
+  const holOf = (list, d, loc) => list.find((h) => d >= h.d && d <= (h.to || h.d) && (!h.locs || h.locs.includes('all') || h.locs.includes(loc)));
+  LA.holOf = holOf;
+  /* calendar rules: weekly off comes from the location's working week, holidays from the location's calendar */
+  LA.holFor = (d, loc) => holOf(DB.hol, d, loc || myLoc());
+  LA.isWorkDay = (d, loc) => !LA.isOff(d, loc) && !LA.holFor(d, loc);
+  LA.dayKind = (d, loc) => (LA.isOff(d, loc) ? 'off' : LA.holFor(d, loc) ? 'holiday' : 'work');
+  LA.workDays = (from, to, loc) => {
+    const out = { days: 0, cal: 0, off: 0, hol: 0 };
+    if (!from || !to || to < from) return out;
+    const l = loc || myLoc();
+    for (let d = from; d <= to; d = addD(d, 1)) { out.cal++; if (LA.isOff(d, l)) out.off++; else if (LA.holFor(d, l)) out.hol++; else out.days++; }
+    return out;
+  };
+  /* "Sat–Sun" style label of a location's weekly off */
+  LA.offLabel = (loc) => {
+    const w = parseWork((locDef(loc) || {}).workingHours);
+    const off = new Set([0, 1, 2, 3, 4, 5, 6].filter((d) => !w.days.includes(d)));
+    if (!off.size) return 'none';
+    if (off.size === 7) return 'every day';
+    const parts = [];
+    off.forEach((d) => {
+      if (off.has((d + 6) % 7)) return;
+      let e = d; while (off.has((e + 1) % 7)) e = (e + 1) % 7;
+      parts.push(e === d ? DOWL[d] : `${DOWL[d]}–${DOWL[e]}`);
+    });
+    return parts.join(' & ');
+  };
+  LA.offText = (loc) => `Weekly off · ${locCity(loc)}: ${LA.offLabel(loc)}`;
+  /* overtime category rule: Weekend / holiday only on a weekly-off day or public holiday of the employee's location */
+  const OT_WK = 'Weekend / holiday';
+  LA.otCategoryFor = (date, loc) => (LA.isOff(date, loc) || LA.holFor(date, loc) ? OT_WK : 'Normal (+25%)');
+  LA.otMismatch = (o) => {
+    const loc = LA.locOf(o.emp);
+    const k = LA.dayKind(o.date, loc);
+    const city = locCity(loc);
+    if (o.cat === OT_WK && k === 'work') return `${fmt(o.date)} (${DOWL[dow(o.date)]}) is a working day in ${city}, not a weekly off or public holiday — "${OT_WK}" does not apply.`;
+    if (o.cat !== OT_WK && k !== 'work') return `${fmt(o.date)} (${DOWL[dow(o.date)]}) is ${k === 'off' ? 'a weekly off' : 'a public holiday (' + LA.holFor(o.date, loc).n + ')'} in ${city} — it must be filed as "${OT_WK}".`;
+    return '';
+  };
+  LA.fmtRange = (a, b, always) => {
+    if (!a) return '—';
+    const cur = TODAY.slice(0, 4); const ya = a.slice(0, 4);
+    if (!b || b === a) return always || ya !== cur ? `${fmtS(a)} ${ya}` : fmtS(a);
+    const yb = b.slice(0, 4);
+    if (!always && ya === cur && yb === cur) return `${fmtS(a)} – ${fmtS(b)}`;
+    return ya === yb ? `${fmtS(a)} – ${fmtS(b)} ${yb}` : `${fmtS(a)} ${ya} – ${fmtS(b)} ${yb}`;
+  };
+
+  /* canonical leave-type names: the display name comes from the employee's location template, through this one mapping */
+  const TPL_NAMES = {
+    uae: { Annual: 'Annual Leave', Sick: 'Sick Leave', Casual: 'Casual Leave', Unpaid: 'Unpaid Leave' },
+    india: { Annual: 'Earned Leave', Sick: 'Sick Leave', Casual: 'Casual Leave', Unpaid: 'Loss of Pay' },
+  };
+  const ALIAS = { 'Annual Leave': 'Annual', 'Earned Leave': 'Annual', 'Sick Leave': 'Sick', 'Casual Leave': 'Casual', 'Unpaid Leave': 'Unpaid', 'Loss of Pay': 'Unpaid', 'Leave Without Pay': 'Unpaid' };
+  const PLAIN = { Study: 'Study Leave', 'Study Leave': 'Study Leave', Compassionate: 'Compassionate Leave', 'Compassionate Leave': 'Compassionate Leave' };
+  const NEUTRAL = { Annual: 'Annual / Earned leave', Unpaid: 'Unpaid leave / Loss of pay' };
+  LA.appOf = (t) => ALIAS[t] || '';
+  LA.typeName = (t, loc, app) => { const a = app || ALIAS[t]; return a ? TPL_NAMES[tplOf(loc || myLoc())][a] : PLAIN[t] || t; };
+  /* neutral key + label for filters that mix locations */
+  LA.kindKey = (t, app) => { const a = app || ALIAS[t]; return a === 'Annual' || a === 'Unpaid' ? 'app:' + a : PLAIN[t] || t; };
+  LA.kindNeutral = (key) => NEUTRAL[String(key).replace('app:', '')] || key;
+  const BAL_KEY = { Compassionate: 'Compassionate Leave', Study: 'Study Leave' };
+  LA.balKey = (t) => { const a = ALIAS[t]; return a === 'Annual' ? LA.annualKey() : a === 'Unpaid' ? 'Unpaid Leave' : a ? TPL_NAMES.uae[a] : BAL_KEY[t] || t; };
+  LA.keyOfRec = (l) => (l.app === 'Annual' ? LA.annualKey() : l.app === 'Unpaid' ? 'Unpaid Leave' : l.app === 'Sick' ? 'Sick Leave' : l.app === 'Casual' ? 'Casual Leave' : LA.balKey(l.type));
+  LA.isExternal = (code) => /^EXT-/.test(code || '');
+
+  /* eligibility: data-driven rules per leave type (gender, minimum service, once per service / per year) */
+  LA.eligRules = {
+    Maternity: { gender: 'Female' },
+    'Maternity Leave': { gender: 'Female' },
+    Parental: { notGender: 'Female' },
+    'Paternity Leave': { notGender: 'Female' },
+    Hajj: { once: 'service', minYears: 1 },
+    Umrah: { once: 'year' },
+    'Marriage Leave': { once: 'service' },
+    'Study Leave': { minYears: 2 },
+  };
+  const empOrg = (code) => ORG().employees.find((x) => x.code === code) || {};
+  LA.genderOf = (code) => { const g = String(empOrg(code).gender || ''); return /^f/i.test(g) ? 'Female' : /^m/i.test(g) ? 'Male' : ''; };
+  const addYears = (s, n) => { const d = parse(s); d.setFullYear(d.getFullYear() + n); return iso(d); };
+  LA.eligibility = (type, o = {}) => {
+    const rule = LA.eligRules[type] || LA.eligRules[LA.typeName(type)];
+    if (!rule) return { ok: true };
+    const code = DB.me.id; const name = DB.me.name; const label = LA.typeName(type);
+    const g = LA.genderOf(code);
+    if (rule.gender && g !== rule.gender) return { ok: false, reason: g ? `Available to ${rule.gender.toLowerCase()} employees only` : `Needs a recorded gender (${rule.gender.toLowerCase()}) on your profile — contact HR` };
+    if (rule.notGender && g === rule.notGender) return { ok: false, reason: 'For employees who are not eligible for maternity leave — use Maternity leave' };
+    if (rule.minYears) {
+      const doj = empOrg(code).doj;
+      if (doj) { const from = addYears(doj, rule.minYears); if ((o.from || TODAY) < from) return { ok: false, reason: `Needs ${rule.minYears} year${rule.minYears > 1 ? 's' : ''} of service — eligible from ${fmt(from)}` }; }
+    }
+    if (rule.once) {
+      const yr = (o.from || TODAY).slice(0, 4);
+      const hit = DB.leaves.filter((l) => l.emp === name && ACTIVE(l.st) && l.id !== o.exclude && LA.typeName(l.type) === label && (rule.once === 'service' || l.from.slice(0, 4) === yr)).sort((a, b) => (a.from < b.from ? -1 : 1))[0];
+      if (hit) return { ok: false, reason: `Once per ${rule.once === 'service' ? 'service' : 'year'} — already ${hit.st === 'Pending' ? 'applied for' : 'taken'} on ${fmt(hit.from)}${hit.st === 'Pending' ? ' (pending)' : ''}` };
+    }
+    return { ok: true };
+  };
+
+  /* bookings: leave requests + annual-leave plan segments of one person, in one list (withdrawn / rejected / cancelled included, flagged by st).
+     A plan segment that a request already converts (same start date) is not listed twice. */
+  LA.entries = (name, opts = {}) => {
+    const loc = LA.locOf(name);
+    const ok = (st) => !opts.active || ACTIVE(st);
+    const reqs = DB.leaves.filter((l) => l.emp === name && ok(l.st)).map((l) => ({ src: 'leave', id: l.id, emp: name, rawType: l.type, app: l.app, name: LA.typeName(l.type, loc, l.app), tname: LA.typeName(l.type, loc, l.app), from: l.from, to: l.to, days: l.days, st: l.st, key: LA.keyOfRec(l), rec: l }));
+    const covered = (p) => DB.leaves.some((l) => l.emp === name && l.app === 'Annual' && ACTIVE(l.st) && l.from === p.from);
+    const plans = DB.plans.filter((p) => p.emp === name && ok(p.st) && !covered(p)).map((p) => ({ src: 'plan', id: p.id, emp: name, rawType: LA.typeName('Annual Leave', loc), app: 'Annual', name: `${LA.typeName('Annual Leave', loc)} · plan segment ${p.seg}`, tname: LA.typeName('Annual Leave', loc), from: p.from, to: p.to, days: LA.workDays(p.from, p.to, loc).days, st: p.st, key: LA.annualKey(), seg: p.seg, rec: p }));
+    return reqs.concat(plans).sort((a, b) => (a.from < b.from ? -1 : a.from > b.from ? 1 : a.id < b.id ? -1 : 1));
+  };
+  /* the approver recorded for someone's requests; an external approver (e.g. the Managing Director) is outside the system */
+  LA.approverOfName = (name) => LA.approverOf((EMP.find((e) => e.n === name) || {}).id);
+  /* pending requests / plan segments waiting for an approver that nobody inside the system can be */
+  LA.waitingExternal = () => DB.leaves.filter((l) => l.st === 'Pending' && LA.isExternal(l.approver)).map((l) => ({ id: l.id, emp: l.emp, kind: 'leave', rec: l, approverName: l.approverName || 'Managing Director' }))
+    .concat(DB.plans.filter((p) => p.st === 'Pending' && LA.isExternal((LA.approverOfName(p.emp) || {}).code) && !DB.leaves.some((l) => l.emp === p.emp && l.st === 'Pending' && l.from === p.from)).map((p) => ({ id: p.id, emp: p.emp, kind: 'plan', rec: p, approverName: LA.approverOfName(p.emp).name })));
+  LA.findClash = (name, from, to, excludeId) => LA.entries(name, { active: true }).find((e) => e.id !== excludeId && !(to < e.from || from > e.to));
+  /* annual-leave segments in a plan year: plan segments and annual requests, per person */
+  LA.segmentsOf = (name, year, excludeId) => LA.entries(name, { active: true }).filter((e) => e.app === 'Annual' && e.id !== excludeId && e.from.slice(0, 4) === String(year) && !(e.rec && e.rec.extOf));
+  const wdOf = (e, a, b) => LA.workDays(a, b, LA.locOf(e.emp)).days;
+  const share = (e, a, b) => {
+    const lo = e.from > a ? e.from : a; const hi = e.to < b ? e.to : b;
+    if (hi < lo) return 0;
+    if (lo === e.from && hi === e.to) return e.days;
+    const tot = wdOf(e, e.from, e.to);
+    return tot ? R1m((e.days * wdOf(e, lo, hi)) / tot) : 0;
+  };
+  /* days of an entry inside a calendar year: taken (already elapsed), ahead (approved, still to come) and pending */
+  LA.splitOf = (e, year) => {
+    const a = `${year}-01-01`; const b = `${year}-12-31`;
+    if (e.st === 'Pending') return { taken: 0, ahead: 0, pending: share(e, a, b) };
+    const all = share(e, a, b); const t = Math.min(all, share(e, a, TODAY < b ? TODAY : b));
+    return { taken: t, ahead: R1m(all - t), pending: 0 };
+  };
+  const compRatioOf = (loc) => Number(((DB.confirmBy || {})[loc] || {}).compRatio) || 8;
+  LA.otCredit = (o) => R1m(o.hours / compRatioOf(LA.locOf(o.emp)));
+  LA.compCredited = (name) => R1m(DB.ots.filter((o) => o.emp === name && o.st === 'Approved' && o.comp === 'Compensatory off').reduce((a, o) => a + LA.otCredit(o), 0));
+  /* THE booked rule: booked = approved + pending requests and approved + pending plan segments.
+     taken = approved days already elapsed, ahead = approved days still to come, pending = awaiting a decision. */
+  LA.leaveTotals = (year, who) => {
+    const name = who || DB.me.name; const y = Number(year || TODAY.slice(0, 4));
+    const cur = String(y) === TODAY.slice(0, 4);
+    const code = (EMP.find((e) => e.n === name) || {}).id || DB.me.id;
+    const per = {};
+    const slot = (k) => (per[k] ||= { taken: 0, ahead: 0, pending: 0 });
+    LA.entries(name, { active: true }).forEach((e) => {
+      const u = slot(e.key);
+      if (cur && e.src === 'leave' && e.st === 'Approved' && e.rec.inBase) return; // already inside the app's "taken" figure
+      const s = LA.splitOf(e, y);
+      u.taken = R1m(u.taken + s.taken); u.ahead = R1m(u.ahead + s.ahead); u.pending = R1m(u.pending + s.pending);
+    });
+    if (cur) {
+      [['Annual', LA.annualKey()], ['Sick', 'Sick Leave'], ['Casual', 'Casual Leave']].forEach(([app, k]) => {
+        const base = LA.baseBal(code, app);
+        if (base) { const u = slot(k); u.taken = R1m(u.taken + base.taken); }
+      });
+      // approved leave the app had already counted, since cancelled: its days come back
+      LA.entries(name).filter((e) => e.src === 'leave' && e.st === 'Cancelled' && e.rec.inBase).forEach((e) => { const u = slot(e.key); u.taken = Math.max(0, R1m(u.taken - e.days)); });
+    }
+    if (cur) slot('Compensatory Off').credited = LA.compCredited(name);
+    let taken = 0; let ahead = 0; let pending = 0;
+    Object.keys(per).forEach((k) => { if (k === 'Work From Home') return; taken += per[k].taken; ahead += per[k].ahead; pending += per[k].pending; });
+    return { year: y, cur, per, total: { taken: R1m(taken), ahead: R1m(ahead), pending: R1m(pending), booked: R1m(taken + ahead + pending) } };
+  };
+
   /* ---------- roster: the prototype's EMP list is replaced by the app's real employees ---------- */
   function syncRoster() {
     const o = ORG();
@@ -137,7 +307,7 @@
     { t: 'Parental', code: 'PT', pay: 'Full', ent: '5 working days', accrual: 'Per birth', probation: 'Eligible', doc: 'Mandatory' },
     { t: 'Hajj', code: 'HJ', pay: 'Unpaid', ent: 'Max 30 days', accrual: 'Once in employment', probation: 'Eligible', doc: 'Evidence' },
     { t: 'Umrah', code: 'UM', pay: 'From AL/Unpaid', ent: 'HR selection', accrual: '—', probation: 'Eligible', doc: 'Evidence' },
-    { t: 'Study', code: 'ST', pay: 'Full', ent: '5 days/yr', accrual: 'Calendar year', probation: 'Min 2 yrs service', doc: 'Exam evidence' },
+    { t: 'Study Leave', code: 'ST', pay: 'Full', ent: '5 days/yr', accrual: 'Calendar year', probation: 'Min 2 yrs service', doc: 'Exam evidence' },
     { t: 'Restricted Festive', code: 'RF', pay: 'Full', ent: '1 day/yr', accrual: 'Calendar year', probation: 'Eligible', doc: '—' },
     { t: 'Unpaid Leave', code: 'UP', pay: 'Unpaid', ent: 'As approved', accrual: '—', probation: 'Eligible', doc: 'Reason' },
     { t: 'Casual Leave', code: 'CS', pay: 'Full', ent: '7 days/yr', accrual: 'Calendar year', probation: 'After probation', doc: '—' },
@@ -156,12 +326,12 @@
 
   const BALANCES = {
     uae: () => ({
-      'Annual Leave': { avail: 14, booked: 3.5, pending: 0, cap: 30, note: 'Accrues 2.5 days / eligible month', card: 'Earned Leave', ic: 'sun', bg: '#e7f6ee', fg: '#1f9d63' },
+      'Annual Leave': { avail: 14, booked: 0, pending: 0, cap: 30, note: 'Accrues 2.5 days / eligible month', card: 'Annual Leave', ic: 'sun', bg: '#e7f6ee', fg: '#1f9d63' },
       'Sick Leave': { avail: 6.5, booked: 3.5, pending: 0, cap: 90, note: '90/yr · 15 full · 30 half · 45 unpaid', card: 'Sick Leave', ic: 'baby', bg: '#f0eafc', fg: '#7a4bd0' },
-      'Compensatory Off': { avail: 0, booked: 3, pending: 0, cap: null, note: 'Credited from approved weekend/holiday work', card: 'Compensatory Off', ic: 'gift', bg: '#e7f6ee', fg: '#1f9d63' },
-      'Unpaid Leave': { avail: null, booked: 0, pending: 0, cap: null, note: 'As approved · loss of pay', card: 'Leave Without Pay', ic: 'flame', bg: '#fce9e7', fg: '#d5493f' },
+      'Compensatory Off': { avail: 0, booked: 0, pending: 0, cap: null, nonNeg: true, note: 'Credited from approved overtime taken as comp-off (hours ÷ ratio)', card: 'Compensatory Off', ic: 'gift', bg: '#e7f6ee', fg: '#1f9d63' },
+      'Unpaid Leave': { avail: null, booked: 0, pending: 0, cap: null, note: 'As approved · loss of pay', card: 'Unpaid Leave', ic: 'flame', bg: '#fce9e7', fg: '#d5493f' },
       'Work From Home': { avail: null, booked: 0, pending: 0, cap: null, note: 'Approval based', card: 'Work From Home', ic: 'home', bg: '#e7f0fc', fg: '#2f6fd6' },
-      'Compassionate Leave': { avail: 5, booked: 0, pending: 0, cap: 5, note: 'Per bereavement event', card: 'Compassionate', ic: 'shield', bg: '#f0eafc', fg: '#7a4bd0' },
+      'Compassionate Leave': { avail: 5, booked: 0, pending: 0, cap: 5, note: 'Per bereavement event', card: 'Compassionate Leave', ic: 'shield', bg: '#f0eafc', fg: '#7a4bd0' },
       'Study Leave': { avail: 5, booked: 0, pending: 0, cap: 5, note: 'Min 2 yrs service', card: 'Study Leave', ic: 'book', bg: '#e7f0fc', fg: '#2f6fd6' },
       'Restricted Festive': { avail: 1, booked: 0, pending: 0, cap: 1, note: '1 paid day / year', card: 'Restricted Festive', ic: 'gift', bg: '#fdf3df', fg: '#c6851b' },
       'Casual Leave': { avail: 7, booked: 0, pending: 0, cap: 7, note: '7 days / year', card: 'Casual Leave', ic: 'sun', bg: '#e7f6ee', fg: '#1f9d63' },
@@ -170,7 +340,7 @@
       'Casual Leave': { avail: 8, booked: 4, pending: 0, cap: 12, note: '12 days / year · accrues 1 per month', card: 'Casual Leave', ic: 'sun', bg: '#e7f6ee', fg: '#1f9d63' },
       'Earned Leave': { avail: 11, booked: 4, pending: 0, cap: 15, note: '15 days / year · accrues 1.25 per month', card: 'Earned Leave', ic: 'plan', bg: '#e7f0fc', fg: '#2f6fd6' },
       'Sick Leave': { avail: 9, booked: 3, pending: 0, cap: 12, note: '12 days / year · certificate above 2 days', card: 'Sick Leave', ic: 'baby', bg: '#f0eafc', fg: '#7a4bd0' },
-      'Compensatory Off': { avail: 0, booked: 1, pending: 0, cap: null, note: 'Credited from approved weekend/holiday work', card: 'Compensatory Off', ic: 'gift', bg: '#e7f6ee', fg: '#1f9d63' },
+      'Compensatory Off': { avail: 0, booked: 0, pending: 0, cap: null, nonNeg: true, note: 'Credited from approved overtime taken as comp-off (hours ÷ ratio)', card: 'Compensatory Off', ic: 'gift', bg: '#e7f6ee', fg: '#1f9d63' },
       'Unpaid Leave': { avail: null, booked: 0, pending: 0, cap: null, note: 'As approved · loss of pay', card: 'Loss of Pay', ic: 'flame', bg: '#fce9e7', fg: '#d5493f' },
       'Work From Home': { avail: null, booked: 0, pending: 0, cap: null, note: 'Approval based', card: 'Work From Home', ic: 'home', bg: '#e7f0fc', fg: '#2f6fd6' },
       'Bereavement Leave': { avail: 3, booked: 0, pending: 0, cap: 3, note: 'Per event', card: 'Bereavement', ic: 'shield', bg: '#f0eafc', fg: '#7a4bd0' },
@@ -207,7 +377,7 @@
     const earnedK = tplOf(otherLoc) === 'india' ? 'Earned Leave' : 'Annual Leave';
     const co = (loc) => ({ loc });
     const dev = (id, loc, place, mapped, sync, online) => ({ id, loc, place, mapped, sync, online });
-    const mkHol = (id, dd, to, n, type, locs) => ({ id, d: dd, to, n, type, locs });
+    const mkHol = (id, dd, to, n, type, locs, approx) => (approx ? { id, d: dd, to, n, type, locs, approx: true } : { id, d: dd, to, n, type, locs });
     const dub = LOCS().filter((l) => l.template === 'uae').map((l) => l.id);
     const ind = LOCS().filter((l) => l.template === 'india').map((l) => l.id);
     const allIds = LOCS().map((l) => l.id);
@@ -262,20 +432,22 @@
       mkHol('H16', `${y}-12-25`, '', 'Christmas', 'Public', ind),
     ];
     // the app publishes the holiday list so the app and the module count working days the same way
-    const holidays = o.leave && o.leave.holidays && o.leave.holidays.length ? o.leave.holidays.map((h) => mkHol(h.id, h.d, h.to, h.n, h.type, h.tpl === 'all' ? allIds : h.tpl === 'uae' ? dub : ind)) : holidaysFallback;
+    const holidays = o.leave && o.leave.holidays && o.leave.holidays.length ? o.leave.holidays.map((h) => mkHol(h.id, h.d, h.to, h.n, h.type, h.tpl === 'all' ? allIds : h.tpl === 'uae' ? dub : ind, h.approx)) : holidaysFallback;
     const companies = (o.companies || []).map((c) => ({ id: c.id, name: c.name, code: c.code, loc: c.location === 'Both' ? 'all' : c.location, status: c.status === 'Inactive' ? 'Suspended' : 'Active', branches: c.location === 'Both' ? Math.max(2, LOCS().length) : 1, policy: c.location === 'Both' ? '2024 · v3' : '2024 · v2' }));
+    // overtime category follows the date and the employee's location calendar (weekly off / public holiday = Weekend / holiday)
+    const otCat = (date, loc) => (LA.isOff(date, loc) || holOf(holidays, date, loc) ? 'Weekend / holiday' : 'Normal (+25%)');
     const memName = (loc) => EMP.filter((e) => e.loc === loc);
     void co; void memName; void sickK; void casualK; void earnedK;
 
     return {
-      v: 5,
-      seq: { LV: 2050, RG: 990, OT: 120, PL: 10, EX: 10, DC: 43, AN: 3, TS: 1, CO: 4, ADJ: 4, ENC: 4, DEV: 4, RUN: 2, SCH: 1, FILE: 1, STA: 1, SHF: 1, MAT: 3 },
+      v: 6,
+      seq:{ LV: 2050, RG: 990, OT: 120, PL: 10, EX: 10, DC: 43, AN: 3, TS: 1, CO: 4, ADJ: 4, ENC: 4, DEV: 4, RUN: 2, SCH: 1, FILE: 1, STA: 1, SHF: 1, MAT: 3 },
       me: { name: meN, id: myCode(), desig: (o.employees.find((x) => x.code === myCode()) || {}).designation || 'General Manager', dept: (o.employees.find((x) => x.code === myCode()) || {}).department || 'Management', mgr: '—' },
       today: { date: T, sessions: seedSessions() },
       bal: BALANCES[tplMine](),
       leaves: LEDGER.leaves,
       plans: [
-        { id: 'PL-1', emp: meN, seg: 1, from: `${y}-02-02`, to: `${y}-02-06`, st: 'Approved' },
+        { id: 'PL-1', emp: meN, seg: 1, from: `${y}-02-02`, to: `${y}-02-08`, st: 'Approved' },
         { id: 'PL-2', emp: meN, seg: 2, from: d(19), to: d(27), st: 'Pending' },
         { id: 'PL-3', emp: dn(2), seg: 1, from: d(98), to: d(105), st: 'Pending' },
         { id: 'PL-4', emp: dn(3), seg: 1, from: d(18), to: d(23), st: 'Approved' },
@@ -285,9 +457,9 @@
         { id: 'OT-116', emp: meN, date: lastWork(mine, d(-9)), hours: 5, cat: 'Normal (+25%)', comp: 'Compensatory off', reason: 'Release support', st: 'Approved', by: 'Manager' },
         { id: 'OT-117', emp: meN, date: lastWork(mine, d(-6)), hours: 2, cat: 'Normal (+25%)', comp: 'Special allowance', reason: 'Client deadline', st: 'Pending', by: '' },
         { id: 'OT-115', emp: meN, date: lastWork(mine, d(-20)), hours: 1.5, cat: 'Normal (+25%)', comp: 'Overtime payment', reason: 'Month-end close', st: 'Approved', by: 'Manager' },
-        { id: 'OT-118', emp: dn(3), date: d(-1), hours: 5, cat: 'Weekend / holiday', comp: 'Compensatory off', reason: 'Weekend release', st: 'Pending', by: '' },
+        { id: 'OT-118', emp: dn(3), date: d(-1), hours: 5, cat: otCat(d(-1), mine), comp: 'Compensatory off', reason: 'Weekend release', st: 'Pending', by: '' },
         { id: 'OT-114', emp: dn(2), date: lastWork(mine, d(-12)), hours: 2, cat: 'Night 10PM–4AM (+50%)', comp: 'Overtime payment', reason: 'Night deployment', st: 'Approved', by: 'Manager' },
-        { id: 'OT-119', emp: kn(3), date: d(-1), hours: 4, cat: 'Weekend / holiday', comp: 'Compensatory off', reason: 'Production support', st: 'Pending', by: '' },
+        { id: 'OT-119', emp: kn(3), date: d(-1), hours: 4, cat: otCat(d(-1), otherLoc), comp: 'Compensatory off', reason: 'Production support', st: 'Pending', by: '' },
         { id: 'OT-113', emp: kn(2), date: lastWork(otherLoc, d(-8)), hours: 3, cat: 'Normal (+25%)', comp: 'Overtime payment', reason: 'Quarter close', st: 'Approved', by: 'Manager' },
       ],
       regs: [
@@ -329,7 +501,7 @@
       ],
       adj: [
         { id: 'ADJ-1', emp: dn(3), type: anLeave, change: 2, reason: 'Recall reimbursement', by: meN, date: d(-22) },
-        { id: 'ADJ-2', emp: meN, type: 'Compensatory Off', change: 1, reason: 'Weekend work credit', by: meN, date: d(-24) },
+        { id: 'ADJ-2', emp: dn(1), type: 'Compensatory Off', change: 1, reason: 'Weekend work credit', by: meN, date: d(-24) },
         { id: 'ADJ-3', emp: kn(1), type: 'Casual Leave', change: -1.5, reason: 'Correction of accrual', by: meN, date: d(-34) },
       ],
       cf: [
@@ -430,7 +602,7 @@
       const raw = sessionStorage.getItem(`${KEY}.${myCode()}`);
       if (raw) {
         const s = JSON.parse(raw);
-        if (s && s.v === 5) {
+        if (s && s.v === 6) {
           DB = s; DB.leaves = LEDGER.leaves;
           if (!DB.today || DB.today.date !== TODAY) DB.today = { date: TODAY, sessions: seedSessions() };
           fillMissing(); syncBal(); return;
@@ -446,18 +618,19 @@
   function syncBal() {
     if (!LEDGER || !DB || !DB.bal) return;
     const code = DB.me.id;
-    const keys = { Annual: LA.annualKey(), Sick: 'Sick Leave', Casual: 'Casual Leave' };
-    Object.keys(keys).forEach((app) => {
-      const b = DB.bal[keys[app]]; const base = LA.baseBal(code, app);
-      if (!b || !base) return;
-      let taken = base.taken; let pending = 0;
-      LEDGER.leaves.forEach((l) => {
-        if (l.code !== code || l.app !== app) return;
-        if (l.st === 'Approved' && !l.inBase) taken += l.days; else if (l.st === 'Cancelled' && l.inBase) taken -= l.days; else if (l.st === 'Pending') pending += l.days;
-      });
-      const d = R1x(base.entitled - taken);
-      const adj = b._d == null ? 0 : b.avail - b._d;
-      b.avail = R1x(d + adj); b._d = d; b.cap = base.entitled; b.booked = R1x(taken); b.pending = R1x(pending);
+    const T = LA.leaveTotals(Number(TODAY.slice(0, 4)), DB.me.name); // the one booked rule: every card number comes from here
+    const mapped = { [LA.annualKey()]: 'Annual', 'Sick Leave': 'Sick', 'Casual Leave': 'Casual' };
+    Object.keys(DB.bal).forEach((k) => {
+      const b = DB.bal[k];
+      const u = T.per[k] || { taken: 0, ahead: 0, pending: 0 };
+      b.taken = R1x(u.taken); b.ahead = R1x(u.ahead); b.booked = R1x(u.taken + u.ahead); b.pending = R1x(u.pending);
+      if (b.avail == null) return; // unpaid / work-from-home keep counters only
+      let ent = b.cap;
+      if (k === 'Compensatory Off') { ent = u.credited || 0; b.credited = ent; } else if (mapped[k]) { const base = LA.baseBal(code, mapped[k]); if (base) { ent = base.entitled; b.cap = ent; } }
+      if (ent == null) return;
+      const d = R1x(ent - b.booked);
+      const adj = b._d == null ? 0 : b.avail - b._d; // direct adjustments made elsewhere (HR adjustment, carry-forward) are kept
+      b.avail = R1x(d + adj); b._d = d;
     });
   }
   LA.syncBal = syncBal;
@@ -594,7 +767,7 @@
   LA.oneLoc = (key) => { const sel = LA.ui(key, ''); if (sel && locDef(sel)) return sel; return LA.loc() !== 'all' ? LA.loc() : myLoc(); };
 
   /* ---------- filter widgets ---------- */
-  const optHtml = (options, cur) => options.map((o) => { const v = typeof o === 'object' ? o.v : o; const l = typeof o === 'object' ? o.l : o; return `<option value="${esc(v)}" ${String(v) === String(cur) ? 'selected' : ''}>${esc(l)}</option>`; }).join('');
+  const optHtml = (options, cur) => options.map((o) => { const ob = typeof o === 'object'; const v = ob ? o.v : o; const l = ob ? o.l : o; return `<option value="${esc(v)}" ${String(v) === String(cur) ? 'selected' : ''}${ob && o.disabled ? ' disabled' : ''}${ob && o.title ? ` title="${esc(o.title)}"` : ''}>${esc(l)}</option>`; }).join('');
   LA.fSel = (key, label, options, def) => `<div class="fld"><label>${esc(label)}</label><select onchange="LA.setUi('${key}',this.value)">${optHtml(options, LA.ui(key, def === undefined ? (typeof options[0] === 'object' ? options[0].v : options[0]) : def))}</select></div>`;
   LA.fLoc = () => `<div class="fld"><label>Location</label><select onchange="LA.setUi('loc',this.value)">${optHtml(LA.locOptions(), LA.loc())}</select></div>`;
   LA.fDept = (key) => LA.fSel(key || 'dept', 'Department', ['All departments'].concat(LA.depts()), 'All departments');
@@ -646,22 +819,27 @@
   LA.kb = (n) => (n >= 1048576 ? (n / 1048576).toFixed(1) + ' MB' : Math.max(1, Math.round(n / 1024)) + ' KB');
 
   /* ---------- form engine ---------- */
+  /* Fields may give options as a list or, when they depend on other fields, as optFn(values) → list.
+     An option can be {v, l, disabled, title}. validate(v) returns strings or {k: fieldKey, msg}; with allErrors the
+     validator also runs while required fields are empty, so every problem is listed together. */
   let FORM = null;
-  const fieldHtml = (f, v) => {
+  const fieldHtml = (f, v, vals) => {
     const val = v === undefined ? (f.value === undefined ? '' : f.value) : v;
     const id = 'f_' + f.k;
     const req = f.req ? ' <span class="req">*</span>' : '';
     let input;
-    if (f.type === 'select') input = `<select id="${id}" onchange="LA.live()">${(f.options || []).map((o) => { const ov = typeof o === 'object' ? o.v : o; const ol = typeof o === 'object' ? o.l : o; return `<option value="${esc(ov)}" ${String(ov) === String(val) ? 'selected' : ''}>${esc(ol)}</option>`; }).join('')}</select>`;
+    if (f.type === 'select') input = `<select id="${id}" onchange="LA.live()">${optHtml(f.optFn ? f.optFn(vals || {}) : f.options || [], val)}</select>`;
     else if (f.type === 'textarea') input = `<textarea id="${id}" placeholder="${esc(f.ph || '')}" oninput="LA.live()">${esc(val)}</textarea>`;
-    else if (f.type === 'file') input = `<div class="upload" id="up_${f.k}" onclick="LA.formPick('${f.k}')">${ic('file')} <span id="upl_${f.k}">${esc(f.ph || 'Click to attach a PDF or image')}</span></div>`;
+    else if (f.type === 'file') input = `<div class="upload" id="up_${f.k}" tabindex="0" onclick="LA.formPick('${f.k}')">${ic('file')} <span id="upl_${f.k}">${esc(f.ph || 'Click to attach a PDF or image')}</span></div>`;
     else input = `<input id="${id}" type="${f.type || 'text'}" value="${esc(val)}" ${f.step ? `step="${f.step}"` : ''} ${f.min != null ? `min="${f.min}"` : ''} ${f.max != null ? `max="${f.max}"` : ''} ${f.readonly ? 'readonly' : ''} placeholder="${esc(f.ph || '')}" oninput="LA.live()" onchange="LA.live()">`;
-    return `<div class="field" style="${f.full ? 'grid-column:1/-1' : ''}"><label>${esc(f.label)}${req}${f.sub ? ` <span class="muted">${esc(f.sub)}</span>` : ''}</label>${input}${f.hint ? `<div class="hint">${esc(f.hint)}</div>` : ''}</div>`;
+    return `<div class="field" id="fld_${f.k}" style="${f.full ? 'grid-column:1/-1' : ''}"><label>${esc(f.label)}${req}${f.sub ? ` <span class="muted">${esc(f.sub)}</span>` : ''}</label>${input}${f.hint ? `<div class="hint">${esc(f.hint)}</div>` : ''}</div>`;
   };
   LA.form = (o) => {
-    FORM = { ...o, files: {} };
-    const body = `${o.pre || ''}<div class="form-row two">${o.fields.map((f) => fieldHtml(f)).join('')}</div><div id="formLive">${o.live ? o.live(readForm()) : ''}</div><div id="formErr"></div>${o.post || ''}`;
-    openModal(modalShell(o.title, body, `<button class="btn" onclick="closeModal()">Cancel</button><button class="btn ${o.danger ? 'danger' : 'pri'}" id="formSubmit" onclick="LA.submit()">${esc(o.submit || 'Submit')}</button>`, o.size || ''));
+    FORM = { ...o, files: {}, submitted: false };
+    const defaults = {};
+    o.fields.forEach((f) => { defaults[f.k] = f.value === undefined ? '' : f.value; });
+    const body = `${o.pre || ''}<div class="form-row two">${o.fields.map((f) => fieldHtml(f, undefined, defaults)).join('')}</div><div id="formLive">${o.live ? o.live(readForm()) : ''}</div>${o.post || ''}`;
+    openModal(modalShell(o.title, body, `<div class="lt-ffoot"><div id="formErr"></div><div class="lt-fbtn"><button class="btn" onclick="closeModal()">Cancel</button><button class="btn ${o.danger ? 'danger' : 'pri'}" id="formSubmit" onclick="LA.submit()">${esc(o.submit || 'Submit')}</button></div></div>`, o.size || ''));
     if (o.live) LA.live();
   };
   function readForm() {
@@ -674,31 +852,71 @@
     });
     return v;
   }
-  LA.live = () => { if (!FORM || !FORM.live) return; const el = __$('formLive'); if (el) el.innerHTML = FORM.live(readForm()); if (FORM.onChange) FORM.onChange(readForm()); };
+  LA.live = () => {
+    if (!FORM) return;
+    const hasOpt = FORM.fields.some((f) => f.optFn);
+    if (!FORM.live && !hasOpt && !FORM.submitted) return;
+    const v = readForm();
+    FORM.fields.forEach((f) => {
+      if (!f.optFn) return;
+      const el = __$('f_' + f.k);
+      if (!el) return;
+      const html = optHtml(f.optFn(v), el.value);
+      if (el.getAttribute('data-sig') !== html) { el.innerHTML = html; el.setAttribute('data-sig', html); }
+    });
+    if (FORM.live) { const el = __$('formLive'); if (el) el.innerHTML = FORM.live(v); if (FORM.onChange) FORM.onChange(v); }
+    if (FORM.submitted) paintErrors(collectErrors(v), false); // keep the list in step while the user fixes things
+  };
   LA.formPick = (k) => {
     const f = FORM.fields.find((x) => x.k === k);
     LA.pickFile(f.accept || 'application/pdf,image/*', (file) => {
-      if (file.size > 10 * 1048576) { showErr(['File is larger than 10 MB.']); return; }
+      if (file.size > 10 * 1048576) { paintErrors([{ k, msg: 'File is larger than 10 MB.' }], true); return; }
       FORM.files[k] = file;
       const l = __$('upl_' + k);
       if (l) l.textContent = `${file.name} · ${LA.kb(file.size)}`;
       LA.live();
     });
   };
-  function showErr(list) {
-    const el = __$('formErr');
-    if (el) el.innerHTML = list.length ? `<div class="note warn" style="margin-top:12px">${ic('alert')}<div>${list.map(esc).join('<br>')}</div></div>` : '';
-    const body = el && el.closest('.modal-b');
-    if (body && list.length) body.scrollTop = body.scrollHeight;
+  const normErrs = (list) => (list || []).map((e) => (typeof e === 'string' ? { msg: e } : e)).filter((e) => e && e.msg);
+  function collectErrors(v) {
+    const errs = [];
+    FORM.fields.forEach((f) => { if (f.req && (v[f.k] === '' || v[f.k] == null)) errs.push({ k: f.k, msg: `${f.label} is required.` }); });
+    if (FORM.validate && (FORM.allErrors || !errs.length)) errs.push(...normErrs(FORM.validate(v)));
+    const seen = new Set();
+    return errs.filter((e) => { const sig = `${e.k || ''}|${e.msg}`; if (seen.has(sig)) return false; seen.add(sig); return true; });
   }
+  const clearMarks = () => {
+    __$$('.lt-bad').forEach((n) => n.classList.remove('lt-bad'));
+    __$$('[aria-invalid]').forEach((n) => n.removeAttribute('aria-invalid'));
+    __$$('.lt-ferr').forEach((n) => n.remove());
+  };
+  /* summary above the submit button + every invalid field marked (red border, aria-invalid, inline message) */
+  function paintErrors(errs, focus) {
+    clearMarks();
+    const box = __$('formErr');
+    if (box) box.innerHTML = errs.length ? `<div class="lt-errsum" role="alert"><b>${errs.length === 1 ? 'Fix this before submitting' : `Fix these ${errs.length} issues before submitting`}</b><ul>${errs.map((e) => `<li ${e.k ? `class="lt-go" onclick="LA.focusField('${e.k}')"` : ''}>${esc(e.msg)}</li>`).join('')}</ul></div>` : '';
+    if (!FORM) return;
+    let first = null;
+    FORM.fields.forEach((f) => {
+      const mine = errs.filter((e) => e.k === f.k);
+      if (!mine.length) return;
+      const wrap = __$('fld_' + f.k);
+      const inp = __$('f_' + f.k) || __$('up_' + f.k);
+      if (wrap) wrap.classList.add('lt-bad');
+      if (inp) inp.setAttribute('aria-invalid', 'true');
+      if (wrap) mine.forEach((e) => { const d = document.createElement('div'); d.className = 'lt-ferr'; d.setAttribute('role', 'alert'); d.textContent = e.msg; const hint = wrap.querySelector('.hint'); if (hint) wrap.insertBefore(d, hint); else wrap.appendChild(d); });
+      if (!first && inp) first = inp;
+    });
+    if (focus && first) { try { first.focus(); if (first.scrollIntoView) first.scrollIntoView({ block: 'center' }); } catch { /* not focusable */ } }
+  }
+  LA.focusField = (k) => { const el = __$('f_' + k) || __$('up_' + k); if (el) { try { el.focus(); if (el.scrollIntoView) el.scrollIntoView({ block: 'center' }); } catch { /* ignore */ } } };
   LA.submit = () => {
     if (!FORM) return;
-    const v = readForm();
-    const errs = [];
-    FORM.fields.forEach((f) => { if (f.req && f.type !== 'file' && (v[f.k] === '' || v[f.k] == null)) errs.push(`${f.label} is required.`); if (f.req && f.type === 'file' && !v[f.k]) errs.push(`${f.label} is required.`); });
-    if (!errs.length && FORM.validate) errs.push(...(FORM.validate(v) || []));
-    if (errs.length) { showErr(errs); return; }
-    const keep = FORM.onSubmit(v);
+    FORM.submitted = true;
+    const errs = collectErrors(readForm());
+    if (errs.length) { paintErrors(errs, true); return; }
+    paintErrors([], false);
+    const keep = FORM.onSubmit(readForm());
     if (keep === false) return;
     closeModal();
     FORM = null;
@@ -741,6 +959,7 @@
     const med = seesAll() ? DB.med.filter((m) => m.st === 'Pending' && inScope(m.emp)).length : 0;
     const cf = seesAll() ? DB.cf.filter((c) => c.st === 'Pending' && inScope(c.emp)).length : 0;
     const cs = seesAll() ? DB.cases.filter((c) => c.st === 'Pending' && inScope(c.emp)).length : 0;
+    const ext = seesAll() ? LA.waitingExternal().filter((x) => inScope(x.emp)).length : 0;
     const own = DB.leaves.filter((x) => x.emp === me && x.st === 'Pending').length + DB.regs.filter((x) => x.emp === me && x.st === 'Pending').length + DB.ots.filter((x) => x.emp === me && x.st === 'Pending').length;
     const decided = DB.leaves.filter((x) => x.emp === me && (x.st === 'Approved' || x.st === 'Rejected') && x.decidedOn && daysBetween(x.decidedOn, TODAY) <= 7);
     if (un) l.push({ ic: 'alert', t: `${un} unauthorized absence${un > 1 ? 's' : ''}`, s: 'Create LOP + disciplinary case', c: 'r', go: opsGo('exceptions') });
@@ -750,6 +969,7 @@
     if (ex) l.push({ ic: 'clock', t: `${ex} open attendance exception${ex > 1 ? 's' : ''}`, s: 'Missing punches & invalid records', c: 'a', go: opsGo('exceptions') });
     if (med) l.push({ ic: 'doc', t: `${med} medical certificate${med > 1 ? 's' : ''} awaiting verification`, s: 'Sick leave', c: 'b', go: ['operations', 'docverify'] });
     if (cf) l.push({ ic: 'wallet', t: `${cf} carry-forward request${cf > 1 ? 's' : ''} pending`, s: 'Expires within 90 days', c: 'a', go: ['operations', 'carryforward'] });
+    if (ext) l.push({ ic: 'clock', t: `${ext} request${ext > 1 ? 's' : ''} waiting for the Managing Director`, s: 'External approver — nobody in the system can decide; HR informed', c: 'b', go: ['home', 'team', 'approvals'] });
     if (cs) l.push({ ic: 'shield', t: `${cs} disciplinary case${cs > 1 ? 's' : ''} awaiting HR decision`, s: 'Recommendations only', c: 'r', go: ['operations', 'discipline'] });
     return l;
   };

@@ -67,6 +67,8 @@ export interface HolidayDef {
   n: string;
   type: string;
   tpl: 'all' | 'uae' | 'india';
+  /** Moon-sighting / panchang dates: shown as approximate. */
+  approx?: boolean;
 }
 
 /* ---------- leave types: the app's four types per location template ---------- */
@@ -94,26 +96,62 @@ export function workWeek(text: string | undefined): number[] {
   return out;
 }
 
-export function defaultHolidays(year: string): HolidayDef[] {
-  const h = (id: string, d: string, to: string, n: string, tpl: HolidayDef['tpl']): HolidayDef => ({ id, d, to, n, type: 'Public', tpl });
+type HolidayRow = Omit<HolidayDef, 'id' | 'type'>;
+const row = (d: string, to: string, n: string, tpl: HolidayDef['tpl'], approx = false): HolidayRow => (approx ? { d, to, n, tpl, approx: true } : { d, to, n, tpl });
+
+/** The public holidays of one year. 2027 is listed explicitly (Islamic and festival dates follow the moon / panchang, so they are
+    marked approximate); any other year repeats the usual calendar dates. */
+function holidayRows(year: string): HolidayRow[] {
+  if (year === '2027') {
+    return [
+      row('2027-01-01', '', 'New Year’s Day', 'all'),
+      row('2027-03-09', '2027-03-11', 'Eid Al Fitr', 'uae', true),
+      row('2027-05-15', '2027-05-18', 'Arafat Day & Eid Al Adha', 'uae', true),
+      row('2027-06-06', '', 'Islamic New Year', 'uae', true),
+      row('2027-08-14', '', 'Prophet’s Birthday', 'uae', true),
+      row('2027-12-01', '', 'Commemoration Day', 'uae'),
+      row('2027-12-02', '2027-12-03', 'UAE National Day', 'uae'),
+      row('2027-01-26', '', 'Republic Day', 'india'),
+      row('2027-03-10', '', 'Eid ul-Fitr (Ramzan)', 'india', true),
+      row('2027-03-26', '', 'Good Friday', 'india'),
+      row('2027-04-14', '', 'Vishu', 'india'),
+      row('2027-05-01', '', 'May Day (Labour Day)', 'india'),
+      row('2027-05-17', '', 'Bakrid (Eid ul-Adha)', 'india', true),
+      row('2027-08-15', '', 'Independence Day', 'india'),
+      row('2027-09-11', '', 'First Onam (Uthradom)', 'india', true),
+      row('2027-09-12', '', 'Thiruvonam', 'india', true),
+      row('2027-09-13', '', 'Third Onam (Avittam)', 'india', true),
+      row('2027-10-02', '', 'Gandhi Jayanti', 'india'),
+      row('2027-10-09', '', 'Vijayadasami', 'india', true),
+      row('2027-10-29', '', 'Diwali', 'india', true),
+      row('2027-12-25', '', 'Christmas', 'india'),
+    ];
+  }
   return [
-    h('H1', `${year}-01-01`, '', 'New Year’s Day', 'all'),
-    h('H2', `${year}-03-20`, `${year}-03-22`, 'Eid Al Fitr', 'uae'),
-    h('H3', `${year}-05-26`, `${year}-05-29`, 'Arafat Day & Eid Al Adha', 'uae'),
-    h('H4', `${year}-06-16`, '', 'Islamic New Year', 'uae'),
-    h('H5', `${year}-08-25`, '', 'Prophet’s Birthday', 'uae'),
-    h('H6', `${year}-12-01`, '', 'Commemoration Day', 'uae'),
-    h('H7', `${year}-12-02`, `${year}-12-03`, 'UAE National Day', 'uae'),
-    h('H8', `${year}-01-26`, '', 'Republic Day', 'india'),
-    h('H9', `${year}-04-14`, '', 'Vishu', 'india'),
-    h('H10', `${year}-05-01`, '', 'May Day', 'india'),
-    h('H11', `${year}-08-15`, '', 'Independence Day', 'india'),
-    h('H12', `${year}-08-26`, '', 'Thiruvonam', 'india'),
-    h('H13', `${year}-10-02`, '', 'Gandhi Jayanti', 'india'),
-    h('H14', `${year}-10-20`, '', 'Vijayadasami', 'india'),
-    h('H15', `${year}-11-08`, '', 'Diwali', 'india'),
-    h('H16', `${year}-12-25`, '', 'Christmas', 'india'),
+    row(`${year}-01-01`, '', 'New Year’s Day', 'all'),
+    row(`${year}-03-20`, `${year}-03-22`, 'Eid Al Fitr', 'uae'),
+    row(`${year}-05-26`, `${year}-05-29`, 'Arafat Day & Eid Al Adha', 'uae'),
+    row(`${year}-06-16`, '', 'Islamic New Year', 'uae'),
+    row(`${year}-08-25`, '', 'Prophet’s Birthday', 'uae'),
+    row(`${year}-12-01`, '', 'Commemoration Day', 'uae'),
+    row(`${year}-12-02`, `${year}-12-03`, 'UAE National Day', 'uae'),
+    row(`${year}-01-26`, '', 'Republic Day', 'india'),
+    row(`${year}-04-14`, '', 'Vishu', 'india'),
+    row(`${year}-05-01`, '', 'May Day', 'india'),
+    row(`${year}-08-15`, '', 'Independence Day', 'india'),
+    row(`${year}-08-26`, '', 'Thiruvonam', 'india'),
+    row(`${year}-10-02`, '', 'Gandhi Jayanti', 'india'),
+    row(`${year}-10-20`, '', 'Vijayadasami', 'india'),
+    row(`${year}-11-08`, '', 'Diwali', 'india'),
+    row(`${year}-12-25`, '', 'Christmas', 'india'),
   ];
+}
+
+/** The holiday lists for the given year and the one after it, so a leave that crosses New Year counts the next year's holidays too. */
+export function defaultHolidays(year: string): HolidayDef[] {
+  const next = String(Number(year) + 1);
+  const build = (y: string, suffix: string): HolidayDef[] => holidayRows(y).map((r, i) => ({ id: `H${i + 1}${suffix}`, type: 'Public', ...r }));
+  return [...build(year, ''), ...build(next, `-${next}`)];
 }
 
 /** Holidays in force: the runtime's own list when it has been opened (HR may have edited it), else the defaults. */
@@ -159,7 +197,24 @@ export function workingDays(from: string, to: string, location: LocationDef | un
 /* ---------- approver routing ---------- */
 const isActive = (e: Employee | undefined): e is Employee => !!e && (e.employmentStatus === 'Active' || e.employmentStatus === 'Offboarding');
 
-/** Reporting manager; with no manager, the manager's manager, then HR, then the Super Admin. Never the requester. */
+/** Approver code used when nobody inside the system can approve (e.g. the General Manager's own leave). */
+export const EXTERNAL_APPROVER: Approver = { code: 'EXT-MD', name: 'Managing Director', via: 'External approver' };
+export const isExternalApprover = (code: string | undefined | null) => !!code && code.startsWith('EXT-');
+
+/** True when `candidate` reports to `ancestorId`, directly or through anyone else in the chain. */
+function reportsTo(candidate: Employee, ancestorId: string): boolean {
+  const seen = new Set<string>();
+  let cur: Employee | undefined = candidate;
+  while (cur?.reportingManagerId && !seen.has(cur.id)) {
+    if (cur.reportingManagerId === ancestorId) return true;
+    seen.add(cur.id);
+    cur = employeeById(cur.reportingManagerId);
+  }
+  return false;
+}
+
+/** Reporting manager; with no manager, the manager's manager, then HR, then the Super Admin. Never the requester and never
+    anyone who reports (directly or indirectly) to the requester. When nobody is left, the external Managing Director. */
 export function approverFor(e: Employee): Approver | null {
   const chain: { emp: Employee | undefined; via: string }[] = [];
   const mgr = e.reportingManagerId ? employeeById(e.reportingManagerId) : undefined;
@@ -168,8 +223,8 @@ export function approverFor(e: Employee): Approver | null {
   const hrIds = [PERSONAS.HR.employeeId, ...EMPLOYEES.filter((x) => x.flags.includes('HR')).map((x) => x.id)];
   [...new Set(hrIds)].forEach((id) => chain.push({ emp: employeeById(id), via: 'HR' }));
   chain.push({ emp: employeeById(PERSONAS['Super Admin'].employeeId), via: 'Super Admin' });
-  const hit = chain.find((c) => isActive(c.emp) && c.emp.id !== e.id);
-  return hit && hit.emp ? { code: hit.emp.id, name: hit.emp.name, via: hit.via } : null;
+  const hit = chain.find((c) => isActive(c.emp) && c.emp.id !== e.id && !reportsTo(c.emp, e.id));
+  return hit && hit.emp ? { code: hit.emp.id, name: hit.emp.name, via: hit.via } : EXTERNAL_APPROVER;
 }
 
 export function approverMap(): Record<string, Approver> {
@@ -179,6 +234,12 @@ export function approverMap(): Record<string, Approver> {
     if (a) out[e.id] = a;
   });
   return out;
+}
+
+/** Pending and approved annual-leave plan segments of one person, from the runtime when it has been opened. */
+function plannedSegments(name: string): { seg: number; from: string; to: string; st: string }[] {
+  const w = typeof window === 'undefined' ? undefined : (window as unknown as { LA?: { db?: () => { plans?: { emp: string; seg: number; from: string; to: string; st: string }[] } } });
+  return (w?.LA?.db?.().plans ?? []).filter((p) => p.emp === name && (p.st === 'Pending' || p.st === 'Approved'));
 }
 
 /* ---------- balances: the app's entitlement and leave already taken, plus what the ledger has changed ---------- */
@@ -202,6 +263,19 @@ export function balanceOf(employeeId: string, type: LeaveType, leaves: LedgerLea
     else if (l.st === 'Cancelled' && l.inBase) taken -= l.days;
     else if (l.st === 'Pending') pending += l.days;
   });
+  if (type === 'Annual') {
+    // approved and pending annual-leave plan segments are booked leave too (the runtime keeps them)
+    const emp = employeeById(employeeId);
+    const w = typeof window === 'undefined' ? undefined : (window as unknown as { LA?: { workDays?: (from: string, to: string, loc: string) => { days: number } } });
+    const wd = w?.LA?.workDays;
+    if (emp && wd) {
+      plannedSegments(emp.name).forEach((p) => {
+        const d = wd(p.from, p.to, emp.location).days;
+        if (p.st === 'Approved') taken += d;
+        else pending += d;
+      });
+    }
+  }
   return { employeeId, type, entitled, taken, pending, left: Math.round((entitled - taken - pending) * 10) / 10 };
 }
 
@@ -388,6 +462,11 @@ export function previewLeave(employee: Employee, type: LeaveType, from: string, 
       if (!c.days) errors.push('The selected dates have no working days (weekly off or public holiday).');
       const clash = leaves.find((l) => l.code === employee.id && (l.st === 'Pending' || l.st === 'Approved') && !(to < l.from || from > l.to));
       if (clash) errors.push(`These dates overlap ${clash.id} (${clash.from} → ${clash.to}).`);
+      else {
+        // the person's pending / approved annual-leave plan segments (kept by the Leave & Attendance runtime) count as leave too
+        const seg = plannedSegments(employee.name).find((p) => !(to < p.from || from > p.to));
+        if (seg) errors.push(`These dates overlap your annual-leave plan segment ${seg.seg} (${seg.from} → ${seg.to}, ${seg.st.toLowerCase()}).`);
+      }
     }
   }
   if (type !== 'Unpaid' && c.days) {
@@ -470,6 +549,7 @@ export function decideLeave(id: string, status: 'Approved' | 'Rejected', byEmplo
   const l = ledger.leaves.find((x) => x.id === id);
   if (!l) return { ok: false, message: 'Request not found.' };
   if (l.code === byEmployeeId) return { ok: false, message: 'You cannot approve or reject your own request.' };
+  if (isExternalApprover(l.approver)) return { ok: false, message: `Waiting for ${l.approverName ?? 'the external approver'} — nobody in the system can decide this request.` };
   if (l.st !== 'Pending') return { ok: false, message: `Request is already ${l.st.toLowerCase()}.` };
   l.st = status;
   l.stage = status === 'Approved' ? 'Completed' : 'Reporting Manager';

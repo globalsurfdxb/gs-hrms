@@ -629,3 +629,180 @@ select{cursor:pointer;padding-right:30px;background-image:url("data:image/svg+xm
 .op2-dev-i.off{background:var(--r-bg);color:var(--r)}
 .op2-dev-i svg.ic{width:16px;height:16px}
 @media(max-width:640px){.op2-lb .fld{flex-direction:column;align-items:flex-start;gap:3px}}
+
+
+/* ---------- Leave Tracker review fixes (lt-) ---------- */
+.lt-ffoot{flex:1;display:flex;flex-direction:column;gap:10px;min-width:0}
+.lt-fbtn{display:flex;gap:10px;justify-content:flex-end}
+.lt-errsum{background:var(--r-bg);border:1px solid #f1c4bf;color:#8f2a22;border-radius:var(--radius-sm);padding:10px 14px;font-size:12.5px;line-height:1.5;max-height:150px;overflow-y:auto}
+.lt-errsum ul{margin:4px 0 0;padding-left:18px}
+.lt-errsum li{margin:2px 0}
+.lt-errsum li.lt-go{cursor:pointer;text-decoration:underline;text-decoration-color:#e3aaa4}
+.field.lt-bad input,.field.lt-bad select,.field.lt-bad textarea,.field.lt-bad .upload{border-color:var(--r);box-shadow:0 0 0 3px rgba(213,73,63,.12)}
+.field.lt-bad>label{color:var(--r)}
+.lt-ferr{font-size:11.5px;color:var(--r);margin-top:5px;line-height:1.4}
+.lt-pend{background:repeating-linear-gradient(45deg,rgba(198,133,27,.14) 0 6px,rgba(255,255,255,0) 6px 12px);border-style:dashed}
+.cal-tag.lt-pend{background:repeating-linear-gradient(45deg,var(--a-bg) 0 5px,#fff 5px 10px);color:#7d5410;border:1px dashed #e2c383}
+.lrow.lt-pend{border-radius:8px}
+.cal-cell.lt-wopart{background:linear-gradient(135deg,#f6f7fb 0 50%,transparent 50%)}
+.lt-short{margin-top:10px;font-size:11.5px;line-height:1.4;color:#7d5410;background:var(--a-bg);border-radius:8px;padding:6px 8px;text-align:left;display:flex;gap:6px;align-items:flex-start}
+.lt-short svg.ic{width:14px;height:14px;flex:none;margin-top:1px}
+
+.lt-month{display:inline-flex;align-items:center;gap:6px;height:34px;padding:0 10px;border:1px solid var(--line);border-radius:9px;background:#fff;color:var(--brand);cursor:pointer}
+.lt-month svg.ic{width:15px;height:15px}
+.lt-month input{border:0;outline:0;background:transparent;font:inherit;font-size:13px;color:var(--ink);cursor:pointer;box-shadow:none;padding:0;height:auto}
+.lt-month:focus-within{border-color:var(--brand);box-shadow:0 0 0 3px var(--brand-050)}
+
+/* My Attendance layout */
+.lt-bar{background:#fff;border:1px solid var(--line);border-radius:14px;box-shadow:var(--shadow);padding:12px 14px;margin-bottom:14px}
+.lt-bar-r{display:flex;align-items:center;gap:10px;flex-wrap:wrap}
+.lt-bar-c{margin-top:12px;padding-top:12px;border-top:1px solid var(--line-2)}
+.lt-bar .daterange{margin:0}
+.lt-bar .vtoggle button{display:inline-flex;align-items:center;gap:6px}
+.lt-bar .vtoggle button svg.ic{width:15px;height:15px}
+.tbl tr.lt-today td{background:var(--brand-050)}
+.tbl tr.lt-today td:first-child{box-shadow:inset 3px 0 0 var(--brand)}
+.tbl tr.lt-off td{background:#fafbfd;color:var(--muted)}
+.tbl tr.lt-off .mono{color:var(--faint)}
+@media(max-width:760px){.lt-bar .vtoggle button span{display:none}.lt-bar-r{gap:8px}.lt-bar .hb{margin-left:0!important;width:100%;justify-content:space-between}}
+
+/* My Attendance: fixes found on review */
+.lt-bar .vtoggle{display:inline-flex;height:36px;padding:3px;gap:2px}
+.lt-bar .vtoggle button{width:auto;min-width:0;height:100%;padding:0 12px;white-space:nowrap;font-size:12.5px;font-weight:600}
+.lt-att .tbl td,.lt-att .tbl th{white-space:nowrap}
+.lt-att .tbl td .bdg{margin-left:8px}
+.lt-att .tbl td:first-child{min-width:190px}
+.lt-att .tbl .btn.sm{height:28px}
+.lt-att .tbl tbody tr{height:52px}
+.lt-att .tbl-wrap{overflow-x:auto}
+.lt-bar .vtoggle button{border-right:none;border-radius:7px}
+.lt-bar .vtoggle button.on{box-shadow:0 1px 2px rgba(40,70,154,.15)}
+.lt-att .tbl td,.lt-att .tbl th{padding-left:12px;padding-right:12px}
+.lt-att .tbl td:first-child{min-width:176px}
+
+/* Team Attendance layout */
+.lt-dept{display:inline-flex;align-items:center;gap:6px;height:34px;padding:0 10px;border:1px solid var(--line);border-radius:9px;background:#fff;color:var(--brand)}
+.lt-dept svg.ic{width:15px;height:15px}
+.lt-dept select{border:0;outline:0;background:transparent;font:inherit;font-size:13px;color:var(--ink);cursor:pointer;box-shadow:none;height:auto;padding:0 2px}
+.lt-dept:focus-within{border-color:var(--brand);box-shadow:0 0 0 3px var(--brand-050)}
+.lt-bar .hb .lbar-s{min-width:230px;height:34px}
+.lt-split{padding:14px 18px 6px;border-bottom:1px solid var(--line-2)}
+.lt-split-bar{display:flex;height:10px;border-radius:8px;overflow:hidden;gap:2px;background:var(--gray-bg)}
+.lt-split-bar i{display:block;height:100%}
+.lt-split-key{display:flex;flex-wrap:wrap;gap:6px 18px;margin:10px 0 8px;font-size:12px;color:var(--muted)}
+.lt-split-key span{display:inline-flex;align-items:center;gap:6px}
+.lt-split-key span i{width:9px;height:9px;border-radius:3px;display:inline-block}
+.lt-split-key b{color:var(--ink);font-weight:700}
+.lt-att .tbl tbody tr[onclick]:hover td{background:#f7f9fe}
+@media(max-width:760px){.lt-bar .hb .lbar-s{min-width:0;width:100%}}
+
+/* ============ SELECT BOXES (every dropdown in the app) ============
+   Closed state: a clean field with our own chevron.
+   Open state: in browsers that support customizable selects (Chrome / Edge 135+) the list becomes a
+   rounded popover with comfortable rows, a hover tint and a tick on the chosen option.
+   Other browsers keep their own list, with the same closed field. */
+select:not([multiple]):not([size]) {
+  appearance: none;
+  -webkit-appearance: none;
+  cursor: pointer;
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%236b7280' stroke-width='2.2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='m6 9 6 6 6-6'/%3E%3C/svg%3E");
+  background-repeat: no-repeat;
+  background-position: right 10px center;
+  background-size: 14px;
+  padding-right: 32px;
+  text-overflow: ellipsis;
+}
+select:not([multiple]):not([size]):hover {
+  border-color: #c7cfdf;
+}
+select:not([multiple]):not([size]):disabled {
+  cursor: not-allowed;
+  opacity: 0.6;
+}
+
+@supports (appearance: base-select) {
+  select:not([multiple]):not([size]),
+  select:not([multiple]):not([size])::picker(select) {
+    appearance: base-select;
+  }
+  select:not([multiple]):not([size]) {
+    background-image: none;
+    padding-right: 10px;
+    align-items: center;
+    gap: 8px;
+  }
+  select:not([multiple]):not([size])::picker-icon {
+    content: '';
+    width: 14px;
+    height: 14px;
+    flex: none;
+    margin-left: auto;
+    background: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%236b7280' stroke-width='2.2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='m6 9 6 6 6-6'/%3E%3C/svg%3E") center / 14px no-repeat;
+    transition: transform 0.16s;
+  }
+  select:not([multiple]):not([size]):open::picker-icon {
+    transform: rotate(180deg);
+  }
+  select:not([multiple]):not([size])::picker(select) {
+    box-sizing: border-box;
+    min-width: anchor-size(width);
+    max-height: min(340px, 60vh);
+    margin-top: 6px;
+    padding: 6px;
+    border: 1px solid #dfe3ec;
+    border-radius: 12px;
+    background: #fff;
+    box-shadow: 0 16px 40px rgba(15, 23, 42, 0.18), 0 2px 8px rgba(15, 23, 42, 0.06);
+    opacity: 0;
+    transform: translateY(-4px);
+    transition: opacity 0.14s, transform 0.14s, overlay 0.14s allow-discrete, display 0.14s allow-discrete;
+  }
+  select:not([multiple]):not([size]):open::picker(select) {
+    opacity: 1;
+    transform: none;
+  }
+  @starting-style {
+    select:not([multiple]):not([size]):open::picker(select) {
+      opacity: 0;
+      transform: translateY(-4px);
+    }
+  }
+  select:not([multiple]):not([size]) option {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    padding: 9px 12px;
+    border-radius: 8px;
+    font-size: 13px;
+    font-weight: 500;
+    color: #374151;
+    cursor: pointer;
+    white-space: nowrap;
+  }
+  select:not([multiple]):not([size]) option:hover,
+  select:not([multiple]):not([size]) option:focus-visible {
+    background: #eef1fa;
+    color: #28469a;
+    outline: none;
+  }
+  select:not([multiple]):not([size]) option:checked {
+    background: #eef1fa;
+    color: #28469a;
+    font-weight: 700;
+  }
+  select:not([multiple]):not([size]) option::checkmark {
+    content: '';
+    order: 2;
+    margin-left: auto;
+    width: 14px;
+    height: 14px;
+    background: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%2328469a' stroke-width='2.6' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='m5 12 5 5L20 7'/%3E%3C/svg%3E") center / 14px no-repeat;
+  }
+  select:not([multiple]):not([size]) option:disabled {
+    color: #aab2c3;
+    cursor: not-allowed;
+  }
+  select:not([multiple]):not([size]) option[value='']:checked {
+    color: #6b7280;
+  }
+}

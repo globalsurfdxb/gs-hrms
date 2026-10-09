@@ -61,7 +61,7 @@ const RAW_EMPLOYEES: Omit<Employee, 'profile'>[] = [
     email: 'muneer@gs-it.ae',
     phone: '+971 50 111 2020',
     company: 'GS IT',
-    department: 'HR & Admin',
+    department: 'Management & Administration',
     designation: 'General Manager',
     location: 'Dubai',
     seatingLocation: '901, SIT Tower, Dubai',
@@ -123,7 +123,7 @@ const RAW_EMPLOYEES: Omit<Employee, 'profile'>[] = [
     email: 'aslima@gs-it.ae',
     phone: '+971 50 442 8830',
     company: 'GS IT',
-    department: 'HR & Admin',
+    department: 'HR',
     designation: 'HR Executive',
     location: 'Dubai',
     seatingLocation: '901, SIT Tower, Dubai',
@@ -387,7 +387,7 @@ const RAW_EMPLOYEES: Omit<Employee, 'profile'>[] = [
     email: 'sneha.v@gs-it.ae',
     phone: '+91 96335 22110',
     company: 'GS Security',
-    department: 'HR & Admin',
+    department: 'Management & Administration',
     designation: 'Admin Executive',
     location: 'Kochi',
     seatingLocation: 'Kochi Office - WFH',
@@ -434,7 +434,11 @@ export const LOCATIONS: LocationDef[] = [
 ];
 
 export const DEPARTMENTS: Department[] = [
-  { id: 'dep-1', companyId: 'co-1', name: 'HR & Admin', locations: ['Dubai', 'Kochi'], head: 'Muneer' },
+  { id: 'dep-11', companyId: 'co-1', name: 'Management & Administration', locations: ['Dubai', 'Kochi'], head: 'Muneer' },
+  { id: 'dep-12', companyId: 'co-2', name: 'Management & Administration', locations: ['Dubai'], head: 'Unassigned' },
+  { id: 'dep-13', companyId: 'co-3', name: 'Management & Administration', locations: ['Dubai'], head: 'Unassigned' },
+  { id: 'dep-14', companyId: 'co-4', name: 'Management & Administration', locations: ['Dubai', 'Kochi'], head: 'Unassigned' },
+  { id: 'dep-1', companyId: 'co-1', name: 'HR', locations: ['Dubai', 'Kochi'], head: 'Aslima' },
   { id: 'dep-2', companyId: 'co-1', name: 'Sales', locations: ['Dubai'], head: 'Harsha' },
   { id: 'dep-3', companyId: 'co-1', name: 'Cloud & Infra', locations: ['Dubai'], head: 'Harsha' },
   { id: 'dep-4', companyId: 'co-1', name: 'Network Engineering', locations: ['Dubai'], head: 'Harsha' },
@@ -443,13 +447,12 @@ export const DEPARTMENTS: Department[] = [
   { id: 'dep-7', companyId: 'co-1', name: 'Finance', locations: ['Kochi'], head: 'Muneer' },
   { id: 'dep-8', companyId: 'co-2', name: 'Sales', locations: ['Dubai'], head: 'Unassigned' },
   { id: 'dep-9', companyId: 'co-3', name: 'Sales', locations: ['Dubai'], head: 'Unassigned' },
-  { id: 'dep-10', companyId: 'co-4', name: 'HR & Admin', locations: ['Dubai', 'Kochi'], head: 'Unassigned' },
+  { id: 'dep-10', companyId: 'co-4', name: 'HR', locations: ['Dubai', 'Kochi'], head: 'Unassigned' },
 ];
 
 export const DESIGNATIONS: Designation[] = [
   { id: 'des-1', departmentId: 'dep-1', title: 'HR Manager' },
   { id: 'des-2', departmentId: 'dep-1', title: 'HR Executive' },
-  { id: 'des-3', departmentId: 'dep-1', title: 'Admin Executive' },
   { id: 'des-4', departmentId: 'dep-3', title: 'Solutions Architect' },
   { id: 'des-5', departmentId: 'dep-4', title: 'Network Engineer' },
   { id: 'des-6', departmentId: 'dep-2', title: 'Account Manager' },
@@ -461,8 +464,13 @@ export const DESIGNATIONS: Designation[] = [
   { id: 'des-12', departmentId: 'dep-8', title: 'Account Manager' },
   { id: 'des-13', departmentId: 'dep-9', title: 'Senior Sales Executive' },
   { id: 'des-14', departmentId: 'dep-9', title: 'Account Manager' },
-  { id: 'des-15', departmentId: 'dep-10', title: 'Admin Executive' },
-  { id: 'des-16', departmentId: 'dep-1', title: 'General Manager' },
+  { id: 'des-16', departmentId: 'dep-11', title: 'General Manager' },
+  { id: 'des-17', departmentId: 'dep-11', title: 'Admin Manager' },
+  { id: 'des-18', departmentId: 'dep-11', title: 'Admin Executive' },
+  { id: 'des-19', departmentId: 'dep-12', title: 'Admin Executive' },
+  { id: 'des-20', departmentId: 'dep-13', title: 'Admin Executive' },
+  { id: 'des-21', departmentId: 'dep-14', title: 'Admin Manager' },
+  { id: 'des-22', departmentId: 'dep-14', title: 'Admin Executive' },
 ];
 
 export const ONBOARDING_REQUESTS: OnboardingRequest[] = [

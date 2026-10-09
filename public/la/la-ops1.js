@@ -424,7 +424,7 @@
     const rows = scoped.filter((r) => (act === 'All actions' || r.action === act) && (usr === 'All users' || r.user === usr) && L.dateOk(r.at || TODAY, k + 'From', k + 'To') && L.matches(q, r.entity, r.action, r.reason, r.change, r.user));
     const acts = ['All actions', ...new Set(a.map((r) => r.action))];
     const users = ['All users', ...new Set(a.map((r) => r.user))];
-    const filters = `<div class="filters">${L.fLoc()}${L.fSel(k + 'Act', 'Action', acts, 'All actions')}${L.fSel(k + 'Usr', 'User', users, 'All users')}${L.fDate(k + 'From', 'From')}${L.fDate(k + 'To', 'To')}${L.searchBox(k + 'Q', 'Entity, reason…')}${L.fReset([k + 'Act', k + 'Usr', k + 'From', k + 'To', k + 'Q', 'loc'])}<div class="fld"><label>&nbsp;</label><button class="btn" onclick="LA.auditCsv(${system ? 1 : 0})">${ic('download')} Export</button></div></div>`;
+    const filters = `<div class="filters">${L.fSel(k + 'Act', 'Action', acts, 'All actions')}${L.fSel(k + 'Usr', 'User', users, 'All users')}${L.fDate(k + 'From', 'From')}${L.fDate(k + 'To', 'To')}${L.searchBox(k + 'Q', 'Entity, reason…')}${L.fReset([k + 'Act', k + 'Usr', k + 'From', k + 'To', k + 'Q'])}<div class="fld"><label>&nbsp;</label><button class="btn" onclick="LA.auditCsv(${system ? 1 : 0})">${ic('download')} Export</button></div></div>`;
     return { rows, filters, scoped, acts, users, k };
   }
   L.auditCsv = (system) => { const { rows } = auditView(!!system); L.csv('audit_log.csv', ['Timestamp', 'Location', 'User', 'Action', 'Entity', 'Change', 'Reason', 'IP'], rows.map((r) => [r.ts, L.locName(r.loc), r.user, r.action, r.entity, r.change, r.reason, r.ip])); };

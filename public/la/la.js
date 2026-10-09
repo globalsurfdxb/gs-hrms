@@ -66,7 +66,7 @@ const ST = {
   'Early Departure':['s-a','Early Dep.'], 'Approved Early Departure':['s-b','Appr. Early'], 'Unscheduled Early Departure':['s-r','Unsch. Early'],
   'Weekly Off':['s-gray','Weekly Off'], 'Public Holiday':['s-p','Public Holiday'],
   'Annual Leave':['s-b','Annual Leave'], 'Sick Leave':['s-b','Sick Leave'], 'Maternity Leave':['s-b','Maternity'],
-  'Parental Leave':['s-b','Parental'], 'Compassionate Leave':['s-b','Compassionate'], 'Study Leave':['s-b','Study'],
+  'Parental Leave':['s-b','Parental'], 'Compassionate Leave':['s-b','Compassionate'], 'Study Leave':['s-b','Study Leave'],
   'Hajj Leave':['s-b','Hajj'], 'Umrah Leave':['s-b','Umrah'], 'Restricted Festive Holiday':['s-p','Festive'],
   'Unpaid Leave':['s-gray','Unpaid'], 'Loss of Pay':['s-r','Loss of Pay'], 'On Duty':['s-p','On Duty'],
   'Work from Home':['s-p','WFH'], 'Business Travel':['s-p','Travel'], 'Client Site':['s-p','Client Site'],
@@ -141,7 +141,7 @@ const LEAVE_TYPES = [
   {t:'Parental',code:'PT',pay:'Full',ent:'5 working days',accrual:'Per birth',probation:'Eligible',doc:'Mandatory'},
   {t:'Hajj',code:'HJ',pay:'Unpaid',ent:'Max 30 days',accrual:'Once in employment',probation:'Eligible',doc:'Evidence'},
   {t:'Umrah',code:'UM',pay:'From AL/Unpaid',ent:'HR selection',accrual:'—',probation:'Eligible',doc:'Evidence'},
-  {t:'Study',code:'ST',pay:'Full',ent:'5 days/yr',accrual:'Calendar year',probation:'Min 2 yrs service',doc:'Exam evidence'},
+  {t:'Study Leave',code:'ST',pay:'Full',ent:'5 days/yr',accrual:'Calendar year',probation:'Min 2 yrs service',doc:'Exam evidence'},
   {t:'Restricted Festive',code:'RF',pay:'Full',ent:'1 day/yr',accrual:'Calendar year',probation:'Eligible',doc:'—'},
   {t:'Unpaid Leave',code:'UP',pay:'Unpaid',ent:'As approved',accrual:'—',probation:'Eligible',doc:'Reason'},
 ];
@@ -1068,9 +1068,8 @@ const ATT_LIST=[
 const LV_CARDS=[
   {t:'Compensatory Off',ic:'gift',bg:'#e7f6ee',fg:'#1f9d63',avail:0,ac:'',booked:3},
   {t:'Earned Leave',ic:'sun',bg:'#e7f6ee',fg:'#1f9d63',avail:14,ac:'var(--g)',booked:3.5},
-  {t:'Leave Without Pay',ic:'flame',bg:'#fce9e7',fg:'#d5493f',avail:null,ac:'',booked:0},
+  {t:'Unpaid Leave',ic:'flame',bg:'#fce9e7',fg:'#d5493f',avail:null,ac:'',booked:0},
   {t:'Sick Leave',ic:'baby',bg:'#f0eafc',fg:'#7a4bd0',avail:6.5,ac:'var(--g)',booked:3.5},
-  {t:'Weekly Off',ic:'sun',bg:'#fce9e7',fg:'#d5493f',avail:0,ac:'',booked:0},
   {t:'Work From Home',ic:'home',bg:'#e7f0fc',fg:'#2f6fd6',avail:-6,ac:'var(--r)',booked:0},
 ];
 
@@ -1409,9 +1408,25 @@ function opsHubStats(){
     {lbl:'Locked periods',val:locked,icon:'lock',tone:'p',hint:periods.length?`of ${periods.length} location period(s)`:'Lock before payroll export'}
   ];
 }
+/* Tools that stay out of the hub (still reachable by their own link). */
+const OPS_HIDDEN=['roles','companies'];
+/* Most important first: sections in the order they matter day to day, and the tools inside each in the same spirit. */
+const OPS_ORDER={
+  'Attendance':['exceptions','processing','shift','statuses','ramadan'],
+  'Payroll & Output':['overtime','finalization','payroll','reports','audit'],
+  'Leave':['docverify','balanceadj','carryforward','encashment','leavetypes','maternity','holidayset'],
+  'Compliance':['occurrences','discipline','workflows'],
+  'Configuration':['policy'],
+  'Administration':['biometric','integrations','sysaudit']
+};
 function opsHub(){
   const isAdmin=PERSONAS[PERSONA].admin;
-  const secs=OPS_SERVICES.filter(s=>!s.admin||isAdmin);
+  const rank=(list,k)=>{const i=list.indexOf(k);return i<0?999:i;};
+  const secNames=Object.keys(OPS_ORDER);
+  const secs=OPS_SERVICES.filter(s=>!s.admin||isAdmin)
+    .map(s=>({...s,items:s.items.filter(it=>!OPS_HIDDEN.includes(it[0])).sort((x,y)=>rank(OPS_ORDER[s.sec]||[],x[0])-rank(OPS_ORDER[s.sec]||[],y[0]))}))
+    .filter(s=>s.items.length)
+    .sort((x,y)=>rank(secNames,x.sec)-rank(secNames,y.sec));
   const total=secs.reduce((n,s)=>n+s.items.length,0);
   return `<div class="page-head ph2"><div><div class="eyebrow">Management hub</div><h1>Operations</h1><div class="sub">Configuration, processing, compliance and payroll output for attendance and leave</div></div></div>
     ${statStrip(opsHubStats())}
