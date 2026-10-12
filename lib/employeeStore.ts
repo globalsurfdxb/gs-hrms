@@ -357,6 +357,8 @@ export interface NewEmployeeInput {
   by: string;
   /** Wizard step the request reached (1 to 10). */
   step: number;
+  /** Set when the person comes from Hiring Management (see lib/hiringStore). */
+  hiredFrom?: { candidateId: string; jobId: string; offerId: string };
 }
 
 /** Create an employee from the onboarding wizard. The person starts as "Onboarding" with an onboarding request
@@ -430,6 +432,7 @@ export function addEmployee(input: NewEmployeeInput): Employee | null {
   };
   applyForm(e, form);
   e.employmentStatus = 'Onboarding';
+  if (input.hiredFrom) e.hiredFrom = input.hiredFrom;
   if (e.profile.uan) e.pfUan = e.profile.uan;
 
   const reqNo = ONBOARDING_REQUESTS.reduce((m, r) => Math.max(m, parseInt(r.id.replace(/\D/g, ''), 10) || 0), 0) + 1;

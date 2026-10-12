@@ -4,7 +4,7 @@ import { useState } from 'react';
 import Link from 'next/link';
 import { usePathname, useRouter } from 'next/navigation';
 import { useApp, useCurrentEmployee } from '@/context/AppContext';
-import { APP_MODULES, HOME_TABS, PERS, RAIL_LABEL, SCOPE_LABEL, resolveLocation } from '@/lib/nav';
+import { APP_MODULES, HOME_TABS, PERS, RAIL_LABEL, SCOPE_LABEL, inModule, resolveLocation } from '@/lib/nav';
 import { laCall, useLaChrome } from '@/lib/laStore';
 import { signOut, useAuth } from '@/lib/auth';
 import { useLocationName } from '@/components/shell/useLocationName';
@@ -37,6 +37,8 @@ export function TopBar({ onMenu }: { onMenu: () => void }) {
   const scopes = PERS[role].scopes;
   const la = useLaChrome();
   const bell = useNoticeCount();
+  // The module's own menus arrive once its runtime has started: hold their place instead of flashing the generic title.
+  const laBooting = !la && (pathname === '/modules/leave-attendance' || pathname.startsWith('/modules/leave-attendance/'));
 
   return (
     <>
@@ -55,8 +57,14 @@ export function TopBar({ onMenu }: { onMenu: () => void }) {
           </nav>
         ) : la ? (
           <div className="ztitle">{la.title}</div>
+        ) : laBooting ? (
+          <nav className="zscope zsk-scope" aria-hidden="true">
+            <span />
+            <span />
+            <span />
+          </nav>
         ) : loc.module !== 'home' ? (
-          <div className="ztitle">{loc.module === 'modules' ? (APP_MODULES.find((m) => pathname === m.href || pathname.startsWith(`${m.href}/`))?.name ?? 'Modules') : RAIL_LABEL[loc.module]}</div>
+          <div className="ztitle">{loc.module === 'hiring' ? 'Hiring Management' : loc.module === 'modules' ? (APP_MODULES.find((m) => inModule(m, pathname))?.name ?? 'Modules') : RAIL_LABEL[loc.module]}</div>
         ) : (
           <nav className="zscope">
             {scopes.map((s) => (

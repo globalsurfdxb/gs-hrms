@@ -73,6 +73,16 @@ export function buildCatalog(): AccessModule[] {
       cat('employee', 'reports', 'Reports', 4, ['Reports & analytics']),
     ],
   };
+  const hiring: AccessModule = {
+    id: 'hiring',
+    name: 'Hiring Management',
+    desc: 'Requisitions, candidates, interviews and offers',
+    categories: [
+      cat('hiring', 'requisitions', 'Requisitions', 2, ['Requisitions', 'Requisition approvals']),
+      cat('hiring', 'recruiting', 'Recruiting', 4, ['Jobs', 'Candidates', 'Interviews', 'Offers']),
+      cat('hiring', 'reports', 'Reports', 4, ['Hiring reports']),
+    ],
+  };
   const asset: AccessModule = {
     id: 'asset-management',
     name: 'Asset Management',
@@ -133,7 +143,7 @@ export function buildCatalog(): AccessModule[] {
       features: s.items.map((i) => ({ id: `administration:${i.key}`, label: i.label })),
     })),
   };
-  const all = [admin, employee, leave, asset, payroll, renewals];
+  const all = [admin, employee, hiring, leave, asset, payroll, renewals];
   all.forEach((m) => m.categories.forEach((c) => c.features.forEach((f) => (f.actions ??= extraFor(f.label)))));
   return all;
 }

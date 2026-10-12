@@ -10,6 +10,16 @@ export function SubTabs() {
   const loc = resolveLocation(pathname);
   const la = useLaChrome();
 
+  if (!la && (pathname === '/modules/leave-attendance' || pathname.startsWith('/modules/leave-attendance/'))) {
+    return (
+      <nav className="zsub zsk-sub" aria-hidden="true">
+        <span />
+        <span />
+        <span />
+      </nav>
+    );
+  }
+
   if (la) {
     if (!la.tabs.length) return null;
     return (
@@ -23,6 +33,8 @@ export function SubTabs() {
       </nav>
     );
   }
+
+  if (loc.module === 'hiring') return null;
 
   if (loc.module !== 'home' || !loc.scope) return null;
   const tabs = HOME_TABS[loc.scope];

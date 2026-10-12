@@ -356,6 +356,8 @@ function Editor({ e }: { e: Employee }) {
   const [adapted, setAdapted] = useState<string[]>([]);
   const { fileFor } = useDocuments();
   const orig = useMemo(() => toForm(e), [e]);
+  // A nationality outside the list is entered as free text under "Other".
+  const [natOther, setNatOther] = useState(() => !!e.nationality && (e.nationality === 'Other' || !NATIONALITIES.includes(e.nationality)));
 
   const v = form.v;
   const set = (k: string, val: string) => setForm((f) => ({ ...f, v: { ...f.v, [k]: val } }));
@@ -368,7 +370,10 @@ function Editor({ e }: { e: Employee }) {
   const currency = v.currency || e.profile.salary.currency;
 
   const changes = diffForm(e, form);
-  const errors = useMemo(() => validate(form, isIndia, sensitive), [form, isIndia, sensitive]);
+  const errors = useMemo(() => {
+    const base = validate(form, isIndia, sensitive);
+    return natOther && !form.v.nationality.trim() ? { ...base, nationality: 'Enter the nationality.' } : base;
+  }, [form, isIndia, sensitive, natOther]);
   const errorTabs = new Set(Object.keys(errors).map((k) => TAB_OF(k, idTab)));
   /** One line per error, which is exactly what the bar counts and what each tab shows inline. */
   const errorList = Object.entries(errors).map(([key, msg]) => ({ key, msg, tab: TAB_OF(key, idTab) }));
@@ -602,7 +607,26 @@ function Editor({ e }: { e: Employee }) {
                 <Fg label="Date of birth" error={err('dob')}>
                   {input('dob', { type: 'date' })}
                 </Fg>
-                <Fg label="Nationality">{select('nationality', NATIONALITIES)}</Fg>
+                <Fg label="Nationality">
+                  <select
+                    value={natOther ? 'Other' : (v.nationality ?? '')}
+                    onChange={(ev) => {
+                      const x = ev.target.value;
+                      setNatOther(x === 'Other');
+                      set('nationality', x === 'Other' ? '' : x);
+                    }}
+                  >
+                    {!natOther && !v.nationality && <option value="">Select…</option>}
+                    {NATIONALITIES.map((o) => (
+                      <option key={o}>{o}</option>
+                    ))}
+                  </select>
+                </Fg>
+                {natOther && (
+                  <Fg label="Specify nationality" required error={err('nationality')}>
+                    <input placeholder="e.g. Ethiopian" value={v.nationality ?? ''} onChange={(ev) => set('nationality', ev.target.value)} />
+                  </Fg>
+                )}
                 <Fg label="Gender">{select('gender', GENDERS)}</Fg>
                 <Fg label="Marital status">{select('maritalStatus', MARITAL)}</Fg>
                 <Fg label="Blood group">{select('bloodGroup', BLOOD)}</Fg>

@@ -1,6 +1,7 @@
 import { directReports } from '@/lib/data';
 import { PERS, resolveLocation } from '@/lib/nav';
 import { Role } from '@/lib/types';
+import { hiringLevel } from '@/lib/hiringAccess';
 
 /* Which pages a signed-in role may open. The shell asks this while rendering, so a page the role may not see is
    never drawn (and never flashes) before the redirect. A backend must still enforce the same rules on every
@@ -13,6 +14,16 @@ export function routeAllowed(role: Role, pathname: string, me: { id: string; emp
 
   // Self-service pages every signed-in person can open.
   if (['/dashboard', '/profile', '/expense/new', '/expense/claims'].includes(path) || path.startsWith('/my/') || path.startsWith('/modules/')) return true;
+
+  // Hiring Management: HR and administrators run it; a Team Lead works with their own requisitions and jobs.
+  if (path === '/hiring' || path.startsWith('/hiring/')) {
+    const level = hiringLevel(role);
+    // An interviewer of any role may open the profile of a candidate they are assigned to (the page checks the assignment).
+    if (/^\/hiring\/candidates\/[^/]+$/.test(path)) return true;
+    // Reports and Operations (email templates, stage emails, connections) are for HR and administrators.
+    const adminOnly = path === '/hiring/reports' || path === '/hiring/operations' || path.startsWith('/hiring/operations/');
+    return adminOnly ? level === 'full' : level !== 'none';
+  }
 
   // Expense administration.
   if (path === '/expense/approvals') return role !== 'Employee';
@@ -32,6 +43,6 @@ export function routeAllowed(role: Role, pathname: string, me: { id: string; emp
   // Everything else follows the role's modules and spaces.
   const loc = resolveLocation(path);
   const persona = PERS[role];
-  if (loc.module === 'modules') return true;
+  if (loc.module === 'modules' || loc.module === 'hiring') return true;
   return persona.modules.includes(loc.module) && !(loc.scope && !persona.scopes.includes(loc.scope));
 }

@@ -2,7 +2,7 @@ import { Role } from './types';
 
 export type RailModule = 'home' | 'operations' | 'reports' | 'administration';
 export type Scope = 'my' | 'team' | 'org';
-export type PageModule = RailModule | 'modules';
+export type PageModule = RailModule | 'modules' | 'hiring';
 
 export interface AppModule {
   slug: string;
@@ -11,15 +11,24 @@ export interface AppModule {
   href: string;
   /** Not available yet: shown greyed out in the module switcher. */
   soon?: boolean;
+  /** URL prefix that belongs to the module when its landing page is deeper than the prefix (Hiring opens at /hiring/dashboard). */
+  base?: string;
 }
 
 export const APP_MODULES: AppModule[] = [
   { slug: 'employee', name: 'Employee Management', desc: 'Directory, onboarding, performance, expiry and expenses', href: '/dashboard' },
+  { slug: 'hiring', name: 'Hiring Management', desc: 'Requisitions, candidates, interviews and offers.', href: '/hiring/dashboard', base: '/hiring' },
   { slug: 'leave-attendance', name: 'Leave & Attendance Management', desc: 'Attendance today and leave requests', href: '/modules/leave-attendance' },
   { slug: 'asset-management', name: 'Asset Management', desc: 'Equipment register, assignment and warranty', href: '/modules/asset-management', soon: true },
   { slug: 'payroll', name: 'Payroll Management', desc: 'Monthly payroll runs and payslips', href: '/modules/payroll', soon: true },
   { slug: 'renewals', name: 'Renewal Management', desc: 'Employee and business renewals', href: '/modules/renewals', soon: true },
 ];
+
+/** Whether a pathname belongs to an app module (by its URL prefix). */
+export const inModule = (m: AppModule, pathname: string) => {
+  const base = m.base ?? m.href;
+  return pathname === base || pathname.startsWith(`${base}/`);
+};
 
 export const RAIL_LABEL: Record<RailModule, string> = { home: 'Home', operations: 'Operations', reports: 'Reports', administration: 'Administration' };
 export const SCOPE_LABEL: Record<Scope, string> = { my: 'My Space', team: 'Team', org: 'Organization' };
@@ -49,6 +58,8 @@ export const HOME_TABS: Record<Scope, TabDef[]> = {
     { key: 'profile', label: 'My Profile', href: '/profile' },
     { key: 'leave', label: 'Leave & Attendance', href: '/my/leave-attendance' },
     { key: 'requests', label: 'Requests', href: '/my/requests' },
+    { key: 'interviews', label: 'My Interviews', href: '/my/interviews' },
+    { key: 'referrals', label: 'Referrals', href: '/my/referrals' },
     { key: 'files', label: 'Files', href: '/my/files' },
     { key: 'assets', label: 'Assets', href: '/my/assets' },
     { key: 'expiry', label: 'Expiry', href: '/my/expiry' },
@@ -73,6 +84,18 @@ export const HOME_TABS: Record<Scope, TabDef[]> = {
     { key: 'requests', label: 'Requests', href: '/requests' },
   ],
 };
+
+/** Sub-navigation of the Hiring Management module. `manager` tabs are the ones a hiring manager (Team Lead) can open. */
+export const HIRING_TABS: (TabDef & { manager: boolean })[] = [
+  { key: 'overview', label: 'Dashboard', href: '/hiring/dashboard', manager: true },
+  { key: 'requisitions', label: 'Requisitions', href: '/hiring/requisitions', manager: true },
+  { key: 'jobs', label: 'Jobs', href: '/hiring/jobs', manager: true },
+  { key: 'candidates', label: 'Candidates', href: '/hiring/candidates', manager: true },
+  { key: 'interviews', label: 'Interviews', href: '/hiring/interviews', manager: true },
+  { key: 'offers', label: 'Offers', href: '/hiring/offers', manager: true },
+  { key: 'operations', label: 'Operations', href: '/hiring/operations', manager: false },
+  { key: 'reports', label: 'Reports', href: '/hiring/reports', manager: false },
+];
 
 export interface HubItem {
   key: string;
@@ -148,6 +171,7 @@ export const ADMIN: HubSection[] = [
 /** Resolve a pathname to the scope/tab that should be highlighted in the chrome. */
 export function resolveLocation(pathname: string): { module: PageModule; scope?: Scope; tab?: string } {
   if (pathname.startsWith('/modules/')) return { module: 'modules' };
+  if (pathname === '/hiring' || pathname.startsWith('/hiring/')) return { module: 'hiring' };
   if (pathname === '/operations') return { module: 'operations' };
   if (pathname === '/reports' || pathname.startsWith('/reports/')) return { module: 'reports' };
   if (pathname === '/administration' || pathname.startsWith('/admin/')) return { module: 'administration' };

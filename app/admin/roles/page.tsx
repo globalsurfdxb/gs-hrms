@@ -8,7 +8,7 @@ import { ACTIONS, AccessAction, AccessCategory, AccessFeature, AccessModule, EXT
 import { PageHeader } from '@/components/ui/PageHeader';
 import { Button } from '@/components/ui/Card';
 import { Drawer } from '@/components/ui/Drawer';
-import { ChevronDownIcon, ChevronRightIcon, ClockIcon, EditIcon, GearIcon, KeyIcon, PackageIcon, PeopleIcon, PlusIcon, ReceiptIcon, RefreshIcon, SearchIcon, ShieldIcon, XIcon } from '@/components/icons';
+import { ChevronDownIcon, ChevronRightIcon, ClockIcon, EditIcon, GearIcon, JoinIcon, KeyIcon, PackageIcon, PeopleIcon, PlusIcon, ReceiptIcon, RefreshIcon, SearchIcon, ShieldIcon, XIcon } from '@/components/icons';
 
 interface RoleDef {
   id: string;
@@ -21,6 +21,7 @@ interface RoleDef {
 const MODULE_ICON: Record<string, React.ComponentType<{ className?: string }>> = {
   administration: GearIcon,
   employee: PeopleIcon,
+  hiring: JoinIcon,
   'leave-attendance': ClockIcon,
   'asset-management': PackageIcon,
   payroll: ReceiptIcon,
@@ -30,12 +31,13 @@ const MODULE_ICON: Record<string, React.ComponentType<{ className?: string }>> =
 const MODULE_COLOR: Record<string, { bg: string; fg: string }> = {
   administration: { bg: '#eceff4', fg: '#4b5876' },
   employee: { bg: '#e7f0fc', fg: '#2f6fd6' },
+  hiring: { bg: '#e3f4f8', fg: '#0e8fa8' },
   'leave-attendance': { bg: '#e7f6ee', fg: '#1f9d63' },
   'asset-management': { bg: '#fdf3df', fg: '#c6851b' },
   payroll: { bg: '#f0eafc', fg: '#7a4bd0' },
   renewals: { bg: '#fce9e7', fg: '#d5493f' },
 };
-const MODULE_SHORT: Record<string, string> = { administration: 'Admin', employee: 'Employee', 'leave-attendance': 'Leave', 'asset-management': 'Asset', payroll: 'Payroll', renewals: 'Renewal' };
+const MODULE_SHORT: Record<string, string> = { administration: 'Admin', employee: 'Employee', hiring: 'Hiring', 'leave-attendance': 'Leave', 'asset-management': 'Asset', payroll: 'Payroll', renewals: 'Renewal' };
 const ROLE_COLORS = ['#7a4bd0', '#2f6fd6', '#1f9d63', '#c6851b', '#d5493f', '#0e8fa8', '#6b7690'];
 
 /** Plain-English list of permission keys ("Directory (Edit), Leave Requests (View) +2 more") for the audit log. */

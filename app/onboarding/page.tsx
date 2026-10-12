@@ -1,6 +1,8 @@
 'use client';
 
-import { useEffect, useId, useMemo, useRef, useState } from 'react';
+import { Suspense, useEffect, useId, useMemo, useRef, useState } from 'react';
+import Link from 'next/link';
+import { useRouter, useSearchParams } from 'next/navigation';
 import { useApp, useCurrentEmployee } from '@/context/AppContext';
 import { EMPLOYEES, ONBOARDING_REQUESTS, REFERENCE_TODAY, ROLE_SCOPE, nextEmployeeCode } from '@/lib/data';
 import { SYSTEM_ROLES } from '@/lib/access';
@@ -16,6 +18,10 @@ import { daysBetween, todayISO } from '@/lib/dates';
 import { EducationRow, EmergencyRow, ExperienceRow, FamilyRow, MoneyRow, DocRow, addEmployee, useEmployeeVersion } from '@/lib/employeeStore';
 import { BLOOD_GROUPS, EMAIL_RE, EMPLOYMENT_TYPES, GENDERS, MARITAL_STATUSES, NATIONALITIES, WORK_MODES, ibanError, ifscError, indiaAccountError, phoneOk } from '@/lib/options';
 import { chainSteps } from '@/lib/workflow';
+import { completeHire, getHiring, useHiring } from '@/lib/hiringStore';
+import { sendRuleMail } from '@/lib/hiringMail';
+import { hiringLevel } from '@/lib/hiringAccess';
+import { OnboardingPrefill, onboardingPrefill } from '@/lib/hiringHandoff';
 import { CheckIcon, ClockIcon, JoinIcon, SearchIcon, ShieldIcon, UploadIcon, XIcon } from '@/components/icons';
 
 const STEPS = ['Personal', 'Employment', 'Passport / Visa / EID', 'Emergency', 'Experience & Education', 'Family', 'Bank & PF', 'Salary', 'Documents', 'Assets & Approval'];
@@ -245,12 +251,35 @@ interface Problem {
 }
 
 export default function OnboardingPage() {
-  const [showWizard, setShowWizard] = useState(false);
+  return (
+    <Suspense fallback={null}>
+      <OnboardingHome />
+    </Suspense>
+  );
+}
+
+function OnboardingHome() {
+  const hireId = useSearchParams().get('hire');
+  const hiring = useHiring();
+  const router = useRouter();
+  // Start onboarding from Hiring Management opens the wizard already filled in from the accepted offer. The prefill is
+  // read once: creating the employee uses up the offer, and the wizard must keep what it started with.
+  const [prefill0] = useState(() => (hireId ? onboardingPrefill(getHiring(), hireId) : null));
+  const [wizardPrefill, setWizardPrefill] = useState<OnboardingPrefill | null>(prefill0);
+  const [showWizard, setShowWizard] = useState(!!prefill0);
+  const [unavailable, setUnavailable] = useState(!!hireId && !prefill0);
+  const closeWizard = () => {
+    setShowWizard(false);
+    setWizardPrefill(null);
+    if (hireId) router.replace('/onboarding');
+  };
+  const { role: viewerRole } = useApp();
+  const waiting = hiringLevel(viewerRole) === 'full' ? hiring.offers.filter((o) => o.status === 'Accepted' && !o.employeeId) : [];
   const [listQ, setListQ] = useState('');
   const [listStatus, setListStatus] = useState<'All' | (typeof ONBOARDING_REQUESTS)[number]['status']>('All');
   useEmployeeVersion();
 
-  if (showWizard) return <Wizard onClose={() => setShowWizard(false)} />;
+  if (showWizard) return <Wizard prefill={wizardPrefill ?? undefined} onClose={closeWizard} />;
 
   const pipeline = ONBOARDING_REQUESTS;
   const awaiting = pipeline.filter((r) => r.status === 'Pending Approval').length;
@@ -291,6 +320,48 @@ export default function OnboardingPage() {
           { label: 'Average progress', value: `${avgProgress}%`, icon: <CheckIcon />, tone: 'green', hint: `Of ${STEPS.length} wizard steps` },
         ]}
       />
+
+      {unavailable && (
+        <div className="note-box" style={{ marginBottom: 14 }}>
+          <ShieldIcon />
+          <div style={{ flex: 1 }}>That accepted offer is not available for onboarding. It may already have been used, or it is not accepted yet. Open Hiring Management → Offers to check.</div>
+          <button type="button" className="icon-act" aria-label="Dismiss" onClick={() => setUnavailable(false)}>
+            <XIcon />
+          </button>
+        </div>
+      )}
+
+      {waiting.length > 0 && (
+        <Card className="row-gap">
+          <CardHeader title="Accepted offers" sub="From Hiring Management. Start onboarding with the candidate's details already filled in." />
+          <div className="lc-list">
+            {waiting.map((o) => {
+              const app = hiring.applications.find((a) => a.id === o.applicationId);
+              const cand = hiring.candidates.find((c) => c.id === app?.candidateId);
+              const job = hiring.jobs.find((j) => j.id === app?.jobId);
+              return (
+                <div key={o.id} className="doc">
+                  <div className="lc-onb-row" style={{ flex: 1, minWidth: 0 }}>
+                    <Avatar initials={initialsOf(cand?.name ?? '?')} seed={job?.department ?? ''} size={42} />
+                    <div className="grow">
+                      <div className="nm">{cand?.name}</div>
+                      <div className="mt">
+                        {job?.title} · {job?.department} · {job?.location} · {o.code}
+                      </div>
+                      <div className="mt" style={{ marginTop: 2 }}>
+                        Joins {o.joiningDate}
+                      </div>
+                    </div>
+                    <Link href={`/onboarding?hire=${o.id}`} className="btn sm primary">
+                      Start onboarding
+                    </Link>
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+        </Card>
+      )}
 
       <Card className="row-gap">
         <CardHeader title="In-progress onboardings" sub="Across all locations" />
@@ -381,23 +452,24 @@ export default function OnboardingPage() {
   );
 }
 
-function Wizard({ onClose }: { onClose: () => void }) {
-  const { location } = useApp();
+function Wizard({ onClose, prefill }: { onClose: () => void; prefill?: OnboardingPrefill }) {
+  const { location, role: myRole } = useApp();
+  const orgNow = useOrg();
   const me = useCurrentEmployee();
   const [step, setStep] = useState(0);
-  const [office, setOffice] = useState<Location>(location);
+  const [office, setOffice] = useState<Location>(prefill?.location ?? location);
   const [created, setCreated] = useState<{ code: string; name: string; email: string; role: Role; country: string; assets: string } | null>(null);
   const done = created !== null;
   /** Steps the user has tried to leave (or submit) with problems; their errors are shown. */
   const [attempted, setAttempted] = useState<number[]>([]);
 
-  const [fullName, setFullName] = useState('');
+  const [fullName, setFullName] = useState(prefill?.name ?? '');
   const [dob, setDob] = useState('');
-  const [joiningDate, setJoiningDate] = useState('');
-  const [organizationId, setOrganizationId] = useState('');
-  const [departmentId, setDepartmentId] = useState('');
-  const [designationId, setDesignationId] = useState('');
-  const [managerId, setManagerId] = useState('');
+  const [joiningDate, setJoiningDate] = useState(prefill?.joiningDate ?? '');
+  const [organizationId, setOrganizationId] = useState(prefill?.companyId ?? '');
+  const [departmentId, setDepartmentId] = useState(prefill?.departmentId ?? '');
+  const [designationId, setDesignationId] = useState(() => (prefill ? (orgNow.designations.find((d) => d.departmentId === prefill.departmentId && d.title === prefill.designationTitle)?.id ?? '') : ''));
+  const [managerId, setManagerId] = useState(prefill?.managerId ?? '');
   const [role, setRole] = useState<Role>('Employee');
   const [workEmail, setWorkEmail] = useState('');
   const [roleError, setRoleError] = useState('');
@@ -409,10 +481,19 @@ function Wizard({ onClose }: { onClose: () => void }) {
   const [reminderTo, setReminderTo] = useState<Set<string>>(new Set(['Employee', 'HR']));
 
   /* every other field, keyed like the employee record (see FIELDS in lib/employeeStore) */
-  const [fv, setFv] = useState<Record<string, string>>({ maritalStatus: 'Single', employmentType: 'Permanent' });
+  const [fv, setFv] = useState<Record<string, string>>(() => {
+    const base: Record<string, string> = { maritalStatus: 'Single', employmentType: 'Permanent' };
+    if (!prefill) return base;
+    const def0 = orgNow.locationDef(prefill.location);
+    // The candidate's number may carry the country code; keep only the digits the location's format takes.
+    const raw = prefill.phone.replace(/\D/g, '');
+    const code = (def0?.phoneCode ?? '').replace(/\D/g, '');
+    const local = code && raw.startsWith(code) && raw.length > (def0?.phoneDigits ?? 0) ? raw.slice(code.length) : raw;
+    return { ...base, employmentType: prefill.employmentType, personalEmail: prefill.personalEmail, personalMobile: local.slice(-(def0?.phoneDigits ?? local.length)), totalExperience: prefill.totalExperience };
+  });
   const f = (k: string) => fv[k] ?? '';
   const setF = (k: string, val: string) => setFv((p) => ({ ...p, [k]: val }));
-  const [sal, setSal] = useState<Record<string, string>>({});
+  const [sal, setSal] = useState<Record<string, string>>(prefill?.salary ?? {});
   const [emA, setEmA] = useState<EmergencyRow[]>([blankContact()]);
   const [emB, setEmB] = useState<EmergencyRow[]>([blankContact()]);
   const [exp, setExp] = useState<ExperienceRow[]>([blankExperience()]);
@@ -479,7 +560,7 @@ function Wizard({ onClose }: { onClose: () => void }) {
   const changeOffice = (id: Location) => {
     if (id === office) return;
     setOffice(id);
-    setFv((p) => ({ maritalStatus: p.maritalStatus, employmentType: p.employmentType, gender: p.gender, bloodGroup: p.bloodGroup, nationality: p.nationality, personalEmail: p.personalEmail, currentAddress: p.currentAddress, permanentAddress: p.permanentAddress, extension: p.extension, passportNumber: p.passportNumber, totalExperience: p.totalExperience, bankName: p.bankName }));
+    setFv((p) => ({ maritalStatus: p.maritalStatus, employmentType: p.employmentType, gender: p.gender, bloodGroup: p.bloodGroup, nationality: p.nationality, nationalityOther: p.nationalityOther, personalEmail: p.personalEmail, currentAddress: p.currentAddress, permanentAddress: p.permanentAddress, extension: p.extension, passportNumber: p.passportNumber, totalExperience: p.totalExperience, bankName: p.bankName }));
     setSal({});
     setExpiries({});
     setEmA((r) => r.map((x) => ({ ...x, mobile: '' })));
@@ -499,6 +580,7 @@ function Wizard({ onClose }: { onClose: () => void }) {
   if (!dob) add('dob', 0, 'Date of birth is required.');
   else if (dob > todayISO()) add('dob', 0, 'Date of birth cannot be in the future.');
   if (!f('nationality')) add('nationality', 0, 'Choose a nationality.');
+  else if (f('nationality') === 'Other' && !f('nationalityOther').trim()) add('nationalityOther', 0, 'Enter the nationality.');
 
   if (!organizationId) add('organization', 1, 'Choose an organization.');
   if (!departmentId) add('department', 1, 'Choose a department.');
@@ -578,7 +660,7 @@ function Wizard({ onClose }: { onClose: () => void }) {
     const v: Record<string, string> = {
       name: fullName.trim(),
       dob,
-      nationality: f('nationality'),
+      nationality: f('nationality') === 'Other' ? f('nationalityOther').trim() : f('nationality'),
       gender: f('gender'),
       maritalStatus: f('maritalStatus'),
       bloodGroup: f('bloodGroup'),
@@ -632,10 +714,18 @@ function Wizard({ onClose }: { onClose: () => void }) {
       role,
       by: me.name,
       step: STEPS.length,
+      hiredFrom: prefill ? { candidateId: prefill.candidateId, jobId: prefill.jobId, offerId: prefill.offerId } : undefined,
     });
     if (!hire) {
       setRoleError('The employee could not be created: the work email is already in use or the name is missing.');
       return;
+    }
+    // Hiring Management is told in the same step: candidate and employee linked, job filled count updated.
+    if (prefill) {
+      completeHire(prefill.offerId, { id: hire.id, code: hire.employeeCode, name: hire.name }, { id: me.id, name: me.name, role: myRole });
+      const off = getHiring().offers.find((o) => o.id === prefill.offerId);
+      // The welcome / pre-joining email for the Hired rule (logged in sandbox mode).
+      if (off) sendRuleMail('Hired', off.applicationId, me.name, { includeAsk: true, offer: off });
     }
     setCreated({ code: hire.employeeCode, name: hire.name, email: hire.email, role, country, assets: assetFlags.size ? Array.from(assetFlags).join(', ') : 'none selected' });
   };
@@ -698,6 +788,17 @@ function Wizard({ onClose }: { onClose: () => void }) {
         </div>
 
         <div className="wizbody">
+          {!done && prefill && (
+            <div className="note-box" style={{ marginBottom: 14 }}>
+              <ShieldIcon />
+              <div>
+                <b>Started from Hiring Management.</b> Filled in from offer {prefill.offerCode} for {prefill.name} ({prefill.jobCode} · {prefill.jobTitle}): name, contact, role, department, joining date, reporting manager and salary. Date of birth, identity, bank and the other personal details are not captured while hiring, so complete them as you go.
+                {prefill.cvName && <> The candidate&apos;s CV ({prefill.cvName}) stays on their hiring profile.</>}
+                {prefill.unmapped.length > 0 && <> {prefill.unmapped.map((u) => `${u.label} (${prefill.currency} ${u.amount.toLocaleString('en-US')})`).join(', ')} has no matching salary line here; add it if it applies.</>}
+              </div>
+            </div>
+          )}
+
           {!done && summary.length > 0 && (
             <div className="fm-errsum" role="alert">
               <div>
@@ -761,8 +862,13 @@ function Wizard({ onClose }: { onClose: () => void }) {
                 <Input value={age} readOnly placeholder="auto from DOB" />
               </Fg>
               <Fg label="Nationality" required error={shownErr('nationality')}>
-                <Select options={NATIONALITIES} placeholder="Select nationality…" value={f('nationality')} onChange={(x) => setF('nationality', x)} />
+                <Select options={NATIONALITIES} placeholder="Select nationality…" value={f('nationality')} onChange={(x) => setFv((p) => ({ ...p, nationality: x, nationalityOther: x === 'Other' ? (p.nationalityOther ?? '') : '' }))} />
               </Fg>
+              {f('nationality') === 'Other' && (
+                <Fg label="Specify nationality" required error={shownErr('nationalityOther')}>
+                  <Input placeholder="e.g. Ethiopian" value={f('nationalityOther')} onChange={(x) => setF('nationalityOther', x)} />
+                </Fg>
+              )}
               <Fg label="Gender">
                 <Select options={GENDERS} placeholder="Select…" value={f('gender')} onChange={(x) => setF('gender', x)} />
               </Fg>
@@ -1481,6 +1587,14 @@ function Wizard({ onClose }: { onClose: () => void }) {
                 {created.name} (ID {created.code}) has been added to the {created.country} directory as Onboarding with the {created.role} role, and the onboarding request is pending approval
                 ({approvalLine.join(' → ')}). Sign-in ID: {created.email}. Assets requested: {created.assets}. Payroll is notified once HR approves.
               </p>
+              {prefill && (
+                <p style={{ marginTop: 8, color: 'var(--muted)', maxWidth: 460, marginLeft: 'auto', marginRight: 'auto' }}>
+                  The candidate record is now linked to this employee and {prefill.jobCode} ({prefill.jobTitle}) was updated.{' '}
+                  <Link href={`/hiring/candidates/${prefill.candidateId}`} className="lnk">
+                    Open candidate
+                  </Link>
+                </p>
+              )}
               <Button variant="primary" style={{ marginTop: 18 }} onClick={onClose}>
                 Back to onboarding list
               </Button>

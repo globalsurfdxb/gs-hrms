@@ -10,6 +10,7 @@ export interface WorkflowChain {
 export const WORKFLOW_CHAINS: WorkflowChain[] = [
   { key: 'onboarding', title: 'Onboarding', steps: ['HR initiates', 'Manager review', 'HR approval', 'Payroll notified'] },
   { key: 'offboarding', title: 'Offboarding', steps: ['Resignation logged', 'Manager clearance', 'IT clearance', 'Finance clearance', 'HR final approval'] },
+  { key: 'requisition', title: 'Hiring Requisition', steps: ['Hiring Manager', 'HR', 'Management'] },
   { key: 'requests', title: 'Employee Requests', steps: ['Employee raises', 'Routed to HR / Manager', 'Approved or rejected'] },
 ];
 

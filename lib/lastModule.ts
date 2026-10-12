@@ -1,4 +1,4 @@
-import { APP_MODULES, resolveLocation } from '@/lib/nav';
+import { APP_MODULES, inModule, resolveLocation } from '@/lib/nav';
 
 export interface LastModule {
   slug: string;
@@ -14,8 +14,12 @@ export function trackModule(pathname: string) {
   const loc = resolveLocation(pathname);
   if (loc.module === 'administration') return;
   if (loc.module === 'modules') {
-    const m = APP_MODULES.find((x) => x.slug !== 'employee' && (pathname === x.href || pathname.startsWith(`${x.href}/`)));
+    const m = APP_MODULES.find((x) => x.slug !== 'employee' && inModule(x, pathname));
     if (m) last = { slug: m.slug, href: pathname };
+    return;
+  }
+  if (loc.module === 'hiring') {
+    last = { slug: 'hiring', href: pathname };
     return;
   }
   last = { slug: 'employee', href: pathname };

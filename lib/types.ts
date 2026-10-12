@@ -92,6 +92,8 @@ export interface Employee {
   pfUan?: string;
   exitReason?: string;
   exitDate?: string;
+  /** Set when the person was hired through Hiring Management: the candidate and job they came from. */
+  hiredFrom?: { candidateId: string; jobId: string; offerId: string };
   createdAt: string;
   updatedAt: string;
 }

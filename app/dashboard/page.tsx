@@ -786,7 +786,7 @@ export default function DashboardPage() {
           <CardHeader title="Needs attention" sub={`${attentionTotal} open item${attentionTotal === 1 ? '' : 's'} across modules · ${scopeName}`} />
           <div className="da-list">
             {attention.map((a) => (
-              <AttentionRow key={a.href} {...a} />
+              <AttentionRow key={`${a.href}|${a.title}`} {...a} />
             ))}
           </div>
         </Card>
