@@ -4,7 +4,7 @@ import { useEffect, useState } from 'react';
 import { Drawer } from '@/components/ui/Drawer';
 import { Button } from '@/components/ui/Card';
 import { useCurrentEmployee } from '@/context/AppContext';
-import { acceptingApplications, careersPath } from '@/components/hiring/Careers';
+import { BOARDS, acceptingApplications, careersPath } from '@/components/hiring/Careers';
 import { Job } from '@/lib/hiringTypes';
 
 /** Copies text; falls back to selecting it when the clipboard API is blocked. */
@@ -54,6 +54,24 @@ export function ShareJobDrawer({ job, open, onClose }: { job: Job; open: boolean
   const place = job.location === 'Kochi' ? 'Kochi, India' : 'Dubai, UAE';
   const text = `We're hiring: ${job.title} (${job.department}, ${place}). Apply here: ${link}`;
   const enc = encodeURIComponent;
+  const [copied, setCopied] = useState(false);
+  const boardLink = (id: string) => `${origin}${careersPath(job, undefined, id)}`;
+  // Plain text to paste into a job board's "Post a job" form.
+  const posting = [
+    job.title,
+    `${place} · ${job.employmentType}`,
+    '',
+    'About the role',
+    job.description,
+    '',
+    `Key skills: ${job.skills.join(', ')}`,
+    `Experience: ${job.expMin}–${job.expMax} years`,
+    job.qualifications ? `Qualifications: ${job.qualifications}` : '',
+    '',
+    `Apply: ${boardLink('indeed')}`,
+  ]
+    .filter((l, i, a) => l !== '' || a[i - 1] !== '')
+    .join('\n');
 
   return (
     <Drawer
@@ -92,6 +110,31 @@ export function ShareJobDrawer({ job, open, onClose }: { job: Job; open: boolean
               Preview page
             </a>
           </div>
+        </div>
+        <div className="fg full">
+          <label>Post on job boards</label>
+          <p className="hint" style={{ margin: '0 0 8px' }}>
+            In the board&apos;s “Post a job” form, paste the job text and use that board&apos;s link as the apply link. Applicants who come through it are labelled with that source.
+          </p>
+          <div className="hm-boards">
+            {BOARDS.map((b) => (
+              <LinkBox key={b.id} label={`${b.label} apply link`} url={boardLink(b.id)} />
+            ))}
+          </div>
+          <div className="hm-share" style={{ marginTop: 10 }}>
+            <Button
+              size="sm"
+              onClick={async () => {
+                setCopied(await copy(posting));
+              }}
+            >
+              {copied ? 'Job text copied' : 'Copy job text for a job board'}
+            </Button>
+            <a className="btn sm ghost" href="https://employers.indeed.com/" target="_blank" rel="noreferrer">
+              Open Indeed for employers
+            </a>
+          </div>
+          <span className="hint">These links only work for applicants once the app is on a public web address; on localhost they open on this computer only.</span>
         </div>
         {job.referralEligible && (
           <LinkBox label="Your referral link" url={refLink} hint="Applications that come through this link are credited to you as an employee referral." />

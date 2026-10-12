@@ -4,7 +4,7 @@ import { ReactNode, useEffect, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import { EMPLOYEES, PERSONAS } from '@/lib/data';
 import { Role } from '@/lib/types';
-import { accountFor, safeNext, signIn, useAuth } from '@/lib/auth';
+import { accountFor, safeNext, signIn, useAuth, logFailedSignIn } from '@/lib/auth';
 import { ENTITY_NAME } from '@/lib/org';
 
 const DEMO_ROLES: Role[] = ['Super Admin', 'HR', 'Office Admin', 'Team Lead', 'Employee'];
@@ -129,8 +129,14 @@ export default function LoginPage() {
     if (!v) return setError({ field: 'email', msg: 'Enter your work email address.' });
     if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(v)) return setError({ field: 'email', msg: 'That doesn’t look like an email address.' });
     const acc = accountFor(v);
-    if (!acc) return setError({ field: 'email', msg: 'We couldn’t find an account with that email. Check it or contact your HR administrator.' });
-    if (acc.employee.employmentStatus === 'Inactive') return setError({ field: 'email', msg: 'This account has been deactivated. Contact your HR administrator.' });
+    if (!acc) {
+      logFailedSignIn(v, 'No account with this email');
+      return setError({ field: 'email', msg: 'We couldn’t find an account with that email. Check it or contact your HR administrator.' });
+    }
+    if (acc.employee.employmentStatus === 'Inactive') {
+      logFailedSignIn(v, 'Deactivated account');
+      return setError({ field: 'email', msg: 'This account has been deactivated. Contact your HR administrator.' });
+    }
     if (!password) return setError({ field: 'password', msg: 'Enter your password.' });
     setError(null);
     setBusy(true);

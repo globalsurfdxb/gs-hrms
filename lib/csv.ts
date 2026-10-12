@@ -1,3 +1,4 @@
+import { logTask } from '@/lib/activity';
 /* Small CSV helpers shared by the reports. A backend export will replace these; the row shape stays the same. */
 
 export type CsvCell = string | number | null | undefined;
@@ -16,6 +17,7 @@ export function toCsv(columns: string[], rows: CsvCell[][]): string {
 
 /** Saves text as a file in the browser. */
 export function downloadText(filename: string, text: string, type = 'text/csv;charset=utf-8;') {
+  logTask('Security', 'Data exported', filename, `${filename} (${text.split('\n').length - 1} rows)`);
   // The byte-order mark lets Excel open UTF-8 text (names, dashes) correctly.
   const url = URL.createObjectURL(new Blob(['﻿', text], { type }));
   const a = document.createElement('a');

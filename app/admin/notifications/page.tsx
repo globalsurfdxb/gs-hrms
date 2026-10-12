@@ -1,5 +1,7 @@
 'use client';
 
+import { logTask } from '@/lib/activity';
+
 import { useState } from 'react';
 import { PageHeader } from '@/components/ui/PageHeader';
 import { EmptyState } from '@/components/ui/Card';
@@ -43,7 +45,11 @@ export default function AdminNotificationsPage() {
   const [q, setQ] = useState('');
   const [filter, setFilter] = useState<Filter>('all');
 
-  const patch = (key: string, p: Partial<Rule>) => setRules((prev) => prev.map((x) => (x.key === key ? { ...x, ...p } : x)));
+  const patch = (key: string, p: Partial<Rule>) => {
+    const r = rules.find((x) => x.key === key);
+    if (r) logTask('Notifications', 'Notification rule changed', r.event, Object.entries(p).map(([k, v]) => `${k}: ${Array.isArray(v) ? v.join(', ') : String(v)}`).join('; '));
+    setRules((prev) => prev.map((x) => (x.key === key ? { ...x, ...p } : x)));
+  };
 
   const enabled = rules.filter((r) => r.on).length;
   const needle = q.trim().toLowerCase();

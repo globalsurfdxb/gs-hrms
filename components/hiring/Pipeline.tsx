@@ -9,7 +9,7 @@ import { InterviewDrawer, OfferDrawer } from '@/components/hiring/HiringForms';
 import { Application, EXITS, Exit, Job, STAGES, Stage } from '@/lib/hiringTypes';
 import { RuleKey } from '@/lib/hiringMail';
 import { useStageMail } from '@/components/hiring/Mail';
-import { appById, candById, daysSince, exitApplication, interviewsForApp, moveStage, offerForApp, reopenApplication, updateCandidateTags, useHiring } from '@/lib/hiringStore';
+import { appById, candById, daysSince, getHiring, exitApplication, interviewsForApp, moveStage, offerForApp, reopenApplication, updateCandidateTags, useHiring } from '@/lib/hiringStore';
 
 type Target = Stage | Exit;
 const isExitTarget = (t: Target): t is Exit => (EXITS as readonly string[]).includes(t);
@@ -21,7 +21,6 @@ const lastMove = (a: Application) => a.history[a.history.length - 1]?.at ?? a.ap
 export function Pipeline({ job, apps, notify }: { job: Job; apps: Application[]; notify: (msg: string, tone?: 'info' | 'warn') => void }) {
   const s = useHiring();
   const actor = useActor();
-  const mailer = useStageMail(notify);
   const [view, setView] = useState<'board' | 'list'>('board');
   const [q, setQ] = useState('');
   const [over, setOver] = useState<Target | null>(null);
@@ -31,6 +30,7 @@ export function Pipeline({ job, apps, notify }: { job: Job; apps: Application[];
   const [interviewFor, setInterviewFor] = useState<Application | null>(null);
   const [offerFor, setOfferFor] = useState<Application | null>(null);
   const [tagText, setTagText] = useState('');
+  const mailer = useStageMail(notify, (id) => setInterviewFor(appById(getHiring(), id) ?? null));
 
   const needle = q.trim().toLowerCase();
   const shown = apps.filter((a) => {

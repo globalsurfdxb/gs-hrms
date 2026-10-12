@@ -1,3 +1,4 @@
+import { logTask } from '@/lib/activity';
 import { useSyncExternalStore } from 'react';
 
 /* The reminder schedules configured in Administration → Reminders. One module-level store, so the admin screen
@@ -36,6 +37,8 @@ const snapshot = () => schedules;
 const serverSnapshot = () => DEFAULT_SCHEDULES;
 
 export function setScheduleOn(key: string, on: boolean) {
+  const sch = schedules.find((x) => x.key === key);
+  if (sch && sch.on !== on) logTask('Reminders', on ? 'Reminder schedule switched on' : 'Reminder schedule switched off', sch.title, on ? 'On' : 'Off', { from: on ? 'Off' : 'On' });
   schedules = schedules.map((s) => (s.key === key ? { ...s, on } : s));
   listeners.forEach((l) => l());
 }

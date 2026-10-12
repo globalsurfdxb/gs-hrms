@@ -127,7 +127,14 @@ export default function JobsPage() {
 
       <Drawer open={picker} onClose={() => setPicker(false)} title="New job" description="A job starts from an approved requisition, so the headcount and budget are already signed off.">
         {!eligible.length ? (
-          <EmptyState icon={<JoinIcon />} title="No approved requisitions are waiting" description="Raise a requisition and get it approved first. It will appear here." />
+          <>
+            <EmptyState icon={<JoinIcon />} title="No approved requisitions are waiting" description="Every approved requisition already has a job. To open a new role, raise a requisition and get it approved; it will then appear here." />
+            <div style={{ textAlign: 'center' }}>
+              <Link href="/hiring/requisitions?new=1" className="btn primary">
+                <PlusIcon /> Raise a requisition
+              </Link>
+            </div>
+          </>
         ) : (
           <div className="hm-pick">
             {eligible.map((r) => (

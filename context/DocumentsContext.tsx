@@ -3,6 +3,7 @@
 import { createContext, useCallback, useContext, useMemo, useState } from 'react';
 import { REFERENCE_TODAY } from '@/lib/data';
 import type { UploadedFile } from '@/components/profile/DocumentViewer';
+import { logTask } from '@/lib/activity';
 
 interface DocumentsContextValue {
   fileFor: (employeeId: string, name: string) => UploadedFile | undefined;
@@ -18,6 +19,7 @@ export function DocumentsProvider({ children }: { children: React.ReactNode }) {
   const fileFor = useCallback((employeeId: string, name: string) => files[`${employeeId}:${name}`], [files]);
   const upload = useCallback((employeeId: string, name: string, file: File) => {
     const key = `${employeeId}:${name}`;
+    logTask('Documents', 'Document uploaded', name, `${file.name} (${Math.round(file.size / 1024)} KB)`, { employeeId });
     const entry: UploadedFile = { name: file.name, url: URL.createObjectURL(file), mime: file.type, size: file.size, uploadedOn: REFERENCE_TODAY };
     setFiles((prev) => {
       if (prev[key]) URL.revokeObjectURL(prev[key].url);

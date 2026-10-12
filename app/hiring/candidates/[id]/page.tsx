@@ -14,11 +14,13 @@ import { useScoped } from '@/components/hiring/useScoped';
 import { canSeeSalary } from '@/lib/hiringAccess';
 import {
   addCandidateNote,
+  appById,
   appsForCandidate,
   applyToJob,
   canViewCandidate,
   candById,
   exitApplication,
+  getHiring,
   interviewsForApp,
   jobById,
   moveStage,
@@ -55,7 +57,7 @@ export default function CandidateProfilePage() {
   const [tag, setTag] = useState('');
   const [applyJob, setApplyJob] = useState('');
   const notify = (text: string, tone: 'info' | 'warn' = 'info') => setMsg({ text, tone });
-  const mailer = useStageMail(notify);
+  const mailer = useStageMail(notify, (id) => setScheduleFor(appById(getHiring(), id) ?? null));
   const mail = useHiringMail();
   const [composing, setComposing] = useState(false);
 

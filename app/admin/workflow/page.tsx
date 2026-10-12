@@ -1,5 +1,7 @@
 'use client';
 
+import { logTask } from '@/lib/activity';
+
 import { useState } from 'react';
 import { PageHeader } from '@/components/ui/PageHeader';
 import { Card, CardHeader } from '@/components/ui/Card';
@@ -98,7 +100,10 @@ export default function AdminWorkflowPage() {
                 {s.label}
                 <div className="st">{s.on ? 'Enabled' : 'Off'}</div>
               </div>
-              <Toggle checked={s.on} onChange={(v) => setSettings((prev) => prev.map((x) => (x.key === s.key ? { ...x, on: v } : x)))} />
+              <Toggle checked={s.on} onChange={(v) => {
+                  logTask('Workflow', v ? 'Workflow rule enabled' : 'Workflow rule switched off', s.label, v ? 'Enabled' : 'Off', { from: v ? 'Off' : 'Enabled' });
+                  setSettings((prev) => prev.map((x) => (x.key === s.key ? { ...x, on: v } : x)));
+                }} />
             </div>
           );
         })}

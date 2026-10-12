@@ -713,6 +713,8 @@
     const n = new Date();
     DB.audit.unshift({ ts: `${pad(parse(TODAY).getDate())} ${MON[parse(TODAY).getMonth()]} ${pad(n.getHours())}:${pad(n.getMinutes())}`, user: meN(), action, entity, change: change || '—', reason: reason || '—', ip: '10.20.4.18', at: TODAY, loc: loc || (LA.loc() !== 'all' ? LA.loc() : myLoc()) });
     save();
+    // The host app mirrors this into Administration → Audit Logs.
+    try { window.dispatchEvent(new CustomEvent('la:audit', { detail: { action, entity, change: change || '', reason: reason || '', by: meN() } })); } catch (e) { /* ignore */ }
   }
   LA.audit = audit;
 

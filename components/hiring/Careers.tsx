@@ -9,13 +9,27 @@ import { ENTITY_NAME } from '@/lib/org';
 import { Fg, TEXTAREA_STYLE } from '@/components/hiring/HiringBits';
 import { Actor, addCandidate, applyToJob, findDuplicates, getHiring } from '@/lib/hiringStore';
 import { sendRuleMail } from '@/lib/hiringMail';
-import { Job } from '@/lib/hiringTypes';
+import { Job, Source } from '@/lib/hiringTypes';
 
 /* The public side of hiring: anyone with a link can read an open job and apply, without signing in. The page is
    shown outside the app shell (see AppShell). With no backend yet, an application is saved in this browser's store;
    a server endpoint replaces `submitApplication` later. */
 
-export const careersPath = (job: Pick<Job, 'code'>, ref?: string) => `/careers/${job.code}${ref ? `?ref=${encodeURIComponent(ref)}` : ''}`;
+/** Job boards the public link can be tracked for: the `src` value in the link becomes the candidate's source. */
+export const BOARDS: { id: string; label: string; source: Source }[] = [
+  { id: 'indeed', label: 'Indeed', source: 'Indeed' },
+  { id: 'linkedin', label: 'LinkedIn', source: 'LinkedIn' },
+  { id: 'naukri', label: 'Naukri', source: 'Naukri' },
+  { id: 'bayt', label: 'Bayt', source: 'Bayt' },
+];
+
+export const careersPath = (job: Pick<Job, 'code'>, ref?: string, src?: string) => {
+  const q = [ref ? `ref=${encodeURIComponent(ref)}` : '', src ? `src=${encodeURIComponent(src)}` : ''].filter(Boolean).join('&');
+  return `/careers/${job.code}${q ? `?${q}` : ''}`;
+};
+
+/** Where an applicant says they came from, from the link's `src` value. */
+export const sourceFromParam = (src: string | null): Source => BOARDS.find((b) => b.id === (src ?? '').toLowerCase())?.source ?? 'Careers Page';
 
 /** A job accepts applications while it is open and not past its closing date. */
 export const acceptingApplications = (j: Job) => j.status === 'Open' && j.closingDate >= todayISO();
@@ -50,7 +64,7 @@ export function referrerFor(job: Job, ref: string | null) {
   return EMPLOYEES.find((e) => e.employeeCode.toLowerCase() === ref.toLowerCase() && e.employmentStatus === 'Active');
 }
 
-export function ApplyForm({ job, refCode }: { job: Job; refCode: string | null }) {
+export function ApplyForm({ job, refCode, src = null }: { job: Job; refCode: string | null; src?: string | null }) {
   const referrer = referrerFor(job, refCode);
   const [v, setV] = useState({ name: '', email: '', phone: '', company: '', title: '', years: '', notice: '', links: '', cvName: '', note: '', consent: false });
   const [attempted, setAttempted] = useState(false);
@@ -98,7 +112,7 @@ export function ApplyForm({ job, refCode }: { job: Job; refCode: string | null }
         noticeDays: v.notice === '' ? 0 : Number(v.notice),
         currency: job.currency,
         visaStatus: '',
-        source: referrer ? 'Employee Referral' : 'Careers Page',
+        source: referrer ? 'Employee Referral' : sourceFromParam(src),
         referrerId: referrer?.id,
         cvName: v.cvName,
         links: v.links.trim(),

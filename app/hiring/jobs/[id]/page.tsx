@@ -8,6 +8,7 @@ import { ArrowLeftIcon, JoinIcon, PlusIcon } from '@/components/icons';
 import { Banner, Hero, JobBadge, empName, fmtDate, money, payUnit, useActor } from '@/components/hiring/HiringBits';
 import { CandidateDrawer } from '@/components/hiring/HiringForms';
 import { ShareJobDrawer } from '@/components/hiring/ShareJob';
+import { JobHistory } from '@/components/hiring/JobHistory';
 import { Pipeline } from '@/components/hiring/Pipeline';
 import { useScoped } from '@/components/hiring/useScoped';
 import { appsForJob, isActiveApp, jobById, reqById, setJobStatus } from '@/lib/hiringStore';
@@ -17,7 +18,7 @@ export default function JobDetailPage() {
   const { id } = useParams<{ id: string }>();
   const { s, level, me } = useScoped();
   const actor = useActor();
-  const [tab, setTab] = useState<'pipeline' | 'details'>('pipeline');
+  const [tab, setTab] = useState<'pipeline' | 'details' | 'history'>('pipeline');
   const [adding, setAdding] = useState(false);
   const [sharing, setSharing] = useState(false);
   const [msg, setMsg] = useState<{ text: string; tone: 'info' | 'warn' } | null>(null);
@@ -91,6 +92,9 @@ export default function JobDetailPage() {
         <button role="tab" aria-selected={tab === 'details'} className={tab === 'details' ? 'on' : ''} onClick={() => setTab('details')}>
           Job details
         </button>
+        <button role="tab" aria-selected={tab === 'history'} className={tab === 'history' ? 'on' : ''} onClick={() => setTab('history')}>
+          History
+        </button>
       </div>
 
       {tab === 'pipeline' ? (
@@ -98,6 +102,8 @@ export default function JobDetailPage() {
           <CardHeader title="Candidate pipeline" sub="Drag a card to a column, or use Move to… on the card. Rejecting asks for a reason." />
           <Pipeline job={job} apps={apps} notify={notify} />
         </Card>
+      ) : tab === 'history' ? (
+        <JobHistory job={job} />
       ) : (
         <div className="hm-grid hm-grid-wide">
           <Card>

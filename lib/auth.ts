@@ -1,7 +1,7 @@
 import { useSyncExternalStore } from 'react';
 import { EMPLOYEES, PERSONAS } from '@/lib/data';
 import { Employee, Role } from '@/lib/types';
-import { chosenRole } from '@/lib/employeeStore';
+import { chosenRole, logAudit } from '@/lib/employeeStore';
 
 /* Front-end session for the sign-in page. There is no sign-in backend yet, so a session is just the signed-in work
    email, kept in localStorage ("Keep me signed in") or sessionStorage. The employee and role are derived from it. */
@@ -45,11 +45,24 @@ const subscribe = (cb: () => void) => {
 
 export const useAuth = (): AuthState => useSyncExternalStore(subscribe, getSnapshot, () => SERVER);
 
+/** Who is signed in right now, for anything that has to record the person behind an action. */
+export function currentActor(): { name: string; role: Role | null } {
+  const acc = accountFor(read());
+  return { name: acc?.employee.name ?? 'System', role: acc?.role ?? null };
+}
+
+/** Record a sign-in attempt that did not get in (unknown or deactivated account). */
+export function logFailedSignIn(email: string, reason: string) {
+  logAudit({ employeeId: `security:${email.trim().toLowerCase()}`, field: 'Sign-in failed', to: reason, changedBy: email.trim().toLowerCase() || 'Unknown', module: 'Security' });
+}
+
 export function signIn(email: string, remember: boolean) {
   try {
     localStorage.removeItem(KEY);
     sessionStorage.removeItem(KEY);
     (remember ? localStorage : sessionStorage).setItem(KEY, email.trim().toLowerCase());
+    const who = accountFor(email);
+    logAudit({ employeeId: who?.employee.id ?? `security:${email}`, field: 'Signed in', to: remember ? 'Kept signed in on this device' : 'This session only', changedBy: who?.employee.name ?? email, module: 'Security' });
   } catch {
     /* storage unavailable — the session just won't persist */
   }
@@ -57,6 +70,8 @@ export function signIn(email: string, remember: boolean) {
 }
 
 export function signOut() {
+  const who = accountFor(read());
+  if (who) logAudit({ employeeId: who.employee.id, field: 'Signed out', to: 'Session ended', changedBy: who.employee.name, module: 'Security' });
   try {
     localStorage.removeItem(KEY);
     sessionStorage.removeItem(KEY);

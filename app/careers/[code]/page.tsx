@@ -17,7 +17,9 @@ export default function CareersJobPage() {
 /** One open role with its apply form. The link can be shared; ?ref=<employee code> credits a referral. */
 function CareersJob() {
   const { code } = useParams<{ code: string }>();
-  const ref = useSearchParams().get('ref');
+  const params = useSearchParams();
+  const ref = params.get('ref');
+  const src = params.get('src');
   const s = useHiring();
   const job = s.jobs.find((j) => j.code.toLowerCase() === decodeURIComponent(code).toLowerCase());
 
@@ -35,8 +37,20 @@ function CareersJob() {
     );
 
   const open = acceptingApplications(job);
+  const ld = {
+    '@context': 'https://schema.org',
+    '@type': 'JobPosting',
+    title: job.title,
+    description: job.description.replace(/\n/g, '<br/>'),
+    datePosted: job.createdAt.slice(0, 10),
+    validThrough: job.closingDate,
+    employmentType: job.employmentType === 'Contract' ? 'CONTRACTOR' : job.employmentType === 'Intern' ? 'INTERN' : 'FULL_TIME',
+    hiringOrganization: { '@type': 'Organization', name: 'Global Surf IT' },
+    jobLocation: { '@type': 'Place', address: { '@type': 'PostalAddress', addressLocality: job.location === 'Kochi' ? 'Kochi' : 'Dubai', addressCountry: job.location === 'Kochi' ? 'IN' : 'AE' } },
+  };
   return (
     <CareersFrame>
+      <script type="application/ld+json" dangerouslySetInnerHTML={{ __html: JSON.stringify(ld) }} />
       <Link href="/careers" className="cr-back">
         ← All open roles
       </Link>
@@ -61,7 +75,7 @@ function CareersJob() {
       </div>
 
       {open ? (
-        <ApplyForm job={job} refCode={ref} />
+        <ApplyForm job={job} refCode={ref} src={src} />
       ) : (
         <div className="cr-card">
           <h2>This role is no longer accepting applications</h2>

@@ -291,6 +291,7 @@ export function createJob(requisitionId: string, input: JobInput, actor: Actor):
     createdBy: actor.name,
     createdAt: stamp,
     updatedAt: stamp,
+    history: [{ id: uid('jh'), at: stamp, by: actor.name, text: `Job created from ${r.code} as ${publish ? 'Open' : 'Draft'}` }],
   };
   commit({ ...state, jobs: [job, ...state.jobs] });
   audit(job.id, 'Job created', '—', `${job.code} · ${job.title} (${job.status})`, actor.name);
@@ -300,7 +301,8 @@ export function createJob(requisitionId: string, input: JobInput, actor: Actor):
 export function setJobStatus(id: string, status: JobStatus, actor: Actor): Result {
   const j = jobById(state, id);
   if (!j) return fail('Job not found.');
-  commit({ ...state, jobs: state.jobs.map((x) => (x.id === id ? { ...x, status, updatedAt: nowIso() } : x)) });
+  const stamp = nowIso();
+  commit({ ...state, jobs: state.jobs.map((x) => (x.id === id ? { ...x, status, updatedAt: stamp, history: [...(x.history ?? []), { id: uid('jh'), at: stamp, by: actor.name, text: `Status changed from ${j.status} to ${status}` }] } : x)) });
   audit(id, 'Job status', j.status, status, actor.name);
   return { ok: true };
 }
@@ -568,7 +570,21 @@ export function completeHire(offerId: string, employee: { id: string; code: stri
     applications: state.applications.map((x) =>
       x.id === a.id ? { ...x, stage: 'Hired', history: [...x.history, { id: uid('sc'), at: stamp, by: actor.name, from: x.stage, to: 'Hired', note: `Onboarding started as ${employee.code}` }] } : x,
     ),
-    jobs: state.jobs.map((x) => (x.id === j.id ? { ...x, filled, status: jobStatus, updatedAt: stamp } : x)),
+    jobs: state.jobs.map((x) =>
+      x.id === j.id
+        ? {
+            ...x,
+            filled,
+            status: jobStatus,
+            updatedAt: stamp,
+            history: [
+              ...(x.history ?? []),
+              { id: uid('jh'), at: stamp, by: actor.name, text: `${employee.name} hired (${employee.code}): ${filled} of ${j.positions} positions filled` },
+              ...(jobStatus !== j.status ? [{ id: uid('jh'), at: stamp, by: 'System', text: `Status changed from ${j.status} to ${jobStatus}` }] : []),
+            ],
+          }
+        : x,
+    ),
   });
   audit(a.id, 'Hired', a.stage, `Onboarding started: ${employee.name} (${employee.code}); ${j.code} filled ${filled}/${j.positions}`, actor.name);
   return { ok: true };

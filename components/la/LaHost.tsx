@@ -10,6 +10,7 @@ import { useEmployeeVersion } from '@/lib/employeeStore';
 import { LaChrome, laCurrentPath, laPath, setLaChrome } from '@/lib/laStore';
 import { leaveOrgPayload } from '@/lib/leaveBridge';
 import { ensureLaFonts, loadLaCss, loadLaRuntime } from '@/lib/laRuntime';
+import { logTask } from '@/lib/activity';
 
 const BASE = '/modules/leave-attendance';
 
@@ -53,6 +54,16 @@ export function LaHost() {
     (window as unknown as { __laOrg: unknown }).__laOrg = org;
     (window as unknown as { LA?: { orgChanged?: () => void } }).LA?.orgChanged?.();
   }, [org]);
+
+  // Every task done in Leave & Attendance (apply, approve, punch, adjust…) also goes into the shared audit log.
+  useEffect(() => {
+    const log = (e: Event) => {
+      const d = (e as CustomEvent<{ action: string; entity: string; change: string; reason: string; by: string }>).detail;
+      logTask('Leave & Attendance', d.action, d.entity, [d.change, d.reason].filter((x) => x && x !== '—').join(' · ') || '—', { by: d.by });
+    };
+    window.addEventListener('la:audit', log);
+    return () => window.removeEventListener('la:audit', log);
+  }, []);
 
   // The runtime asks the app to open one of its own pages (e.g. Administration → Settings).
   useEffect(() => {

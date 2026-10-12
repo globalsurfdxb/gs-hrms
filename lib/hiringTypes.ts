@@ -75,6 +75,14 @@ export interface Requisition {
   updatedAt: string;
 }
 
+/** A change to the job itself (opened, put on hold, filled…), kept for its History tab. */
+export interface JobEvent {
+  id: string;
+  at: string;
+  by: string;
+  text: string;
+}
+
 export interface Job {
   id: string;
   code: string;
@@ -104,6 +112,8 @@ export interface Job {
   createdBy: string;
   createdAt: string;
   updatedAt: string;
+  /** Older saved jobs have none: the History tab then starts from the job's creation. */
+  history?: JobEvent[];
 }
 
 export interface CandidateNote {

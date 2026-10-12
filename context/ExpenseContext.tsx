@@ -5,6 +5,7 @@ import { EXPENSE_CATEGORIES, EXPENSE_CLAIMS, REFERENCE_TODAY, employeeById, mana
 import { Employee, ExpenseCategory, ExpenseClaim, Role } from '@/lib/types';
 import { useApp } from '@/context/AppContext';
 import { logAudit } from '@/lib/employeeStore';
+import { logTask } from '@/lib/activity';
 
 /** Where a claim is routed for approval. The General Manager, and anyone with no manager on record, route to Super Admin, never HR. */
 export function claimRoute(claimant: Employee): { label: string; seniorOnly: boolean } {
@@ -66,13 +67,28 @@ export function ExpenseProvider({ children }: { children: React.ReactNode }) {
     return {
       categories,
       activeCategories: categories.filter((c) => c.active),
-      addCategory: (c) => setCategories((p) => [...p, { ...c, id: `cat-${Date.now()}` }]),
-      updateCategory: (c) => setCategories((p) => p.map((x) => (x.id === c.id ? c : x))),
-      toggleCategory: (id) => setCategories((p) => p.map((x) => (x.id === id ? { ...x, active: !x.active } : x))),
-      removeCategory: (id) => setCategories((p) => p.filter((x) => x.id !== id)),
+      addCategory: (c) => {
+        logTask('Expense', 'Expense category added', c.name, c.name);
+        setCategories((p) => [...p, { ...c, id: `cat-${Date.now()}` }]);
+      },
+      updateCategory: (c) => {
+        logTask('Expense', 'Expense category changed', c.name, 'Details or limits updated');
+        setCategories((p) => p.map((x) => (x.id === c.id ? c : x)));
+      },
+      toggleCategory: (id) => {
+        const c = categories.find((x) => x.id === id);
+        if (c) logTask('Expense', c.active ? 'Expense category switched off' : 'Expense category switched on', c.name, c.active ? 'Inactive' : 'Active');
+        setCategories((p) => p.map((x) => (x.id === id ? { ...x, active: !x.active } : x)));
+      },
+      removeCategory: (id) => {
+        const c = categories.find((x) => x.id === id);
+        if (c) logTask('Expense', 'Expense category removed', c.name, 'Removed');
+        setCategories((p) => p.filter((x) => x.id !== id));
+      },
       claims,
       submitClaim: (c) => {
         const id = `exp-${Date.now()}`;
+        logTask('Expense', 'Expense claim submitted', id, `${c.category} · ${c.currency} ${c.amount.toLocaleString('en-US')}`, { employeeId: c.employeeId });
         setClaims((p) => [{ ...c, id, status: 'Pending', submittedOn: REFERENCE_TODAY }, ...p]);
         return id;
       },

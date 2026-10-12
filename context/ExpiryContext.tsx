@@ -7,6 +7,7 @@ import { useEmployeeVersion } from '@/lib/employeeStore';
 import { DocRow, EID, VISA, addDatedDocument, registerFor, setExpiry, useExpiryVersion } from '@/lib/expiryRegister';
 import { ladderFor, useReminderSchedules } from '@/lib/reminderRules';
 import { Employee, ExpiryState } from '@/lib/types';
+import { logTask } from '@/lib/activity';
 
 export type { DocRow };
 export { complianceIssues, complianceLabel, complianceShort } from '@/lib/expiryRegister';
@@ -126,12 +127,16 @@ export function ExpiryProvider({ children }: { children: React.ReactNode }) {
       isReminded,
       lastReminder,
       reminderInfo,
-      sendReminder: (r, rung) => setReminders((prev) => [...prev, entry(r, rung)]),
+      sendReminder: (r, rung) => {
+        logTask('Expiry', 'Expiry reminder sent', r.type, rung ? `${rung}-day notice, expires ${r.expiry}` : `Manual reminder, expires ${r.expiry}`, { employeeId: r.employee.id });
+        setReminders((prev) => [...prev, entry(r, rung)]);
+      },
       sendDue: (rows) => {
         const fresh = rows.filter((r) => {
           const rung = dueRung(r);
           return rung !== null && !isReminded(r, rung);
         });
+        fresh.forEach((r) => logTask('Expiry', 'Expiry reminder sent', r.type, `${dueRung(r)}-day notice, expires ${r.expiry}`, { employeeId: r.employee.id }));
         setReminders((prev) => [...prev, ...fresh.map((r) => entry(r, dueRung(r)))]);
         return fresh.length;
       },
@@ -152,11 +157,15 @@ export function ExpiryProvider({ children }: { children: React.ReactNode }) {
           setExpiry(r.employee, EID, eidExpiry);
         }
         setExpiry(r.employee, r.type, newExpiry, r.docId);
+        logTask('Expiry', 'Document renewed', r.type, `Expiry ${r.expiry} → ${newExpiry}${reference.trim() ? ` · ref ${reference.trim()}` : ''}`, { employeeId: r.employee.id, from: r.expiry });
         setRenewals((prev) => [...prev, ...logs]);
       },
       addDoc: ({ employeeId, type, expiryDate }) => {
         const e = employeeById(employeeId);
-        if (e) addDatedDocument(e, type, expiryDate);
+        if (e) {
+          addDatedDocument(e, type, expiryDate);
+          logTask('Expiry', 'Document added', type, `Expires ${expiryDate}`, { employeeId: e.id });
+        }
       },
     };
   }, [schedules, registerVersion, employeeVersion, reminders, renewals]);

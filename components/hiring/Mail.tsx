@@ -34,7 +34,7 @@ export type Notify = (text: string, tone?: 'info' | 'warn') => void;
 
 /** Runs a pipeline change and sends the email the stage rules ask for: straight away, after a Send / Edit / Skip
     choice, or not at all. `request` is for a change the user is about to make; `after` is for one already made. */
-export function useStageMail(notify: Notify) {
+export function useStageMail(notify: Notify, schedule?: (appId: string) => void) {
   const actor = useActor();
   const mail = useHiringMail();
   const [pending, setPending] = useState<Pending | null>(null);
@@ -93,11 +93,11 @@ export function useStageMail(notify: Notify) {
     request: (appIds: string[], key: RuleKey, perform: () => Outcome, title: Pending['title']) => run({ appIds, key, perform, title }),
     /** An event that already happened (interview scheduled, offer sent): offer the email for it. */
     after: (appId: string, key: RuleKey, extra: Pick<Pending, 'interview' | 'offer'>, title: Pending['title']) => run({ appIds: [appId], key, title, ...extra }),
-    dialog: <StageMailDialog pending={pending} onCancel={() => setPending(null)} onFinish={finish} ctxFor={ctxFor} />,
+    dialog: <StageMailDialog pending={pending} onCancel={() => setPending(null)} onFinish={finish} ctxFor={ctxFor} onSchedule={schedule} />,
   };
 }
 
-function StageMailDialog({ pending, onCancel, onFinish, ctxFor }: { pending: Pending | null; onCancel: () => void; onFinish: (p: Pending, send: boolean, edited?: { subject: string; body: string }) => void; ctxFor: (appId: string, p?: Pick<Pending, 'interview' | 'offer'>) => MailContext | null }) {
+function StageMailDialog({ pending, onCancel, onFinish, ctxFor, onSchedule }: { pending: Pending | null; onCancel: () => void; onFinish: (p: Pending, send: boolean, edited?: { subject: string; body: string }) => void; ctxFor: (appId: string, p?: Pick<Pending, 'interview' | 'offer'>) => MailContext | null; onSchedule?: (appId: string) => void }) {
   const mail = useHiringMail();
   const [edit, setEdit] = useState(false);
   const [subject, setSubject] = useState('');
@@ -131,6 +131,8 @@ function StageMailDialog({ pending, onCancel, onFinish, ctxFor }: { pending: Pen
   const cand = ctx && candById(getHiring(), ctx.candidateId);
   const missing = unresolved(`${edit ? subject : prepared.subject}\n${edit ? body : prepared.body}`);
   const edited = edit ? { subject, body } : undefined;
+  // The invitation needs an interview: offer to move the candidate and open the scheduling form straight away.
+  const needsInterview = !many && !!pending.perform && !!onSchedule && missing.some((m) => m.startsWith('interview.'));
 
   return (
     <div className="fm-dialog-scrim" onMouseDown={(e) => e.target === e.currentTarget && onCancel()}>
@@ -166,6 +168,18 @@ function StageMailDialog({ pending, onCancel, onFinish, ctxFor }: { pending: Pen
           {!many && (
             <button type="button" className="btn ghost" onClick={() => setEdit((v) => !v)}>
               {edit ? 'Back to preview' : 'Edit before sending'}
+            </button>
+          )}
+          {needsInterview && (
+            <button
+              type="button"
+              className="btn primary"
+              onClick={() => {
+                onFinish(pending, false);
+                onSchedule?.(pending.appIds[0]);
+              }}
+            >
+              Move and schedule interview
             </button>
           )}
           <button type="button" className="btn ghost" onClick={() => onFinish(pending, false)}>

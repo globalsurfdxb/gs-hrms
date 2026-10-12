@@ -3,6 +3,7 @@
 import { createContext, useContext, useMemo, useState } from 'react';
 import { LEARNING_RECORDS } from '@/lib/data';
 import { LearningRecord } from '@/lib/types';
+import { logTask } from '@/lib/activity';
 
 export const DEFAULT_CATEGORIES = ['Compliance', 'Sales', 'Management', 'Finance', 'Culture', 'Technical', 'Safety', 'Soft Skills'];
 
@@ -38,17 +39,33 @@ export function LearningProvider({ children }: { children: React.ReactNode }) {
         const has = new Set(records.filter((r) => r.course.toLowerCase() === course.toLowerCase()).map((r) => r.employeeId));
         const fresh = employeeIds.filter((id) => !has.has(id));
         const stamp = Date.now();
+        logTask('Learning', 'Course assigned', course, `${fresh.length} employee${fresh.length === 1 ? '' : 's'}, due ${dueDate}`);
         setRecords((prev) => [
           ...prev,
           ...fresh.map((employeeId, i) => ({ id: `lr-${stamp}-${i}`, employeeId, course, category, status: 'Not Started' as const, dueDate, assignedOn })),
         ]);
         return fresh.length;
       },
-      start: (id) => patch(id, (r) => (r.status === 'Not Started' ? { ...r, status: 'In Progress' } : r)),
-      complete: (id, { completedOn, score, notes }) =>
-        patch(id, (r) => (r.status === 'Completed' ? r : { ...r, status: 'Completed', completedOn, score, notes: notes.trim() || undefined })),
-      reopen: (id) => patch(id, (r) => (r.status === 'Completed' ? { ...r, status: 'In Progress', completedOn: undefined, score: undefined, notes: undefined } : r)),
-      unassign: (id) => setRecords((prev) => prev.filter((r) => r.id !== id || r.status !== 'Not Started')),
+      start: (id) => {
+        const r = records.find((x) => x.id === id);
+        if (r?.status === 'Not Started') logTask('Learning', 'Course started', r.course, 'In progress', { employeeId: r.employeeId });
+        patch(id, (x) => (x.status === 'Not Started' ? { ...x, status: 'In Progress' } : x));
+      },
+      complete: (id, { completedOn, score, notes }) => {
+        const r = records.find((x) => x.id === id);
+        if (r && r.status !== 'Completed') logTask('Learning', 'Course completed', r.course, `Completed ${completedOn}${score !== undefined ? ` · score ${score}` : ''}`, { employeeId: r.employeeId });
+        patch(id, (x) => (x.status === 'Completed' ? x : { ...x, status: 'Completed', completedOn, score, notes: notes.trim() || undefined }));
+      },
+      reopen: (id) => {
+        const r = records.find((x) => x.id === id);
+        if (r?.status === 'Completed') logTask('Learning', 'Course reopened', r.course, 'Completed → In progress', { employeeId: r.employeeId });
+        patch(id, (x) => (x.status === 'Completed' ? { ...x, status: 'In Progress', completedOn: undefined, score: undefined, notes: undefined } : x));
+      },
+      unassign: (id) => {
+        const r = records.find((x) => x.id === id);
+        if (r?.status === 'Not Started') logTask('Learning', 'Course unassigned', r.course, 'Assignment removed', { employeeId: r.employeeId });
+        setRecords((prev) => prev.filter((x) => x.id !== id || x.status !== 'Not Started'));
+      },
     };
   }, [records]);
 

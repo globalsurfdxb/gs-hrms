@@ -295,7 +295,7 @@ export function saveEmployee(id: string, form: EmployeeForm, by: string): Employ
   applyForm(e, form);
   const stamp = Date.now();
   changes.forEach((c, i) => {
-    const entry: AuditEntry = { id: `ed-${stamp}-${i}`, employeeId: id, field: c.label, from: c.from, to: c.to, changedBy: by, changedOn: REFERENCE_TODAY, module: auditModuleFor(c.key) };
+    const entry: AuditEntry = { id: `ed-${stamp}-${i}`, employeeId: id, field: c.label, from: c.from, to: c.to, changedBy: by, changedOn: REFERENCE_TODAY, at: new Date().toISOString(), module: auditModuleFor(c.key) };
     AUDIT_LOG.unshift(entry);
     saved.audit.unshift(entry);
   });
@@ -328,7 +328,7 @@ export function logAudit(entry: AuditInput): AuditEntry {
     from: entry.from ?? '—',
     to: entry.to,
     changedBy: entry.changedBy,
-    changedOn: REFERENCE_TODAY,
+    changedOn: REFERENCE_TODAY, at: new Date().toISOString(),
     module: entry.module,
   };
   AUDIT_LOG.unshift(full);
@@ -460,7 +460,7 @@ export function addEmployee(input: NewEmployeeInput): Employee | null {
     from: '—',
     to: `Created through onboarding (${e.employmentStatus}, approval pending) with the ${input.role} role`,
     changedBy: input.by,
-    changedOn: REFERENCE_TODAY,
+    changedOn: REFERENCE_TODAY, at: new Date().toISOString(),
     module: 'Employee',
   };
   AUDIT_LOG.unshift(entry);

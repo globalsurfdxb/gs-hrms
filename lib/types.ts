@@ -277,4 +277,6 @@ export interface AuditEntry {
   changedOn: string;
   /** Area of the app the event belongs to (Employee, Access, Approvals, ...). Older entries omit it. */
   module?: string;
+  /** When it happened (ISO date-time). Older entries only have the day. */
+  at?: string;
 }
