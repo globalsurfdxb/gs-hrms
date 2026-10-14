@@ -5,19 +5,28 @@ import { useCurrentEmployee } from '@/context/AppContext';
 import { proposedChanges, useRequests } from '@/context/RequestsContext';
 import { EmployeeRequest } from '@/lib/types';
 import { PageHeader } from '@/components/ui/PageHeader';
-import { Card, CardHeader, EmptyState } from '@/components/ui/Card';
+import { Card, CardHeader, EmptyState, Button } from '@/components/ui/Card';
+import { NewRequestDrawer } from '@/components/profile/NewRequestDrawer';
 import { StatusBadge } from '@/components/ui/Badge';
 import { StatStrip } from '@/components/ui/StatStrip';
 import { FilterChips } from '@/components/ui/FilterChips';
-import { CheckIcon, InboxIcon, ListIcon, SearchIcon, XIcon } from '@/components/icons';
+import { BellIcon, CheckIcon, FileTextIcon, InboxIcon, ListIcon, MapPinIcon, PlusIcon, ReceiptIcon, SearchIcon, UserIcon, XIcon } from '@/components/icons';
 
 type StatusFilter = 'all' | EmployeeRequest['status'];
 
-const STATUS_TONE: Record<EmployeeRequest['status'], string> = { Pending: 'amber', Approved: 'green', Rejected: 'red' };
+const TYPE_LOOK: Record<EmployeeRequest['type'], { tone: string; icon: React.ReactNode }> = {
+  'Information Update': { tone: 'blue', icon: <UserIcon /> },
+  'Address Change': { tone: 'teal', icon: <MapPinIcon /> },
+  'Bank Detail Update': { tone: 'green', icon: <ReceiptIcon /> },
+  'Document Request': { tone: 'purple', icon: <FileTextIcon /> },
+  'Other Request': { tone: 'amber', icon: <InboxIcon /> },
+};
 
 export default function MyRequestsPage() {
   const me = useCurrentEmployee();
-  const { requests } = useRequests();
+  const { requests, raise } = useRequests();
+  const [drawer, setDrawer] = useState(false);
+  const [notice, setNotice] = useState('');
   const [q, setQ] = useState('');
   const [status, setStatus] = useState<StatusFilter>('all');
   const mine = requests.filter((r) => r.employeeId === me.id);
@@ -28,7 +37,25 @@ export default function MyRequestsPage() {
 
   return (
     <div>
-      <PageHeader eyebrow="My Space" title="My Requests" description="Information updates and document requests you've raised, and their approval status." />
+      <PageHeader
+        eyebrow="My Space"
+        title="My Requests"
+        description="Changes to your details, letters and anything else you've asked for, and where each one stands."
+        actions={
+          <Button variant="primary" onClick={() => setDrawer(true)}>
+            <PlusIcon /> New request
+          </Button>
+        }
+      />
+      {notice && (
+        <div className="note-box tx-banner" role="status" style={{ marginBottom: 14 }}>
+          <BellIcon />
+          <div style={{ flex: 1 }}>{notice}</div>
+          <button type="button" className="icon-act" aria-label="Dismiss" onClick={() => setNotice('')}>
+            <XIcon />
+          </button>
+        </div>
+      )}
 
       <div className="ss-strip">
         <StatStrip
@@ -44,7 +71,14 @@ export default function MyRequestsPage() {
       <Card>
         <CardHeader title="My requests" sub={`${mine.length} on file`} />
         {!mine.length ? (
-          <EmptyState icon={<InboxIcon />} title="No requests yet" description="Anything you raise with HR or your manager will appear here." />
+          <>
+            <EmptyState icon={<InboxIcon />} title="No requests yet" description="Ask HR or your manager to update your details, change your bank account or prepare a letter. It will appear here." />
+            <div style={{ textAlign: 'center', paddingBottom: 20 }}>
+              <Button variant="primary" onClick={() => setDrawer(true)}>
+                <PlusIcon /> New request
+              </Button>
+            </div>
+          </>
         ) : (
           <>
             <div className="tbar">
@@ -65,37 +99,47 @@ export default function MyRequestsPage() {
             </div>
             <div className="ss-list">
               {!shown.length && <EmptyState icon={<SearchIcon />} title="No matches" description="No requests match your search or filter." />}
-              {shown.map((r) => (
-                <div key={r.id} className="doc">
-                  <span className={`ss-ic ss-tone-${STATUS_TONE[r.status]}`}>
-                    <InboxIcon />
-                  </span>
-                  <div className="ss-body">
-                    <div className="ss-nm">
-                      {r.type}
-                      <span className="ss-tag alt">Routed to {r.routedTo}</span>
-                    </div>
-                    <div className="ss-mt">{r.details}</div>
-                    {r.changes && r.status !== 'Rejected' && (
-                      <div className="rq-prop">
-                        {proposedChanges(r).map((c) => (
-                          <div key={c.key}>
-                            <b>{c.label}</b>: {r.status === 'Pending' ? `${c.from} → ${c.to}` : c.to}
-                          </div>
-                        ))}
-                        <i>{r.status === 'Pending' ? 'Your profile keeps the current value until this is approved.' : 'Applied to your profile.'}</i>
+              {shown.map((r) => {
+                const look = TYPE_LOOK[r.type];
+                return (
+                  <div key={r.id} className="rq-card">
+                    <span className={`ss-ic ss-tone-${look.tone}`}>{look.icon}</span>
+                    <div className="rq-main">
+                      <div className="rq-top">
+                        <b>{r.type}</b>
+                        <span className="ss-tag alt">Routed to {r.routedTo}</span>
                       </div>
-                    )}
-                    <div className="ss-sub">
-                      Raised {r.raisedOn}
-                      {r.decidedBy ? ` · ${r.status} by ${r.decidedBy}` : ''}
+                      <div className="rq-details">{r.details}</div>
+                      {r.changes && r.status !== 'Rejected' && (
+                        <div className="rq-diff">
+                          {proposedChanges(r).map((c) => (
+                            <div key={c.key} className="rq-diff-row">
+                              <span className="l">{c.label}</span>
+                              {r.status === 'Pending' ? (
+                                <>
+                                  <span className="old">{c.from}</span>
+                                  <span className="ar">→</span>
+                                  <span className="new">{c.to}</span>
+                                </>
+                              ) : (
+                                <span className="new">{c.to}</span>
+                              )}
+                            </div>
+                          ))}
+                          <i>{r.status === 'Pending' ? 'Your profile keeps the current value until this is approved.' : 'Applied to your profile.'}</i>
+                        </div>
+                      )}
+                      <div className="rq-meta">
+                        <span>Raised {r.raisedOn}</span>
+                        <span>{r.status === 'Pending' ? `Waiting for ${r.routedTo === 'HR' ? 'HR' : 'your manager'}` : `${r.status} by ${r.decidedBy ?? '—'}${r.decidedOn ? ` on ${r.decidedOn}` : ''}`}</span>
+                      </div>
+                    </div>
+                    <div className="rq-side">
+                      <StatusBadge status={r.status} />
                     </div>
                   </div>
-                  <div className="rt">
-                    <StatusBadge status={r.status} />
-                  </div>
-                </div>
-              ))}
+                );
+              })}
             </div>
             <div className="ss-foot">
               <span>
@@ -105,6 +149,15 @@ export default function MyRequestsPage() {
           </>
         )}
       </Card>
+      <NewRequestDrawer
+        open={drawer}
+        onClose={() => setDrawer(false)}
+        onRaise={(r) => {
+          raise(r);
+          setDrawer(false);
+          setNotice(`Your request (${r.type}) was sent to ${r.type === 'Information Update' ? 'your manager' : 'HR'}. You will see the decision here.`);
+        }}
+      />
     </div>
   );
 }

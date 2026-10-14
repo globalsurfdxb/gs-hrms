@@ -4,6 +4,7 @@ import { Role } from '@/lib/types';
 import { logAudit } from '@/lib/employeeStore';
 import { chainSteps } from '@/lib/workflow';
 import { seedHiring } from '@/lib/hiringSeed';
+import { pushNotice } from '@/lib/notifications';
 import { HiringLevel } from '@/lib/hiringAccess';
 import {
   Application,
@@ -98,6 +99,25 @@ const nowIso = () => {
   return `${todayISO()}T${p(d.getHours())}:${p(d.getMinutes())}:00`;
 };
 const nextCode = (prefix: string, existing: string[]) => `${prefix}-${String(existing.reduce((m, c) => Math.max(m, parseInt(c.replace(/\D/g, ''), 10) || 0), 0) + 1).padStart(4, '0')}`;
+
+const HR_ROLES: Role[] = ['HR', 'Office Admin', 'Super Admin'];
+
+/** Tell whoever must act on the requisition's current approval step. */
+function notifyStep(r: Requisition, by: string) {
+  const step = r.approvals.find((a) => a.status === 'Pending');
+  if (!step) return;
+  pushNotice({
+    id: `req-act-${r.id}`,
+    kind: 'hiring',
+    tone: 'pending',
+    title: `${r.code} needs your approval`,
+    sub: `${r.title} · ${r.positions} position${r.positions === 1 ? '' : 's'} · ${step.label} step`,
+    href: `/hiring/requisitions/${r.id}`,
+    toIds: step.label === 'Hiring Manager' ? [r.hiringManagerId] : [],
+    toRoles: step.label === 'Hiring Manager' ? [] : step.label === 'HR' ? HR_ROLES : ['Super Admin'],
+    by,
+  });
+}
 
 const audit = (id: string, field: string, from: string | undefined, to: string, by: string) => logAudit({ employeeId: `hiring:${id}`, field, from, to, changedBy: by, module: 'Hiring' });
 
@@ -216,6 +236,7 @@ export function submitRequisition(id: string, actor: Actor): Result<{ requisitio
   const next: Requisition = { ...r, status: 'Pending Approval', approvals: steps, updatedAt: stamp };
   commit({ ...state, requisitions: state.requisitions.map((x) => (x.id === id ? next : x)) });
   audit(id, 'Requisition submitted', r.status, 'Pending Approval', actor.name);
+  notifyStep(next, actor.id);
   return { ok: true, requisition: next };
 }
 
@@ -236,6 +257,13 @@ export function decideRequisition(id: string, decision: 'Approved' | 'Rejected',
   const status: RequisitionStatus = decision === 'Rejected' ? 'Rejected' : idx === r.approvals.length - 1 ? 'Approved' : 'Pending Approval';
   commit({ ...state, requisitions: state.requisitions.map((x) => (x.id === id ? { ...x, approvals, status, updatedAt: stamp } : x)) });
   audit(id, `Requisition ${step.label} step ${decision.toLowerCase()}`, r.status, status, actor.name);
+  const decided = { ...r, approvals, status };
+  if (status === 'Pending Approval') notifyStep(decided, actor.id);
+  else {
+    const ok = status === 'Approved';
+    pushNotice({ kind: 'hiring', tone: ok ? 'active' : 'expired', title: `${r.code} was ${ok ? 'approved' : 'rejected'}`, sub: `${r.title}${ok ? '. A job can now be created from it.' : `. ${note.trim()}`}`, href: `/hiring/requisitions/${id}`, toIds: [r.createdById, r.hiringManagerId], by: actor.id });
+    if (ok) pushNotice({ kind: 'hiring', tone: 'info', title: `${r.code} is approved: create the job`, sub: `${r.title} · ${r.positions} position${r.positions === 1 ? '' : 's'}`, href: `/hiring/requisitions/${id}`, toRoles: HR_ROLES, by: actor.id });
+  }
   return { ok: true };
 }
 
@@ -371,6 +399,7 @@ export function addCandidate(input: CandidateInput, jobId: string | null, actor:
   const application = j ? newApplication(candidate, j, actor.name) : undefined;
   commit({ ...state, candidates: [candidate, ...state.candidates], applications: application ? [application, ...state.applications] : state.applications });
   audit(candidate.id, 'Candidate added', '—', `${candidate.name}${j ? ` → ${j.code} ${j.title}` : ''}`, actor.name);
+  if (j && actor.id === 'careers-page') pushNotice({ kind: 'hiring', tone: 'info', title: `New application for ${j.title}`, sub: `${candidate.name} applied through ${candidate.source}`, href: `/hiring/candidates/${candidate.id}`, toRoles: HR_ROLES, toIds: [j.hiringManagerId] });
   return { ok: true, candidate, application };
 }
 
@@ -382,6 +411,7 @@ export function applyToJob(candidateId: string, jobId: string, actor: Actor): Re
   const application = newApplication(c, j, actor.name);
   commit({ ...state, applications: [application, ...state.applications] });
   audit(candidateId, 'Applied to job', '—', `${j.code} ${j.title}`, actor.name);
+  if (actor.id === 'careers-page') pushNotice({ kind: 'hiring', tone: 'info', title: `New application for ${j.title}`, sub: `${c.name} applied again through the careers page`, href: `/hiring/candidates/${c.id}`, toRoles: HR_ROLES, toIds: [j.hiringManagerId] });
   return { ok: true, application };
 }
 
@@ -481,6 +511,8 @@ export function scheduleInterview(input: InterviewInput, actor: Actor): Result<{
   const interview: Interview = { id: uid('int'), location: a.location, status: 'Scheduled', scheduledBy: actor.name, createdAt: nowIso(), ...input };
   commit({ ...state, interviews: [interview, ...state.interviews] });
   audit(interview.id, 'Interview scheduled', '—', `${input.round} · ${input.date} ${input.time}`, actor.name);
+  const cand = candById(state, a.candidateId);
+  pushNotice({ kind: 'hiring', tone: 'pending', title: 'You were added to an interview', sub: `${cand?.name ?? 'Candidate'} · ${input.round} · ${input.date} at ${input.time} (${input.mode})`, href: cand ? `/hiring/candidates/${cand.id}` : '/my/interviews', toIds: input.panelIds, by: actor.id });
   // Scheduling a round moves the candidate forward to it when they are still behind.
   const target = ROUND_STAGE[input.round];
   if (target && STAGES.indexOf(target) > STAGES.indexOf(a.stage)) moveStage(a.id, target, actor, `Interview scheduled: ${input.round}`);
@@ -493,6 +525,7 @@ export function rescheduleInterview(id: string, patch: Pick<InterviewInput, 'dat
   if (!patch.panelIds.length) return fail('Add at least one panel member.');
   commit({ ...state, interviews: state.interviews.map((x) => (x.id === id ? { ...x, ...patch, rescheduled: (x.rescheduled ?? 0) + 1 } : x)) });
   audit(id, 'Interview rescheduled', `${i.date} ${i.time}`, `${patch.date} ${patch.time}`, actor.name);
+  pushNotice({ kind: 'hiring', tone: 'soon', title: 'An interview was moved', sub: `${i.round} is now ${patch.date} at ${patch.time}`, href: '/my/interviews', toIds: patch.panelIds, by: actor.id });
   return { ok: true };
 }
 
@@ -501,6 +534,7 @@ export function setInterviewStatus(id: string, status: 'Completed' | 'Cancelled'
   if (!i) return;
   commit({ ...state, interviews: state.interviews.map((x) => (x.id === id ? { ...x, status } : x)) });
   audit(id, 'Interview status', i.status, status, actor.name);
+  if (status === 'Cancelled') pushNotice({ kind: 'hiring', tone: 'info', title: 'An interview was cancelled', sub: `${i.round} on ${i.date} at ${i.time}`, href: '/my/interviews', toIds: i.panelIds, by: actor.id });
 }
 
 /* ---------------------------------------------------------------------- offers */
@@ -545,11 +579,109 @@ export function setOfferStatus(id: string, status: OfferStatus, actor: Actor): R
   const o = offerById(state, id);
   if (!o) return fail('Offer not found.');
   const stamp = nowIso();
-  const responded = status === 'Accepted' || status === 'Declined' ? stamp : o.respondedAt;
-  commit({ ...state, offers: state.offers.map((x) => (x.id === id ? { ...x, status, updatedAt: stamp, respondedAt: responded } : x)) });
+  const answered = status === 'Accepted' || status === 'Declined';
+  const responded = answered ? stamp : o.respondedAt;
+  const via = answered && !o.respondedVia ? (actor.id === 'candidate' ? 'link' : 'hr') : o.respondedVia;
+  commit({
+    ...state,
+    offers: state.offers.map((x) =>
+      x.id === id ? { ...x, status, updatedAt: stamp, respondedAt: responded, respondedVia: via, events: answered && actor.id !== 'candidate' ? addEvent(x, `${status} recorded by ${actor.name}`) : x.events } : x,
+    ),
+  });
   audit(id, 'Offer status', o.status, status, actor.name);
+  if (status === 'Accepted' || status === 'Declined') {
+    const oa = appById(state, o.applicationId);
+    const oc = oa && candById(state, oa.candidateId);
+    const oj = oa && jobById(state, oa.jobId);
+    pushNotice({ kind: 'hiring', tone: status === 'Accepted' ? 'active' : 'expired', title: `${o.code} was ${status.toLowerCase()}`, sub: `${oc?.name ?? 'Candidate'} · ${oj?.title ?? ''}`, href: '/hiring/offers', toRoles: HR_ROLES, toIds: oj ? [oj.hiringManagerId] : [], by: actor.id });
+  }
   if (status === 'Declined') exitApplication(o.applicationId, 'Withdrawn', actor, 'Offer declined');
   return { ok: true };
+}
+
+/* ---------------------------------------------------------------------- offer letter: send, read, download, respond */
+
+export const offerByToken = (s: HiringState, token: string) => (token ? s.offers.find((o) => o.token === token) : undefined);
+const newToken = () => `${Math.random().toString(36).slice(2, 10)}${Date.now().toString(36)}${Math.random().toString(36).slice(2, 8)}`;
+const addEvent = (o: Offer, text: string) => [...(o.events ?? []), { at: nowIso(), text }];
+
+/** Keeps the prepared letter on the offer (while it is still a draft or has been sent but not answered). */
+export function saveOfferLetter(id: string, html: string, actor: Actor): Result {
+  const o = offerById(state, id);
+  if (!o) return fail('Offer not found.');
+  if (o.status === 'Accepted' || o.status === 'Declined') return fail('This offer has been answered; its letter can no longer change.');
+  commit({ ...state, offers: state.offers.map((x) => (x.id === id ? { ...x, letterHtml: html, letterAt: nowIso(), updatedAt: nowIso(), events: addEvent(x, `Letter prepared by ${actor.name}`) } : x)) });
+  audit(id, 'Offer letter prepared', undefined, o.code, actor.name);
+  return { ok: true };
+}
+
+/** Sends the offer: it needs a letter, gets a link token and moves to Sent. Sending again keeps the same link. */
+export function sendOffer(id: string, actor: Actor): Result<{ token: string }> {
+  const o = offerById(state, id);
+  if (!o) return fail('Offer not found.');
+  if (!o.letterHtml) return fail('Prepare the offer letter first.');
+  if (o.status === 'Accepted' || o.status === 'Declined') return fail('This offer has already been answered.');
+  const token = o.token ?? newToken();
+  const resend = o.status === 'Sent';
+  const stamp = nowIso();
+  commit({
+    ...state,
+    offers: state.offers.map((x) => (x.id === id ? { ...x, token, status: 'Sent', sentAt: stamp, sentBy: actor.name, updatedAt: stamp, events: addEvent(x, `${resend ? 'Sent again' : 'Sent'} by ${actor.name}`) } : x)),
+  });
+  audit(id, resend ? 'Offer sent again' : 'Offer sent', o.status, 'Sent', actor.name);
+  return { ok: true, token };
+}
+
+/** Withdraws a sent offer: the link stops working and the offer goes back to Draft so it can be corrected and sent again. */
+export function revokeOfferLink(id: string, actor: Actor): Result {
+  const o = offerById(state, id);
+  if (!o) return fail('Offer not found.');
+  if (o.status !== 'Sent') return fail('Only a sent offer can be withdrawn.');
+  const stamp = nowIso();
+  commit({
+    ...state,
+    offers: state.offers.map((x) => (x.id === id ? { ...x, status: 'Draft', token: undefined, viewedAt: undefined, downloadedAt: undefined, updatedAt: stamp, events: addEvent(x, `Link withdrawn by ${actor.name}`) } : x)),
+  });
+  audit(id, 'Offer link withdrawn', 'Sent', 'Draft', actor.name);
+  return { ok: true };
+}
+
+/** The candidate opened or downloaded the letter. Recorded once each; the first open is shown to HR. */
+export function recordOfferEvent(token: string, kind: 'viewed' | 'downloaded'): void {
+  const o = offerByToken(state, token);
+  if (!o || o.status !== 'Sent') return;
+  const field = kind === 'viewed' ? 'viewedAt' : 'downloadedAt';
+  if (o[field]) return;
+  const stamp = nowIso();
+  commit({ ...state, offers: state.offers.map((x) => (x.id === o.id ? { ...x, [field]: stamp, events: addEvent(x, kind === 'viewed' ? 'Candidate opened the letter' : 'Candidate downloaded the letter') } : x)) });
+  audit(o.id, kind === 'viewed' ? 'Offer letter opened' : 'Offer letter downloaded', undefined, 'By the candidate', 'Candidate');
+  if (kind === 'viewed') {
+    const oa = appById(state, o.applicationId);
+    const oc = oa && candById(state, oa.candidateId);
+    const oj = oa && jobById(state, oa.jobId);
+    pushNotice({ kind: 'hiring', tone: 'info', title: `${oc?.name ?? 'The candidate'} opened ${o.code}`, sub: oj?.title ?? '', href: '/hiring/offers', toRoles: HR_ROLES, toIds: oj ? [oj.hiringManagerId] : [], by: 'candidate' });
+  }
+}
+
+/** The candidate's answer from the public page. Accepting requires the letter to have been downloaded and a typed name. */
+export function respondToOffer(token: string, decision: 'Accepted' | 'Declined', input: { name?: string; reason?: string }): Result {
+  const o = offerByToken(state, token);
+  if (!o) return fail('This link is not valid any more.');
+  if (o.status === 'Accepted' || o.status === 'Declined') return fail(`This offer was already ${o.status.toLowerCase()}.`);
+  if (o.status !== 'Sent') return fail('This offer is not open for a response.');
+  if (o.expiryDate < todayISO()) return fail(`This offer expired on ${o.expiryDate}. Please contact HR.`);
+  if (!o.downloadedAt) return fail('Download the letter first, then respond.');
+  if (decision === 'Accepted' && !(input.name ?? '').trim()) return fail('Type your full name to accept.');
+  if (decision === 'Declined' && !(input.reason ?? '').trim()) return fail('Tell us briefly why you are declining.');
+  commit({
+    ...state,
+    offers: state.offers.map((x) =>
+      x.id === o.id
+        ? { ...x, signedName: decision === 'Accepted' ? (input.name ?? '').trim() : x.signedName, declineReason: decision === 'Declined' ? (input.reason ?? '').trim() : undefined, respondedVia: 'link', events: addEvent(x, decision === 'Accepted' ? `Accepted by ${(input.name ?? '').trim()}` : 'Declined by the candidate') }
+        : x,
+    ),
+  });
+  return setOfferStatus(o.id, decision, { id: 'candidate', name: 'Candidate (offer link)', role: 'Employee' });
 }
 
 /** Onboarding was started from an accepted offer: link candidate and employee both ways, mark the candidate hired and

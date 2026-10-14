@@ -77,3 +77,14 @@ export function onboardingPrefill(s: HiringState, offerId: string): OnboardingPr
     currency: o.currency,
   };
 }
+
+/** Why an offer cannot start onboarding, in words for the person looking at the screen; null when it can. */
+export function prefillProblem(s: HiringState, offerId: string): string | null {
+  const o = offerById(s, offerId);
+  if (!o) return 'That offer is not in the hiring data of this browser. Hiring data is kept per browser, so open the offer from Hiring → Offers in the browser where it was created.';
+  if (o.employeeId) return `${o.code} was already used to onboard ${o.employeeId}. Open that employee's record instead.`;
+  if (o.status !== 'Accepted') return `${o.code} is ${o.status.toLowerCase()}, not accepted yet. Mark it Accepted on Hiring → Offers first, then start onboarding.`;
+  const a = appById(s, o.applicationId);
+  if (!a || !candById(s, a.candidateId) || !jobById(s, a.jobId)) return `${o.code} has lost its candidate or job record, so there is nothing to carry over.`;
+  return null;
+}

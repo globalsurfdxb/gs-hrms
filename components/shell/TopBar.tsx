@@ -8,7 +8,7 @@ import { APP_MODULES, HOME_TABS, PERS, RAIL_LABEL, SCOPE_LABEL, inModule, resolv
 import { laCall, useLaChrome } from '@/lib/laStore';
 import { signOut, useAuth } from '@/lib/auth';
 import { useLocationName } from '@/components/shell/useLocationName';
-import { useNoticeCount } from '@/components/notifications/NotificationsView';
+import { NotificationBell } from '@/components/notifications/NotificationBell';
 import { BellIcon, GearIcon, MenuIcon, PlusIcon } from '@/components/icons';
 
 const LogoutIcon = () => (
@@ -36,7 +36,6 @@ export function TopBar({ onMenu }: { onMenu: () => void }) {
   const loc = resolveLocation(pathname);
   const scopes = PERS[role].scopes;
   const la = useLaChrome();
-  const bell = useNoticeCount();
   // The module's own menus arrive once its runtime has started: hold their place instead of flashing the generic title.
   const laBooting = !la && (pathname === '/modules/leave-attendance' || pathname.startsWith('/modules/leave-attendance/'));
 
@@ -79,10 +78,14 @@ export function TopBar({ onMenu }: { onMenu: () => void }) {
           <button className="ztb add" title="Quick add" onClick={la ? () => laCall('openQuickAdd') : undefined}>
             <PlusIcon />
           </button>
-          <button className="ztb" title="Alerts" onClick={la ? () => laCall('openNotifications') : undefined}>
-            {(la ? (la.alerts ?? 0) > 0 : bell > 0) && <span className="dot">{la ? la.alerts : bell}</span>}
-            <BellIcon />
-          </button>
+          {la ? (
+            <button className="ztb" title="Alerts" onClick={() => laCall('openNotifications')}>
+              {(la.alerts ?? 0) > 0 && <span className="dot">{la.alerts}</span>}
+              <BellIcon />
+            </button>
+          ) : (
+            <NotificationBell />
+          )}
           {la ? (
             la.settings && (
               <button className="ztb" title="Settings" onClick={() => laCall('openSettings')}>

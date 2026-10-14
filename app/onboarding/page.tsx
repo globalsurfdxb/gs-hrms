@@ -21,7 +21,7 @@ import { chainSteps } from '@/lib/workflow';
 import { completeHire, getHiring, useHiring } from '@/lib/hiringStore';
 import { sendRuleMail } from '@/lib/hiringMail';
 import { hiringLevel } from '@/lib/hiringAccess';
-import { OnboardingPrefill, onboardingPrefill } from '@/lib/hiringHandoff';
+import { OnboardingPrefill, onboardingPrefill, prefillProblem } from '@/lib/hiringHandoff';
 import { CheckIcon, ClockIcon, JoinIcon, SearchIcon, ShieldIcon, UploadIcon, XIcon } from '@/components/icons';
 
 const STEPS = ['Personal', 'Employment', 'Passport / Visa / EID', 'Emergency', 'Experience & Education', 'Family', 'Bank & PF', 'Salary', 'Documents', 'Assets & Approval'];
@@ -253,13 +253,19 @@ interface Problem {
 export default function OnboardingPage() {
   return (
     <Suspense fallback={null}>
-      <OnboardingHome />
+      <KeyedHome />
     </Suspense>
   );
 }
 
-function OnboardingHome() {
+/** The page is rebuilt whenever the offer in the link changes, so "Start onboarding" works from this same page too
+    (a link to /onboarding?hire=… from the Accepted offers card does not remount the route on its own). */
+function KeyedHome() {
   const hireId = useSearchParams().get('hire');
+  return <OnboardingHome key={hireId ?? 'list'} hireId={hireId} />;
+}
+
+function OnboardingHome({ hireId }: { hireId: string | null }) {
   const hiring = useHiring();
   const router = useRouter();
   // Start onboarding from Hiring Management opens the wizard already filled in from the accepted offer. The prefill is
@@ -268,6 +274,7 @@ function OnboardingHome() {
   const [wizardPrefill, setWizardPrefill] = useState<OnboardingPrefill | null>(prefill0);
   const [showWizard, setShowWizard] = useState(!!prefill0);
   const [unavailable, setUnavailable] = useState(!!hireId && !prefill0);
+  const [problem] = useState(() => (hireId && !prefill0 ? prefillProblem(getHiring(), hireId) : null));
   const closeWizard = () => {
     setShowWizard(false);
     setWizardPrefill(null);
@@ -324,7 +331,7 @@ function OnboardingHome() {
       {unavailable && (
         <div className="note-box" style={{ marginBottom: 14 }}>
           <ShieldIcon />
-          <div style={{ flex: 1 }}>That accepted offer is not available for onboarding. It may already have been used, or it is not accepted yet. Open Hiring Management → Offers to check.</div>
+          <div style={{ flex: 1 }}>{problem ?? 'That accepted offer is not available for onboarding. Open Hiring Management → Offers to check it.'}</div>
           <button type="button" className="icon-act" aria-label="Dismiss" onClick={() => setUnavailable(false)}>
             <XIcon />
           </button>

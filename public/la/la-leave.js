@@ -413,59 +413,170 @@
 
   /* ---------- team leave calendar ---------- */
   const SHORT = { 'Annual Leave': 'AL', 'Sick Leave': 'SL', 'Restricted Festive': 'RF', 'Unpaid Leave': 'UL', Compassionate: 'CL', 'Compassionate Leave': 'CL', 'Casual Leave': 'CL', 'Earned Leave': 'EL', 'Paternity Leave': 'PL', 'Marriage Leave': 'ML', 'Bereavement Leave': 'BL', 'Loss of Pay': 'LP' };
+  const KCOL = { AL: '#2f6fd6', EL: '#2f6fd6', SL: '#d5493f', CL: '#7a4bd0', UL: '#6b7690', LP: '#6b7690', RF: '#c6851b', PL: '#0e8fa8', ML: '#c2477f', BL: '#4b5876' };
+  const kcol = (s) => KCOL[s] || '#1f9d63';
+  const pad2 = (n) => String(n).padStart(2, '0');
+  const kindOf = (name) => String(name).split(' · ')[0];
   /* every pending or approved booking of everyone: leave requests and annual-leave plan segments */
   const teamRecs = () => {
-    const out = db().leaves.filter((l) => ACTIVE(l.st)).map((l) => ({ id: l.id, emp: l.emp, name: L.typeName(l.type, L.locOf(l.emp), l.app), short: SHORT[l.type] || L.typeName(l.type, L.locOf(l.emp), l.app).slice(0, 2).toUpperCase(), st: l.st, from: l.from, to: l.to }));
+    const out = db().leaves.filter((l) => ACTIVE(l.st)).map((l) => { const nm = L.typeName(l.type, L.locOf(l.emp), l.app); return { id: l.id, emp: l.emp, name: nm, kind: kindOf(nm), short: SHORT[l.type] || nm.slice(0, 2).toUpperCase(), st: l.st, from: l.from, to: l.to }; });
     db().plans.filter((p) => ACTIVE(p.st) && !db().leaves.some((l) => l.emp === p.emp && l.app === 'Annual' && ACTIVE(l.st) && l.from === p.from)).forEach((p) => {
       const loc = L.locOf(p.emp);
-      out.push({ id: p.id, emp: p.emp, name: `${L.typeName('Annual Leave', loc)} · plan segment ${p.seg}`, short: L.tplOf(loc) === 'india' ? 'EL' : 'AL', st: p.st, from: p.from, to: p.to });
+      const nm = L.typeName('Annual Leave', loc);
+      out.push({ id: p.id, emp: p.emp, name: `${nm} · plan segment ${p.seg}`, kind: nm, short: L.tplOf(loc) === 'india' ? 'EL' : 'AL', st: p.st, from: p.from, to: p.to });
     });
     return out;
   };
-  const calOk = (l) => { const st = L.ui('tlSt', 'All'); return L.inLoc(l.emp) && L.deptOk(l.emp, 'tlDept') && (st === 'All' || l.st === st) && L.matches(L.ui('tlQ', ''), l.emp, l.name, l.id); };
+  /* who and what the filters let through (the status filter is separate so its counts stay honest) */
+  const scopeOk = (l) => { const ty = L.ui('tlType', 'All types'); return L.inLoc(l.emp) && L.deptOk(l.emp, 'tlDept') && (ty === 'All types' || l.kind === ty) && L.matches(L.ui('tlQ', ''), l.emp, l.name, l.id); };
+  const calOk = (l) => { const st = L.ui('tlSt', 'All'); return scopeOk(l) && (st === 'All' || l.st === st); };
+  const monthEnds = (y, m) => [`${y}-${pad2(m + 1)}-01`, `${y}-${pad2(m + 1)}-${pad2(new Date(y, m + 1, 0).getDate())}`];
+  const overlaps = (l, a, b) => l.from <= b && l.to >= a;
   function leaveMap(y, m) {
     const map = {};
-    const pad2 = (n) => String(n).padStart(2, '0');
     teamRecs().filter(calOk).forEach((l) => {
       const loc = L.locOf(l.emp);
       range(l.from, l.to).forEach((d) => { if (d.startsWith(`${y}-${pad2(m + 1)}`) && !L.isOff(d, loc)) (map[d] ||= []).push(l); });
     });
     return map;
   }
+  const teamSize = () => L.empIn().filter((e) => L.deptOk(e.n, 'tlDept')).length;
+
   function lvTeam() {
     const { y, m } = calState;
+    const view = L.ui('tlView', 'month');
     const map = leaveMap(y, m);
     const locs = L.locIds();
-    const conflicts = Object.entries(map).filter(([, ls]) => new Set(ls.map((l) => l.emp)).size >= 2).map(([d]) => d);
-    const first = new Date(y, m, 1).getDay();
+    const size = Math.max(1, teamSize());
+    const [mFirst, mLast] = monthEnds(y, m);
     const days = new Date(y, m + 1, 0).getDate();
+    const away = (ls) => new Set(ls.map((l) => l.emp)).size;
+    const conflicts = Object.entries(map).filter(([, ls]) => away(ls) >= 2).map(([d, ls]) => [d, away(ls)]);
+
+    /* summary for the month in view */
+    const people = new Set();
+    let leaveDays = 0;
+    let peak = { n: 0, d: '' };
+    const pendingIds = new Set();
+    Object.entries(map).forEach(([d, ls]) => {
+      ls.forEach((l) => { people.add(l.emp); leaveDays++; if (l.st === 'Pending') pendingIds.add(l.id); });
+      if (away(ls) > peak.n) peak = { n: away(ls), d };
+    });
+    const everyone = teamRecs().filter(scopeOk);
+    const awayToday = new Set(everyone.filter((l) => l.st === 'Approved' && l.from <= TODAY && l.to >= TODAY && !L.isOff(TODAY, L.locOf(l.emp))).map((l) => l.emp));
+    const summary = L.statStrip([
+      { lbl: 'Away today', val: awayToday.size, icon: 'users', tone: awayToday.size ? 'b' : 'g', hint: awayToday.size ? `${Math.round((awayToday.size / size) * 100)}% of ${size} in this view` : 'Everyone is available' },
+      { lbl: `On leave in ${MONTHS[m]}`, val: people.size, icon: 'calendar', tone: 'b', hint: `${leaveDays} leave day${leaveDays === 1 ? '' : 's'} booked` },
+      { lbl: 'Awaiting approval', val: pendingIds.size, icon: 'clock', tone: pendingIds.size ? 'a' : 'g', hint: pendingIds.size ? 'Pending requests overlap this month' : 'Nothing pending this month' },
+      { lbl: 'Busiest day', val: peak.n ? `${peak.n} away` : '—', icon: 'alert', tone: peak.n >= 2 ? 'r' : 'g', hint: peak.n ? `${fmtS(peak.d)} · ${Math.round((peak.n / size) * 100)}% of the team` : 'No leave this month' },
+    ]);
+
+    /* toolbar: month, department, leave type, search, status chips, view */
+    const monthRecs = teamRecs().filter((l) => scopeOk(l) && overlaps(l, mFirst, mLast));
+    const stN = (s) => monthRecs.filter((l) => s === 'All' || l.st === s).length;
+    const types = ['All types'].concat([...new Set(teamRecs().map((l) => l.kind))].sort());
+    const curType = L.ui('tlType', 'All types');
+    const deptNow = L.ui('tlDept', 'All departments');
+    const toolbar = `<div class="lt-bar">
+      <div class="lt-bar-r">
+        <div class="daterange"><button class="dr-nav" onclick="calMove(-1)" aria-label="Previous month">${ic('chevL')}</button><span class="dr-lbl">${MONTHS[m]} ${y}</span><button class="dr-nav" onclick="calMove(1)" aria-label="Next month">${ic('chevR')}</button></div>
+        <label class="lt-month" title="Jump to a month">${ic('calendar')}<input type="month" value="${y}-${pad2(m + 1)}" onchange="LA.calJump(this.value)" aria-label="Month"></label>
+        <button class="btn sm ghost" onclick="LA.calToday()">Today</button>
+        <label class="lt-dept">${ic('users')}<select onchange="LA.setUi('tlDept',this.value)" aria-label="Department">${['All departments'].concat(L.depts()).map((d) => `<option ${d === deptNow ? 'selected' : ''}>${esc(d)}</option>`).join('')}</select></label>
+        <label class="lt-dept">${ic('filter')}<select onchange="LA.setUi('tlType',this.value)" aria-label="Leave type">${types.map((t) => `<option ${t === curType ? 'selected' : ''}>${esc(t)}</option>`).join('')}</select></label>
+        <div class="hb" style="margin-left:auto">${L.searchBox('tlQ', 'Search person or leave type')}<button class="btn sm ghost" onclick="LA.resetUi(['tlDept','tlSt','tlType','tlQ','tlAll'])">${ic('refresh')} Reset</button></div>
+      </div>
+      <div class="lt-bar-c">${L.chips('tlSt', [{ v: 'All', l: 'All', n: stN('All') }, { v: 'Approved', l: 'Approved', n: stN('Approved') }, { v: 'Pending', l: 'Pending', n: stN('Pending') }], 'All')}
+        <div class="vtoggle tl-view" role="group" aria-label="View"><button class="${view === 'month' ? 'on' : ''}" onclick="LA.setUi('tlView','month')" title="Month calendar" style="width:auto;padding:0 12px;font-size:12.5px">${ic('calendar')}&nbsp;Month</button><button class="${view === 'timeline' ? 'on' : ''}" onclick="LA.setUi('tlView','timeline')" title="One row per person" style="width:auto;padding:0 12px;font-size:12.5px">${ic('users')}&nbsp;Timeline</button></div>
+      </div>
+    </div>`;
+
+    const alertBox = conflicts.length
+      ? note('warn', `Overlap: <b>${conflicts.slice(0, 8).map(([d, n]) => `<a href="#" class="tl-conf" onclick="LA.leaveDay('${d}');return false">${fmtS(d)} (${n})</a>`).join(', ')}${conflicts.length > 8 ? ` and ${conflicts.length - 8} more` : ''}</b> — 2 or more people on leave at once. Check coverage before approving.`)
+      : note('info', 'No overlapping leave this month in this view.');
+
+    /* ---- month grid ---- */
+    const first = new Date(y, m, 1).getDay();
     const prev = new Date(y, m, 0).getDate();
     let cells = '';
     for (let i = 0; i < first; i++) cells += `<div class="cal-cell out"><div class="dnum">${prev - first + i + 1}</div></div>`;
     for (let d = 1; d <= days; d++) {
-      const ds = `${y}-${String(m + 1).padStart(2, '0')}-${String(d).padStart(2, '0')}`;
+      const ds = `${y}-${pad2(m + 1)}-${pad2(d)}`;
       const ls = map[ds] || [];
+      const n = away(ls);
       const hols = db().hol.filter((h) => ds >= h.d && ds <= (h.to || h.d) && L.hasLoc(h.locs));
       const offIn = locs.filter((id) => L.isOff(ds, id));
       const wo = offIn.length && offIn.length === locs.length ? 'wo' : offIn.length ? 'lt-wopart' : '';
-      cells += `<div class="cal-cell ${wo} ${ds === TODAY ? 'today' : ''}" ${offIn.length ? `title="Weekly off: ${esc(offIn.map((i) => L.locCity(i)).join(', '))}"` : ''} style="cursor:pointer" onclick="LA.leaveDay('${ds}')"><div class="dnum">${d}</div>${hols.map((h) => `<span class="cal-tag s-p">${esc(h.n)}${L.loc() === 'all' && h.locs && !h.locs.includes('all') && h.locs.length === 1 ? ' · ' + esc(L.locCity(h.locs[0])) : ''}</span>`).join('')}${ls.map((l) => `<span class="cal-tag ${l.st === 'Pending' ? 's-a lt-pend' : 's-b'}" title="${esc(l.emp)} · ${esc(l.name)} · ${l.st}">${esc(l.emp.split(' ')[0])} — ${esc(l.short)}${l.st === 'Pending' ? ' · Pending' : ''}</span>`).join('')}</div>`;
+      const heat = n >= 2 && n / size >= 0.25 ? 'tl-hot' : n >= 2 ? 'tl-warm' : '';
+      const shown = ls.slice(0, 3);
+      cells += `<div class="cal-cell ${wo} ${heat} ${ds === TODAY ? 'today' : ''}" ${offIn.length ? `title="Weekly off: ${esc(offIn.map((i) => L.locCity(i)).join(', '))}"` : ''} style="cursor:pointer" onclick="LA.leaveDay('${ds}')"><div class="dnum">${d}${n ? `<span class="tl-away" title="${n} of ${size} away">${n} away</span>` : ''}</div>${hols.map((h) => `<span class="cal-tag s-p">${esc(h.n)}${L.loc() === 'all' && h.locs && !h.locs.includes('all') && h.locs.length === 1 ? ' · ' + esc(L.locCity(h.locs[0])) : ''}</span>`).join('')}${shown.map((l) => `<span class="cal-tag tl-tag ${l.st === 'Pending' ? 'lt-pend' : ''}" style="--k:${kcol(l.short)}" title="${esc(l.emp)} · ${esc(l.name)} · ${l.st}">${esc(l.emp.split(' ')[0])} · ${esc(l.short)}${l.st === 'Pending' ? ' ·&nbsp;P' : ''}</span>`).join('')}${ls.length > 3 ? `<span class="tl-more">+${ls.length - 3} more</span>` : ''}</div>`;
     }
     const total = first + days;
     for (let i = 1; i <= (7 - (total % 7)) % 7; i++) cells += `<div class="cal-cell out"><div class="dnum">${i}</div></div>`;
-    return pageHead('Team Leave Calendar', 'Approved and pending leave and annual-leave plan segments, with conflict detection', `<button class="btn" onclick="LA.teamLeaveExport()">${ic('download')} Export month</button>`, 'Leave')
-      + `<div class="filters">${L.fDept('tlDept')}${L.fSel('tlSt', 'Status', ['All', 'Approved', 'Pending'], 'All')}${L.searchBox('tlQ', 'Employee or leave type')}${L.fReset(['tlDept', 'tlSt', 'tlQ'])}</div>`
-      + (conflicts.length ? note('warn', `Overlap on <b>${conflicts.map((d) => fmtS(d)).join(', ')}</b>: 2 or more members on leave simultaneously. Verify coverage before approving.`) : note('info', 'No overlapping leave this month in this view.'))
-      + '<div style="height:16px"></div>'
-      + `<div class="cal"><div class="cal-h"><b>${MONTHS[m]} ${y}</b><div class="cal-nav"><button onclick="calMove(-1)">${ic('chevL')}</button><button onclick="calMove(1)">${ic('chevR')}</button></div></div><div class="cal-grid">${DOW.map((d) => `<div class="cal-dow">${d}</div>`).join('')}${cells}</div>`
-      + calLegend([{ c: 'var(--b)', l: 'Approved leave' }, { c: 'repeating-linear-gradient(45deg,var(--a) 0 3px,#fff 3px 6px)', l: 'Pending (hatched)' }, { c: 'var(--p)', l: 'Holiday' }].concat(locs.map((id) => ({ c: 'var(--gray)', l: esc(L.offText(id)) }))));
+    const kinds = [...new Set(Object.values(map).flat().map((l) => l.short))];
+    const legendItems = kinds.map((k) => ({ c: kcol(k), l: esc(k === 'AL' || k === 'EL' ? k + ' · annual / earned' : k === 'SL' ? 'SL · sick' : k === 'CL' ? 'CL · casual / compassionate' : k === 'UL' ? 'UL · unpaid' : k) }))
+      .concat([{ c: 'repeating-linear-gradient(45deg,var(--a) 0 3px,#fff 3px 6px)', l: 'Pending (hatched)' }, { c: 'var(--p)', l: 'Holiday' }, { c: '#fbe7e4', l: 'Many away' }])
+      .concat(locs.map((id) => ({ c: 'var(--gray)', l: esc(L.offText(id)) })));
+    const grid = `<div class="cal"><div class="cal-h"><b>${MONTHS[m]} ${y}</b><span class="muted" style="font-size:12px">${monthRecs.length} booking${monthRecs.length === 1 ? '' : 's'} in view</span><div class="cal-nav"><button onclick="calMove(-1)" aria-label="Previous month">${ic('chevL')}</button><button onclick="calMove(1)" aria-label="Next month">${ic('chevR')}</button></div></div><div class="cal-grid">${DOW.map((d) => `<div class="cal-dow">${d}</div>`).join('')}${cells}</div>${calLegend(legendItems)}`;
+
+    /* ---- timeline: one row per person, one column per day ---- */
+    const all = L.ui('tlAll', false);
+    const onLeave = [...new Set(monthRecs.filter(calOk).map((l) => l.emp))];
+    const roster = all ? L.empIn().filter((e) => L.deptOk(e.n, 'tlDept') && L.matches(L.ui('tlQ', ''), e.n, e.dept)).map((e) => e.n) : onLeave;
+    const names = [...new Set(roster)].sort();
+    const recsBy = {};
+    monthRecs.filter(calOk).forEach((l) => (recsBy[l.emp] ||= []).push(l));
+    const dayHead = Array.from({ length: days }, (_, i) => { const ds = `${y}-${pad2(m + 1)}-${pad2(i + 1)}`; const off = locs.every((id) => L.isOff(ds, id)); return `<th class="tl-d ${off ? 'off' : ''} ${ds === TODAY ? 'today' : ''}" onclick="LA.leaveDay('${ds}')" title="${fmt(ds)}"><span>${i + 1}</span><small>${DOWL[dow(ds)].slice(0, 1)}</small></th>`; }).join('');
+    const rows = names.map((nm) => {
+      const loc = L.locOf(nm);
+      const mine = recsBy[nm] || [];
+      let n = 0;
+      const labelled = new Set();
+      const tds = Array.from({ length: days }, (_, i) => {
+        const ds = `${y}-${pad2(m + 1)}-${pad2(i + 1)}`;
+        const off = L.isOff(ds, loc);
+        const hol = !off && L.holFor(ds, loc);
+        const lv = mine.find((l) => ds >= l.from && ds <= l.to);
+        if (lv && !off) {
+          n++;
+          const start = !labelled.has(lv.id);
+          labelled.add(lv.id);
+          return `<td class="tl-c tl-l ${lv.st === 'Pending' ? 'pend' : ''} ${ds === TODAY ? 'today' : ''}" style="--k:${kcol(lv.short)}" title="${esc(nm)} · ${esc(lv.name)} · ${lv.st} · ${fmt(lv.from)} → ${fmt(lv.to)}" onclick="LA.leaveDetail('${lv.id}')">${start ? esc(lv.short) : ''}</td>`;
+        }
+        return `<td class="tl-c ${off ? 'off' : hol ? 'hol' : ''} ${ds === TODAY ? 'today' : ''}" ${hol ? `title="${esc(hol.n || 'Holiday')}"` : ''}></td>`;
+      }).join('');
+      const e = L.empIn().find((x) => x.n === nm);
+      return `<tr><th class="tl-n" scope="row">${personCell(esc(nm), esc(e ? e.dept : ''))}</th>${tds}<td class="tl-t num">${n || '—'}</td></tr>`;
+    }).join('');
+    const timeline = card(`Team timeline · ${MONTHS[m]} ${y}`,
+      `<div class="tl-opts"><label class="tl-chk"><input type="checkbox" ${all ? 'checked' : ''} onchange="LA.setUi('tlAll',this.checked)"> Show everyone, not only people on leave</label><span class="muted" style="font-size:12px">${names.length} ${names.length === 1 ? 'person' : 'people'} shown</span></div>`
+      + (names.length ? `<div class="tl-scroll"><table class="tl-tbl"><thead><tr><th class="tl-n">Person</th>${dayHead}<th class="tl-t num">Days</th></tr></thead><tbody>${rows}</tbody></table></div>` : L.empty('Nobody is on leave in this view'))
+      + `<div class="legend">${legendItems.slice(0, kinds.length + 1).map((i) => `<span><i style="background:${i.c}"></i>${i.l}</span>`).join('')}<span><i style="background:#eef0f6"></i>Weekly off</span><span><i style="background:var(--p-bg,#efe7fb)"></i>Holiday</span></div>`,
+      { sub: `${days} days`, pad: false });
+
+    /* ---- side panel: who is away now and soon ---- */
+    const horizon = addD(TODAY, 14);
+    const soon = teamRecs().filter((l) => calOk(l) && l.to >= TODAY && l.from <= horizon).sort((a, b) => (a.from < b.from ? -1 : a.from > b.from ? 1 : 0)).slice(0, 8);
+    const side = card('Away now and next 14 days',
+      soon.length ? soon.map((l) => `<div class="lrow tl-soon" style="cursor:pointer" onclick="LA.leaveDetail('${l.id}')"><i class="tl-dot" style="background:${kcol(l.short)}"></i><div style="min-width:0;flex:1"><div class="li-t">${esc(l.emp)}</div><div class="li-s">${esc(l.kind)} · ${l.from <= TODAY ? 'until ' + fmtS(l.to) : fmtS(l.from) + (l.to !== l.from ? ' → ' + fmtS(l.to) : '')}</div></div><div class="li-r">${L.statusPill(l.st)}</div></div>`).join('') : L.empty('Nobody is away in the next two weeks'),
+      { sub: `${soon.length} booking${soon.length === 1 ? '' : 's'}` });
+
+    return pageHead('Team Leave Calendar', 'Who is away, when, and where leave overlaps, with approved and pending leave and annual-leave plan segments', `<button class="btn" onclick="LA.teamLeaveExport()">${ic('download')} Export month</button>`, 'Leave')
+      + summary + toolbar + alertBox
+      + `<div class="tl-layout"><div class="tl-main">${view === 'month' ? grid : timeline}</div><div class="tl-side">${side}</div></div>`;
   }
+  L.calJump = (v) => { const [yy, mm] = String(v || '').split('-').map(Number); if (!yy || !mm) return; calState.y = yy; calState.m = mm - 1; route(); };
+  L.calToday = () => { calState.y = Number(TODAY.slice(0, 4)); calState.m = Number(TODAY.slice(5, 7)) - 1; route(); };
   L.leaveDay = (ds) => {
     const ls = teamRecs().filter((l) => ds >= l.from && ds <= l.to && calOk(l));
     const offIn = L.locIds().filter((id) => L.isOff(ds, id));
+    const n = new Set(ls.filter((l) => !L.isOff(ds, L.locOf(l.emp))).map((l) => l.emp)).size;
+    const size = Math.max(1, teamSize());
     const offNote = offIn.length ? `<div class="hint" style="margin-bottom:10px">${offIn.map((i) => esc(L.offText(i))).join(' · ')} — weekly off on this day</div>` : '';
-    openModal(modalShell(fmt(ds) + ' · ' + DOWL[dow(ds)], offNote + (ls.length ? ls.map((l) => `<div class="lrow" style="cursor:pointer" onclick="LA.leaveDetail('${l.id}')">${personCell(l.emp, l.id)}<div class="li-r">${L.statusPill(l.st)}</div></div><div class="li-s" style="margin:-4px 0 8px 44px">${esc(l.name)} · ${fmt(l.from)} → ${fmt(l.to)}</div>`).join('') : L.empty('Nobody is on leave')), `<button class="btn" onclick="closeModal()">Close</button>`, 'sm'));
+    const cover = `<div class="tl-cover"><b>${n}</b> of ${size} away<span class="tl-cover-bar"><i style="width:${Math.min(100, (n / size) * 100)}%"></i></span><em>${Math.round((n / size) * 100)}%</em></div>`;
+    openModal(modalShell(fmt(ds) + ' · ' + DOWL[dow(ds)], offNote + cover + (ls.length ? ls.map((l) => `<div class="lrow" style="cursor:pointer" onclick="LA.leaveDetail('${l.id}')">${personCell(l.emp, l.id)}<div class="li-r">${L.statusPill(l.st)}</div></div><div class="li-s" style="margin:-4px 0 8px 44px"><i class="tl-dot" style="background:${kcol(l.short)}"></i> ${esc(l.name)} · ${fmt(l.from)} → ${fmt(l.to)}</div>`).join('') : L.empty('Nobody is on leave')), `<button class="btn" onclick="closeModal()">Close</button>`, 'sm'));
   };
-  L.teamLeaveExport = () => { const { y, m } = calState; const map = leaveMap(y, m); L.csv(`team_leave_${y}-${String(m + 1).padStart(2, '0')}.csv`, ['Date', 'Employee', 'Type', 'Status', 'Ref'], Object.entries(map).sort().flatMap(([d, ls]) => ls.map((l) => [d, l.emp, l.name, l.st, l.id]))); };
+  L.teamLeaveExport = () => { const { y, m } = calState; const map = leaveMap(y, m); L.csv(`team_leave_${y}-${pad2(m + 1)}.csv`, ['Date', 'Employee', 'Type', 'Status', 'Ref'], Object.entries(map).sort().flatMap(([d, ls]) => ls.map((l) => [d, l.emp, l.name, l.st, l.id]))); };
 
   /* ---------- holidays ---------- */
   function lvHolidays() {

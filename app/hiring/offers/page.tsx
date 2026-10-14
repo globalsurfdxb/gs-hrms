@@ -8,10 +8,11 @@ import { Drawer } from '@/components/ui/Drawer';
 import { CheckIcon, ClockIcon, FileTextIcon, JoinIcon, PlusIcon, WarnIcon } from '@/components/icons';
 import { Banner, HiringHeader, OfferBadge, fmtDate, money, payUnit, useActor } from '@/components/hiring/HiringBits';
 import { OfferDrawer } from '@/components/hiring/HiringForms';
+import { OfferLetterDrawer } from '@/components/hiring/OfferLetterDrawer';
 import { useStageMail } from '@/components/hiring/Mail';
 import { useScoped } from '@/components/hiring/useScoped';
 import { daysBetween, todayISO } from '@/lib/dates';
-import { Application } from '@/lib/hiringTypes';
+import { Application, Offer } from '@/lib/hiringTypes';
 import { appById, candById, jobById, offerForApp, setOfferStatus } from '@/lib/hiringStore';
 
 export default function OffersPage() {
@@ -20,6 +21,7 @@ export default function OffersPage() {
   const [notice, setNotice] = useState<{ text: string; tone: 'info' | 'warn' } | null>(null);
   const [picker, setPicker] = useState(false);
   const [offerFor, setOfferFor] = useState<Application | null>(null);
+  const [letterId, setLetterId] = useState<string | null>(null);
   const today = todayISO();
   const mailer = useStageMail((text, tone = 'info') => setNotice({ text, tone }));
 
@@ -29,13 +31,15 @@ export default function OffersPage() {
   const out = offers.filter((o) => o.status === 'Sent');
   const canManage = level === 'full';
 
-  const set = (id: string, st: 'Sent' | 'Accepted' | 'Declined', text: string) => {
+  const set = (id: string, st: 'Accepted' | 'Declined', text: string) => {
     const r = setOfferStatus(id, st, actor);
-    if (!r.ok) return setNotice({ text: r.error, tone: 'warn' });
-    const offer = s.offers.find((o) => o.id === id);
-    // Marking an offer as sent offers the offer-letter email.
-    if (st === 'Sent' && offer) mailer.after(offer.applicationId, 'Offer sent', { offer: { ...offer, status: 'Sent' } }, text);
-    else setNotice({ text, tone: 'info' });
+    setNotice({ text: r.ok ? text : r.error, tone: r.ok ? 'info' : 'warn' });
+  };
+
+  // The letter is saved and the offer is Sent; offer the email that carries the candidate's link.
+  const emailLink = (offer: Offer) => {
+    const name = candById(s, appById(s, offer.applicationId)?.candidateId ?? '')?.name ?? 'the candidate';
+    mailer.after(offer.applicationId, 'Offer sent', { offer }, `${offer.code} is out to ${name}. The link is ready to copy from the letter panel.`);
   };
 
   return (
@@ -117,23 +121,40 @@ export default function OffersPage() {
                       <td>
                         <OfferBadge status={o.status} />
                         {o.employeeId && <div className="tx-s faint">Onboarded as {o.employeeId}</div>}
+                        {o.letterHtml && o.status !== 'Draft' && (
+                          <div className="hm-chips">
+                            <span className={`hm-chip ${o.viewedAt ? 'on' : ''}`}>{o.viewedAt ? 'Opened' : 'Not opened'}</span>
+                            <span className={`hm-chip ${o.downloadedAt ? 'on' : ''}`}>{o.downloadedAt ? 'Downloaded' : 'Not downloaded'}</span>
+                          </div>
+                        )}
+                        {o.status === 'Accepted' && o.signedName && <div className="tx-s faint">Signed by {o.signedName}</div>}
+                        {o.status === 'Accepted' && o.respondedVia === 'hr' && <div className="tx-s faint">Recorded by HR</div>}
+                        {o.status === 'Declined' && o.declineReason && <div className="tx-s faint">“{o.declineReason}”</div>}
                       </td>
                       <td style={{ textAlign: 'right' }}>
                         <div className="hm-rowact">
                           {canManage && o.status === 'Draft' && (
-                            <Button size="sm" variant="primary" onClick={() => set(o.id, 'Sent', `${o.code} marked as sent to ${c?.name}.`)}>
-                              Mark sent
+                            <Button size="sm" variant="primary" onClick={() => setLetterId(o.id)}>
+                              {o.letterHtml ? 'Review and send' : 'Prepare letter'}
                             </Button>
                           )}
                           {canManage && o.status === 'Sent' && (
                             <>
-                              <Button size="sm" variant="success" onClick={() => set(o.id, 'Accepted', `${c?.name} accepted ${o.code}. You can start onboarding now.`)}>
-                                Accepted
+                              <Button size="sm" variant="primary" onClick={() => setLetterId(o.id)}>
+                                {o.letterHtml ? 'Letter and link' : 'Prepare letter'}
                               </Button>
-                              <Button size="sm" variant="ghost" onClick={() => set(o.id, 'Declined', `${c?.name} declined ${o.code}. The candidate was withdrawn from the pipeline.`)}>
-                                Declined
+                              <Button size="sm" variant="ghost" title="Use when the candidate answered by phone or email" onClick={() => set(o.id, 'Accepted', `${c?.name} accepted ${o.code}. You can start onboarding now.`)}>
+                                Record accepted
+                              </Button>
+                              <Button size="sm" variant="ghost" title="Use when the candidate answered by phone or email" onClick={() => set(o.id, 'Declined', `${c?.name} declined ${o.code}. The candidate was withdrawn from the pipeline.`)}>
+                                Record declined
                               </Button>
                             </>
+                          )}
+                          {canManage && (o.status === 'Accepted' || o.status === 'Declined') && o.letterHtml && (
+                            <Button size="sm" variant="ghost" onClick={() => setLetterId(o.id)}>
+                              Letter
+                            </Button>
                           )}
                           {canManage && o.status === 'Accepted' && !o.employeeId && (
                             <Link href={`/onboarding?hire=${o.id}`} className="btn sm primary">
@@ -155,11 +176,12 @@ export default function OffersPage() {
           </div>
         )}
         <div className="tfoot">
-          <span>Approval of offers, the offer-letter PDF and email delivery arrive in the next phases; today an offer moves Draft → Sent → Accepted or Declined.</span>
+          <span>Prepare the letter from the template, send the candidate their link, and the offer updates when they read, download and answer it. Offer approval arrives in the next phase.</span>
         </div>
       </Card>
 
       {mailer.dialog}
+      <OfferLetterDrawer offerId={letterId} onClose={() => setLetterId(null)} onSent={emailLink} onNotice={(text, tone = 'info') => setNotice({ text, tone })} />
       <Drawer open={picker} onClose={() => setPicker(false)} title="New offer" description="Choose a candidate who is at the Offer stage.">
         {!ready.length ? (
           <div className="note-box">
@@ -193,7 +215,7 @@ export default function OffersPage() {
         onClose={() => setOfferFor(null)}
         onDone={() => {
           setOfferFor(null);
-          setNotice({ text: 'Offer saved as a draft. Mark it sent when it goes to the candidate.', tone: 'info' });
+          setNotice({ text: 'Offer saved as a draft. Prepare its letter, then send the candidate their link.', tone: 'info' });
         }}
       />
     </div>

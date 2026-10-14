@@ -13,6 +13,7 @@ import { SubTabs } from './SubTabs';
 import { useApp, useCurrentEmployee } from '@/context/AppContext';
 import { routeAllowed } from '@/lib/guard';
 import { prewarmLa } from '@/lib/laRuntime';
+import { NoticeToaster } from '@/components/notifications/NoticeToaster';
 
 export function AppShell({ children }: { children: React.ReactNode }) {
   const [open, setOpen] = useState(false);
@@ -24,7 +25,7 @@ export function AppShell({ children }: { children: React.ReactNode }) {
   const auth = useAuth();
   const isLogin = pathname === '/login';
   // The careers pages are public: anyone with a job link can read the role and apply, without signing in.
-  const isPublic = pathname === '/careers' || pathname.startsWith('/careers/');
+  const isPublic = pathname === '/careers' || pathname.startsWith('/careers/') || pathname.startsWith('/offer/');
   const bare = isLogin || isPublic;
 
   useEffect(() => {
@@ -60,6 +61,7 @@ export function AppShell({ children }: { children: React.ReactNode }) {
 
   return (
     <div className="app">
+      <NoticeToaster />
       <Rail open={open} onClose={() => setOpen(false)} />
       <div className="zmain">
         <TopBar onMenu={() => setOpen(true)} />

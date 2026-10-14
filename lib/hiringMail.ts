@@ -25,6 +25,7 @@ export const MERGE_FIELDS: { key: string; label: string; sample: string }[] = [
   { key: 'interview.link', label: 'Interview link', sample: 'https://teams.microsoft.com/l/meetup-join/…' },
   { key: 'offer.joiningDate', label: 'Joining date', sample: '11 Nov 2026' },
   { key: 'offer.expiryDate', label: 'Offer expiry date', sample: '19 Oct 2026' },
+  { key: 'offer.link', label: 'Link to read and answer the offer', sample: 'https://…/offer/respond/…' },
   { key: 'recruiter.name', label: 'Recruiter name', sample: 'Aslima' },
   { key: 'company.name', label: 'Company name', sample: ENTITY_NAME },
   { key: 'portal.link', label: 'Careers page link', sample: 'https://…/careers/JOB-0001' },
@@ -133,8 +134,8 @@ export const DEFAULT_TEMPLATES: EmailTemplate[] = [
   T('tpl-assignment', 'Assignment / test', 'Screening', 'Next step for {{job.title}}: short assessment', 'Hi {{candidate.firstName}},\n\nAs the next step for the {{job.title}} role, please complete the short assessment attached. Send it back to us within 3 working days.' + SIGN),
   T('tpl-reject', 'Rejection (polite)', 'Rejection', 'Your application for {{job.title}}', 'Hi {{candidate.firstName}},\n\nThank you for the time you spent with us for the {{job.title}} role. After careful consideration we have decided not to move forward with your application at this time.\n\nWe will keep your details on file and will get in touch if a suitable role opens up. We wish you every success.' + SIGN),
   T('tpl-discuss', 'Offer discussion', 'Offer', 'Next steps for the {{job.title}} role', 'Hi {{candidate.firstName}},\n\nWe enjoyed meeting you and would like to move to the offer stage for the {{job.title}} role. We will share the details of the package shortly.' + SIGN),
-  T('tpl-offer', 'Offer letter', 'Offer', 'Your offer: {{job.title}} at {{company.name}}', 'Hi {{candidate.firstName}},\n\nWe are delighted to offer you the {{job.title}} role in {{job.department}}. Your offer letter is attached. The proposed joining date is {{offer.joiningDate}} and the offer is valid until {{offer.expiryDate}}.\n\nPlease let us know your decision before it expires.' + SIGN, ['Offer letter (PDF)']),
-  T('tpl-offer-rem', 'Offer reminder', 'Offer', 'Reminder: your offer for {{job.title}} expires on {{offer.expiryDate}}', 'Hi {{candidate.firstName}},\n\nJust a reminder that your offer for the {{job.title}} role is valid until {{offer.expiryDate}}. Please reply with your decision, or let us know if you have any questions.' + SIGN),
+  T('tpl-offer', 'Offer letter', 'Offer', 'Your offer: {{job.title}} at {{company.name}}', 'Hi {{candidate.firstName}},\n\nWe are delighted to offer you the {{job.title}} role in {{job.department}}. The proposed joining date is {{offer.joiningDate}} and the offer is valid until {{offer.expiryDate}}.\n\nPlease open the link below to read your offer letter and download a copy. Once you have downloaded it you can accept or decline the offer on the same page.\n\n{{offer.link}}\n\nPlease respond before the offer expires.' + SIGN),
+  T('tpl-offer-rem', 'Offer reminder', 'Offer', 'Reminder: your offer for {{job.title}} expires on {{offer.expiryDate}}', 'Hi {{candidate.firstName}},\n\nJust a reminder that your offer for the {{job.title}} role is valid until {{offer.expiryDate}}. Please read the letter and give us your decision here:\n\n{{offer.link}}\n\nLet us know if you have any questions.' + SIGN),
   T('tpl-welcome', 'Welcome / pre-joining documents', 'Onboarding', 'Welcome to {{company.name}}', 'Hi {{candidate.firstName}},\n\nWelcome to {{company.name}}! We are looking forward to you joining us on {{offer.joiningDate}}.\n\nTo get you set up, please send us the documents on the attached checklist before your first day.' + SIGN, ['Pre-joining documents checklist']),
 ];
 
@@ -179,7 +180,11 @@ function load() {
     if (!raw) return;
     const p = JSON.parse(raw) as Partial<MailState>;
     // Templates and rules added in a later release are filled in rather than lost.
-    const templates = p.templates ?? SERVER.templates;
+    // A stored copy of a built-in template that was never edited follows the new default (offer emails now carry the link).
+    const templates = (p.templates ?? SERVER.templates).map((t) => {
+      const d = DEFAULT_TEMPLATES.find((x) => x.id === t.id);
+      return d && t.system && !t.updatedAt && t.body !== d.body ? { ...d } : t;
+    });
     const rules = RULE_KEYS.map((k) => p.rules?.find((r) => r.key === k) ?? DEFAULT_RULES.find((r) => r.key === k)!);
     state = { templates, rules, messages: p.messages ?? [], settings: { ...DEFAULT_SETTINGS, ...p.settings, outlook: { ...DEFAULT_SETTINGS.outlook, ...p.settings?.outlook }, teams: { ...DEFAULT_SETTINGS.teams, ...p.settings?.teams } } };
   } catch {
@@ -318,6 +323,7 @@ export function mergeValues(s: HiringState, ctx: MailContext): Record<string, st
   if (offer) {
     v['offer.joiningDate'] = fmt(offer.joiningDate);
     v['offer.expiryDate'] = fmt(offer.expiryDate);
+    if (offer.token) v['offer.link'] = `${origin}/offer/respond/${offer.token}`;
   }
   return v;
 }

@@ -36,18 +36,18 @@ export const acceptingApplications = (j: Job) => j.status === 'Open' && j.closin
 
 const PUBLIC_ACTOR: Actor = { id: 'careers-page', name: 'Careers page', role: 'Employee' };
 
-export function CareersFrame({ children }: { children: React.ReactNode }) {
+export function CareersFrame({ children, foot, title = 'Careers' }: { children: React.ReactNode; foot?: React.ReactNode; title?: string }) {
   return (
     <div className="cr-page">
       <header className="cr-top">
         <Link href="/careers" className="cr-brand">
           <span>GS</span>
-          {ENTITY_NAME} <small>Careers</small>
+          {ENTITY_NAME} <small>{title}</small>
         </Link>
       </header>
       <main className="cr-main">{children}</main>
       <footer className="cr-foot">
-        {ENTITY_NAME} · We store your details only to consider you for this and similar roles, and you can ask us to remove them at any time.
+        {foot ?? `${ENTITY_NAME} · We store your details only to consider you for this and similar roles, and you can ask us to remove them at any time.`}
       </footer>
     </div>
   );

@@ -72,6 +72,7 @@ export const HOME_TABS: Record<Scope, TabDef[]> = {
     { key: 'leave', label: 'Leave', href: '/team/leave' },
     { key: 'visa', label: 'Visa', href: '/team/visa' },
     { key: 'separation', label: 'Separation', href: '/team/separation' },
+    { key: 'requests', label: 'Requests', href: '/team/requests' },
     { key: 'expiry', label: 'Expiry', href: '/team/expiry' },
     { key: 'performance', label: 'Performance', href: '/performance' },
     { key: 'notifications', label: 'Notifications', href: '/team/notifications' },

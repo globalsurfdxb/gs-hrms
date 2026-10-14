@@ -218,6 +218,21 @@ export interface Offer {
   respondedAt?: string;
   /** Employee created by Start onboarding. */
   employeeId?: string;
+  /** The letter as prepared: a snapshot, so the candidate reads what was sent even if the template changes later. */
+  letterHtml?: string;
+  letterAt?: string;
+  /** Secret part of the candidate's link. Cleared on revoke so the old link stops working. */
+  token?: string;
+  sentAt?: string;
+  sentBy?: string;
+  viewedAt?: string;
+  downloadedAt?: string;
+  /** Typed by the candidate when accepting. */
+  signedName?: string;
+  declineReason?: string;
+  /** How the answer arrived: through the link, or recorded by HR from a call or email. */
+  respondedVia?: 'link' | 'hr';
+  events?: { at: string; text: string }[];
 }
 
 export interface HiringState {

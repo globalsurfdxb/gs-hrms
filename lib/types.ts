@@ -152,10 +152,12 @@ export interface OffboardingRequest {
 export interface EmployeeRequest {
   id: string;
   employeeId: string;
-  type: 'Information Update' | 'Document Request' | 'Address Change' | 'Bank Detail Update';
+  type: 'Information Update' | 'Document Request' | 'Address Change' | 'Bank Detail Update' | 'Other Request';
   details: string;
   status: 'Pending' | 'Approved' | 'Rejected';
   raisedOn: string;
+  /** The exact moment it was raised (requests raised in the app). */
+  raisedAt?: string;
   routedTo: 'HR' | 'Manager';
   /** Proposed new values for the employee record (keys from the employee form, e.g. bankName). Applied only on approval. */
   changes?: Record<string, string>;
@@ -261,6 +263,8 @@ export interface ExpenseClaim {
   description: string;
   status: 'Pending' | 'Approved' | 'Rejected';
   submittedOn?: string;
+  /** The exact moment it was submitted (claims submitted in the app). */
+  submittedAt?: string;
   receipt?: string;
   decidedOn?: string;
   decidedBy?: string;
