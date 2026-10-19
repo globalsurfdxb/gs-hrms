@@ -16,7 +16,7 @@ import { Interview } from '@/lib/hiringTypes';
 type Filter = 'upcoming' | 'past' | 'all';
 
 export default function InterviewsPage() {
-  const { s, interviews, loc } = useScoped();
+  const { s, interviews, loc, level } = useScoped();
   const actor = useActor();
   const [filter, setFilter] = useState<Filter>('upcoming');
   const [scheduling, setScheduling] = useState(false);
@@ -36,7 +36,7 @@ export default function InterviewsPage() {
     <div className="hm-page">
       <HiringHeader
         title="Interviews"
-        description={`Every interview for this location. Times are in ${TZ_LABEL[loc] ?? 'the local time zone'}.`}
+        description={`${level === 'manager' ? 'Interviews for your jobs' : 'Every interview for this location'}. Times are in ${TZ_LABEL[loc] ?? 'the local time zone'}.`}
         actions={
           <>
             <Button variant="primary" onClick={() => setScheduling(true)}>

@@ -6,12 +6,12 @@ import { useParams } from 'next/navigation';
 import { Card, CardHeader, EmptyState, Button } from '@/components/ui/Card';
 import { ArrowLeftIcon, JoinIcon, PlusIcon } from '@/components/icons';
 import { Banner, Hero, JobBadge, empName, fmtDate, money, payUnit, useActor } from '@/components/hiring/HiringBits';
-import { CandidateDrawer } from '@/components/hiring/HiringForms';
+import { CandidateDrawer, RecruiterDrawer } from '@/components/hiring/HiringForms';
 import { ShareJobDrawer } from '@/components/hiring/ShareJob';
 import { JobHistory } from '@/components/hiring/JobHistory';
 import { Pipeline } from '@/components/hiring/Pipeline';
 import { useScoped } from '@/components/hiring/useScoped';
-import { appsForJob, isActiveApp, jobById, reqById, setJobStatus } from '@/lib/hiringStore';
+import { appsForJob, isActiveApp, jobById, recruiterIdOf, reqById, setJobStatus } from '@/lib/hiringStore';
 import { JobStatus } from '@/lib/hiringTypes';
 
 export default function JobDetailPage() {
@@ -21,6 +21,7 @@ export default function JobDetailPage() {
   const [tab, setTab] = useState<'pipeline' | 'details' | 'history'>('pipeline');
   const [adding, setAdding] = useState(false);
   const [sharing, setSharing] = useState(false);
+  const [changing, setChanging] = useState(false);
   const [msg, setMsg] = useState<{ text: string; tone: 'info' | 'warn' } | null>(null);
   const notify = (text: string, tone: 'info' | 'warn' = 'info') => setMsg({ text, tone });
 
@@ -61,7 +62,7 @@ export default function JobDetailPage() {
         icon={<JoinIcon />}
         title={job.title}
         badges={<JobBadge status={job.status} />}
-        meta={[job.code, job.department, job.location === 'Kochi' ? 'India' : 'United Arab Emirates', job.employmentType, `Hiring manager: ${empName(job.hiringManagerId)}`]}
+        meta={[job.code, job.department, job.location === 'Kochi' ? 'India' : 'United Arab Emirates', job.employmentType, `Hiring manager: ${empName(job.hiringManagerId)}`, `Recruiter: ${empName(recruiterIdOf(job))}`]}
         actions={
           <>
             {canManage && job.status === 'Draft' && <Button onClick={() => setStatus('Open')}>Open for applications</Button>}
@@ -69,6 +70,7 @@ export default function JobDetailPage() {
             {canManage && job.status === 'On Hold' && <Button onClick={() => setStatus('Open')}>Resume</Button>}
             {canManage && (job.status === 'Open' || job.status === 'On Hold') && <Button onClick={() => setStatus('Closed')}>Close job</Button>}
             {canManage && job.status === 'Closed' && job.filled < job.positions && <Button onClick={() => setStatus('Open')}>Reopen</Button>}
+            {canManage && <Button onClick={() => setChanging(true)}>Change recruiter</Button>}
             <Button onClick={() => setSharing(true)}>Share job</Button>
             <Button variant="primary" onClick={() => setAdding(true)} disabled={job.status === 'Closed' || job.status === 'Filled'}>
               <PlusIcon /> Add candidate
@@ -130,6 +132,7 @@ export default function JobDetailPage() {
       )}
 
       <ShareJobDrawer job={job} open={sharing} onClose={() => setSharing(false)} />
+      <RecruiterDrawer job={changing ? job : null} onClose={() => setChanging(false)} onDone={(text) => { setChanging(false); notify(text); }} />
       <CandidateDrawer
         open={adding}
         job={job}

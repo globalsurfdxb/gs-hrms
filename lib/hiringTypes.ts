@@ -55,6 +55,8 @@ export interface Requisition {
   companyId: string;
   departmentId: string;
   department: string;
+  /** The designation (job grade) the role is for, when the department has designations. */
+  designationTitle?: string;
   location: string;
   positions: number;
   employmentType: EmploymentKind;
@@ -106,6 +108,8 @@ export interface Job {
   closingDate: string;
   status: JobStatus;
   hiringManagerId: string;
+  /** The recruiter who runs this job. Older saved jobs have none: the person who created the job is used. */
+  recruiterId?: string;
   budgetMin: number;
   budgetMax: number;
   currency: string;

@@ -75,7 +75,7 @@ export default function RequisitionDetailPage() {
         icon={<InboxIcon />}
         title={r.title}
         badges={<ReqBadge status={r.status} />}
-        meta={[r.code, r.department, company?.name ?? '', r.location === 'Kochi' ? 'India' : 'United Arab Emirates']}
+        meta={[r.code, r.department, ...(r.designationTitle ? [r.designationTitle] : []), company?.name ?? '', r.location === 'Kochi' ? 'India' : 'United Arab Emirates']}
         actions={
           <>
             {mayEdit && <Button onClick={() => setEdit(true)}>Edit</Button>}

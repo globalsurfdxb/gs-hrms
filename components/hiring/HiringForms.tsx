@@ -25,7 +25,10 @@ import {
   createOffer,
   createRequisition,
   findDuplicates,
+  interviewsForApp,
   jobById,
+  recruiterIdOf,
+  setJobRecruiter,
   panelClashes,
   rescheduleInterview,
   scheduleInterview,
@@ -46,6 +49,7 @@ import {
   Job,
   Requisition,
   REQUISITION_REASONS,
+  Stage,
   RequisitionReason,
   SOURCES,
   Source,
@@ -84,7 +88,7 @@ export function RequisitionDrawer({ open, onClose, edit, onDone }: { open: boole
   const { role } = useApp();
   const me = useCurrentEmployee();
   const actor = useActor();
-  const { companies, departments, locations, locationDef } = useOrg();
+  const { companies, departments, designations, locations, locationDef } = useOrg();
   const blank = (): RequisitionInput => ({
     title: '',
     companyId: '',
@@ -101,7 +105,7 @@ export function RequisitionDrawer({ open, onClose, edit, onDone }: { open: boole
     hiringManagerId: role === 'Team Lead' ? me.id : '',
     justification: '',
   });
-  return open ? <RequisitionForm key={edit?.id ?? 'new'} {...{ onClose, edit, onDone, blank, actor, companies, departments, locations, locationDef }} /> : null;
+  return open ? <RequisitionForm key={edit?.id ?? 'new'} {...{ onClose, edit, onDone, blank, actor, companies, departments, designations, locations, locationDef }} /> : null;
 }
 
 function RequisitionForm({
@@ -112,6 +116,7 @@ function RequisitionForm({
   actor,
   companies,
   departments,
+  designations,
   locations,
   locationDef,
 }: {
@@ -122,6 +127,7 @@ function RequisitionForm({
   actor: ReturnType<typeof useActor>;
   companies: ReturnType<typeof useOrg>['companies'];
   departments: ReturnType<typeof useOrg>['departments'];
+  designations: ReturnType<typeof useOrg>['designations'];
   locations: ReturnType<typeof useOrg>['locations'];
   locationDef: ReturnType<typeof useOrg>['locationDef'];
 }) {
@@ -130,8 +136,13 @@ function RequisitionForm({
   const set = <K extends keyof RequisitionInput>(k: K, val: RequisitionInput[K]) => setV((p) => ({ ...p, [k]: val }));
   const cur = locationDef(v.location)?.currency ?? 'AED';
 
-  const cos = companies.filter((c) => c.status === 'Active' && (c.location === 'Both' || c.location === v.location));
-  const depts = departments.filter((d) => d.companyId === v.companyId && d.locations.includes(v.location));
+  // Every active company can hire in either location. Departments that already operate in the location come first;
+  // a company with none there shows all of its departments rather than an empty list.
+  const cos = companies.filter((c) => c.status === 'Active');
+  const ofCompany = departments.filter((d) => d.companyId === v.companyId);
+  const inLocation = ofCompany.filter((d) => d.locations.includes(v.location));
+  const depts = inLocation.length ? inLocation : ofCompany;
+  const desigs = designations.filter((d) => d.departmentId === v.departmentId);
   const today = todayISO();
 
   const errors: Record<string, string> = {};
@@ -150,9 +161,10 @@ function RequisitionForm({
   const shown = (k: string) => (attempted ? errors[k] : undefined);
 
   const changeLocation = (id: string) => {
-    const co = companies.find((c) => c.id === v.companyId);
-    const keepCo = !!co && (co.location === 'Both' || co.location === id);
-    setV((p) => ({ ...p, location: id, currency: locationDef(id)?.currency ?? p.currency, companyId: keepCo ? p.companyId : '', departmentId: '', department: '' }));
+    // The company stays; the department stays only if it is one the company runs in the new location.
+    const d = departments.find((x) => x.id === v.departmentId);
+    const keepDept = !!d && d.locations.includes(id);
+    setV((p) => ({ ...p, location: id, currency: locationDef(id)?.currency ?? p.currency, departmentId: keepDept ? p.departmentId : '', department: keepDept ? p.department : '' }));
   };
 
   const save = (submit: boolean) => {
@@ -217,7 +229,7 @@ function RequisitionForm({
             disabled={!v.companyId}
             onChange={(e) => {
               const d = depts.find((x) => x.id === e.target.value);
-              setV((p) => ({ ...p, departmentId: e.target.value, department: d?.name ?? '' }));
+              setV((p) => ({ ...p, departmentId: e.target.value, department: d?.name ?? '', designationTitle: undefined }));
             }}
           >
             <option value="">{v.companyId ? 'Select…' : 'Choose a company first'}</option>
@@ -228,6 +240,25 @@ function RequisitionForm({
             ))}
           </select>
         </Fg>
+        {desigs.length > 0 && (
+          <Fg label="Designation" hint="The grade this role is hired at. It carries through to the job and onboarding." full>
+            <select
+              value={v.designationTitle ?? ''}
+              onChange={(e) => {
+                const t = e.target.value;
+                // The job title follows the designation until it has been typed by hand.
+                setV((p) => ({ ...p, designationTitle: t || undefined, title: !p.title.trim() || p.title === p.designationTitle ? t : p.title }));
+              }}
+            >
+              <option value="">Select…</option>
+              {desigs.map((d) => (
+                <option key={d.id} value={d.title}>
+                  {d.title}
+                </option>
+              ))}
+            </select>
+          </Fg>
+        )}
         <Fg label="Number of positions" required error={shown('positions')}>
           <input type="number" min={1} value={Number.isNaN(v.positions) ? '' : v.positions} onChange={(e) => set('positions', num(e.target.value))} />
         </Fg>
@@ -283,16 +314,18 @@ export function JobDrawer({ requisition, onClose, onDone }: { requisition: Requi
 
 function JobForm({ requisition, onClose, onDone }: { requisition: Requisition; onClose: () => void; onDone: (j: Job) => void }) {
   const actor = useActor();
+  const { role } = useApp();
   const { designations } = useOrg();
   const desigs = designations.filter((d) => d.departmentId === requisition.departmentId).map((d) => d.title);
   const [v, setV] = useState({
-    designationTitle: desigs.includes(requisition.title) ? requisition.title : (desigs[0] ?? requisition.title),
+    designationTitle: requisition.designationTitle && desigs.includes(requisition.designationTitle) ? requisition.designationTitle : desigs.includes(requisition.title) ? requisition.title : (desigs[0] ?? requisition.title),
     description: '',
     skills: '',
     expMin: '2',
     expMax: '6',
     qualifications: '',
     panelIds: [requisition.hiringManagerId],
+    recruiterId: role === 'HR' || role === 'Office Admin' ? actor.id : '',
     referralEligible: true,
     closingDate: addDays(todayISO(), 30),
     publish: true,
@@ -306,6 +339,7 @@ function JobForm({ requisition, onClose, onDone }: { requisition: Requisition; o
   if (!v.skills.trim()) errors.skills = 'List at least one key skill.';
   if (!(num(v.expMin) >= 0)) errors.expMin = 'Enter the minimum years.';
   if (!(num(v.expMax) >= num(v.expMin))) errors.expMax = 'Maximum is below the minimum.';
+  if (!v.recruiterId) errors.recruiterId = 'Choose the recruiter who will run this job.';
   if (!v.panelIds.length) errors.panelIds = 'Add at least one interviewer.';
   if (!v.closingDate) errors.closingDate = 'Choose a closing date.';
   const shown = (k: string) => (attempted ? errors[k] : undefined);
@@ -323,6 +357,7 @@ function JobForm({ requisition, onClose, onDone }: { requisition: Requisition; o
         expMax: num(v.expMax),
         qualifications: v.qualifications.trim(),
         panelIds: v.panelIds,
+        recruiterId: v.recruiterId,
         referralEligible: v.referralEligible,
         closingDate: v.closingDate,
         publish: v.publish,
@@ -382,6 +417,9 @@ function JobForm({ requisition, onClose, onDone }: { requisition: Requisition; o
         <Fg label="Qualifications" full>
           <input value={v.qualifications} onChange={(e) => set('qualifications', e.target.value)} placeholder="e.g. CCNA or higher" />
         </Fg>
+        <Fg label="Recruiter" required error={shown('recruiterId')} hint="Runs this job: screening, scheduling and offers. Reports can be filtered by recruiter." full>
+          <SearchSelect options={people()} value={v.recruiterId} onChange={(x) => set('recruiterId', x)} placeholder="Search employee…" />
+        </Fg>
         <Fg label="Interview panel" required error={shown('panelIds')} full>
           <PanelPicker value={v.panelIds} onChange={(x) => set('panelIds', x)} />
         </Fg>
@@ -396,6 +434,50 @@ function JobForm({ requisition, onClose, onDone }: { requisition: Requisition; o
             <input type="checkbox" checked={v.publish} onChange={(e) => set('publish', e.target.checked)} /> Open for applications now
           </label>
         </div>
+      </div>
+    </Drawer>
+  );
+}
+
+/** Changes who recruits for a job. */
+export function RecruiterDrawer({ job, onClose, onDone }: { job: Job | null; onClose: () => void; onDone: (text: string) => void }) {
+  return job ? <RecruiterForm key={job.id} job={job} onClose={onClose} onDone={onDone} /> : null;
+}
+
+function RecruiterForm({ job, onClose, onDone }: { job: Job; onClose: () => void; onDone: (text: string) => void }) {
+  const actor = useActor();
+  const [who, setWho] = useState(recruiterIdOf(job) ?? '');
+  const [error, setError] = useState('');
+  return (
+    <Drawer
+      open
+      onClose={onClose}
+      title="Change recruiter"
+      description={`${job.code} · ${job.title}`}
+      footer={
+        <>
+          <Button variant="ghost" onClick={onClose}>
+            Cancel
+          </Button>
+          <Button
+            variant="primary"
+            onClick={() => {
+              if (!who) return setError('Choose a recruiter.');
+              const r = setJobRecruiter(job.id, who, actor);
+              if (!r.ok) return setError(r.error);
+              onDone(`${job.code} is now recruited by ${empName(who)}.`);
+            }}
+          >
+            Save
+          </Button>
+        </>
+      }
+    >
+      {error && <div className="tx-err" style={{ marginBottom: 12 }}>{error}</div>}
+      <div className="form-grid hm-form">
+        <Fg label="Recruiter" required full>
+          <SearchSelect options={people()} value={who} onChange={setWho} placeholder="Search employee…" />
+        </Fg>
       </div>
     </Drawer>
   );
@@ -674,7 +756,12 @@ function InterviewForm({ application, interview, onClose, onDone }: { applicatio
   const level = hiringLevel(role);
   const fixed = application ?? (interview ? appById(s, interview.applicationId) : undefined);
 
-  const apps = s.applications.filter((a) => !a.exit && a.stage !== 'Hired' && a.location === loc && (level === 'full' || jobById(s, a.jobId)?.hiringManagerId === me.id));
+  // Candidates at the Offer stage already have their interviews; those waiting for one come first.
+  const WAITING: Stage[] = ['Screening', 'Technical Interview', 'HR Interview'];
+  const booked = (id: string) => interviewsForApp(s, id).some((i) => i.status === 'Scheduled');
+  const apps = s.applications
+    .filter((a) => !a.exit && a.stage !== 'Hired' && a.stage !== 'Offer' && a.location === loc && (level === 'full' || jobById(s, a.jobId)?.hiringManagerId === me.id))
+    .sort((a, b) => Number(WAITING.includes(b.stage) && !booked(b.id)) - Number(WAITING.includes(a.stage) && !booked(a.id)) || WAITING.indexOf(b.stage) - WAITING.indexOf(a.stage));
   const [appId, setAppId] = useState(fixed?.id ?? '');
   const app = appById(s, appId);
   const [v, setV] = useState({
@@ -742,21 +829,21 @@ function InterviewForm({ application, interview, onClose, onDone }: { applicatio
           {fixed ? (
             <input value={`${cand?.name ?? ''} · ${job?.title ?? ''}`} readOnly style={{ background: 'var(--bg)' }} />
           ) : (
-            <select
+            <SearchSelect
+              options={apps.map((a) => ({
+                value: a.id,
+                label: candById(s, a.candidateId)?.name ?? 'Candidate',
+                meta: `${jobById(s, a.jobId)?.title ?? ''} · ${a.stage}${booked(a.id) ? ' · interview booked' : ''}`,
+              }))}
               value={appId}
-              onChange={(e) => {
-                setAppId(e.target.value);
-                const a = appById(s, e.target.value);
+              onChange={(id) => {
+                setAppId(id);
+                const a = appById(s, id);
                 if (a) setV((p) => ({ ...p, panelIds: jobById(s, a.jobId)?.panelIds ?? p.panelIds, round: a.stage === 'HR Interview' ? 'HR Interview' : 'Technical Interview' }));
               }}
-            >
-              <option value="">Select…</option>
-              {apps.map((a) => (
-                <option key={a.id} value={a.id}>
-                  {candById(s, a.candidateId)?.name} · {jobById(s, a.jobId)?.title} · {a.stage}
-                </option>
-              ))}
-            </select>
+              placeholder="Search candidate or job…"
+              emptyText="No candidate is waiting for an interview"
+            />
           )}
         </Fg>
         <Fg label="Round" required>
@@ -791,7 +878,7 @@ function InterviewForm({ application, interview, onClose, onDone }: { applicatio
         <Fg
           label={v.mode === 'Teams' ? 'Meeting link' : 'Meeting link (optional)'}
           error={shown('link')}
-          hint={v.mode !== 'Teams' ? undefined : teamsOn ? 'Create a Teams meeting, or paste a link. The created link is a sandbox placeholder until the live connection exists.' : 'Paste the Teams meeting link. Connect Teams under Operations to create meetings from here.'}
+          hint={v.mode !== 'Teams' ? undefined : teamsOn ? 'Create a Teams meeting, or paste a link. The created link is a sandbox placeholder until the live connection exists.' : level === 'full' ? 'Paste the Teams meeting link. Connect Teams under Operations to create meetings from here.' : 'Paste the Teams meeting link from your calendar. The candidate receives it with the invitation.'}
         >
           <div className="hm-linkbox">
             <input value={v.link} onChange={(e) => set('link', e.target.value)} placeholder="https://" />

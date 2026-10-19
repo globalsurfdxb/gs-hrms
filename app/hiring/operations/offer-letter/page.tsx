@@ -170,10 +170,15 @@ export default function OfferLetterSetupPage() {
 
         <div style={{ display: 'grid', gap: 16 }}>
           <Card>
-            <CardHeader title="Signatories" sub="Printed at the end of each letter, by work location" />
+            <CardHeader title="Signatory" sub={`Signs the ${SLOTS.find((x) => x.id === slot)?.label ?? ''} letters`} />
             <div className="hm-lt-body">
-              <SignatoryForm key={`Dubai-${signatoryFor(ls, 'Dubai').name}-${signatoryFor(ls, 'Dubai').title}`} location="Dubai" label="United Arab Emirates" value={signatoryFor(ls, 'Dubai')} onSaved={(t) => setNotice({ text: t, tone: 'info' })} />
-              <SignatoryForm key={`Kochi-${signatoryFor(ls, 'Kochi').name}-${signatoryFor(ls, 'Kochi').title}`} location="Kochi" label="India" value={signatoryFor(ls, 'Kochi')} onSaved={(t) => setNotice({ text: t, tone: 'info' })} />
+              <SignatoryForm
+                key={`${slot}-${signatoryFor(ls, slot).name}-${signatoryFor(ls, slot).title}`}
+                location={slot}
+                label={SLOTS.find((x) => x.id === slot)?.label ?? slot}
+                value={signatoryFor(ls, slot)}
+                onSaved={(t) => setNotice({ text: t, tone: 'info' })}
+              />
             </div>
           </Card>
           <Card>
@@ -213,7 +218,6 @@ function SignatoryForm({ location, label, value, onSaved }: { location: string; 
   const [error, setError] = useState('');
   return (
     <div style={{ display: 'grid', gap: 8 }}>
-      <b style={{ fontSize: 13 }}>{label}</b>
       <Fg label="Name" required error={error && !sig.name.trim() ? error : ''}>
         <input value={sig.name} onChange={(e) => setSig({ ...sig, name: e.target.value })} />
       </Fg>

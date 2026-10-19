@@ -1,14 +1,17 @@
 'use client';
 
+import { useState } from 'react';
 import Link from 'next/link';
 import { daysBetween, todayISO, addDays } from '@/lib/dates';
 import { Card, CardHeader, EmptyState, Button } from '@/components/ui/Card';
 import { StatStrip } from '@/components/ui/StatStrip';
 import { ChevronRightIcon, ClockIcon, FileTextIcon, InboxIcon, JoinIcon, PeopleIcon, PlusIcon, ReportsIcon, StarIcon } from '@/components/icons';
-import { HiringHeader, InterviewBadge, StageBadge, empName, fmtDate, fmtDateTime, money, payUnit } from '@/components/hiring/HiringBits';
+import { Banner, HiringHeader, InterviewBadge, StageBadge, empName, fmtDate, fmtDateTime, money, payUnit } from '@/components/hiring/HiringBits';
+import { InterviewDrawer } from '@/components/hiring/HiringForms';
+import { useStageMail } from '@/components/hiring/Mail';
 import { useScoped } from '@/components/hiring/useScoped';
-import { candById, canDecideStep, isActiveApp, jobById } from '@/lib/hiringStore';
-import { STAGES } from '@/lib/hiringTypes';
+import { candById, canDecideStep, interviewsForApp, isActiveApp, jobById } from '@/lib/hiringStore';
+import { Application, STAGES } from '@/lib/hiringTypes';
 import { useApp } from '@/context/AppContext';
 
 const STAGE_SHORT: Record<(typeof STAGES)[number], string> = { Applied: 'Applied', Screening: 'Screening', 'Technical Interview': 'Technical', 'HR Interview': 'HR round', Offer: 'Offer', Hired: 'Hired' };
@@ -17,6 +20,13 @@ export default function HiringDashboardPage() {
   const { s, level, me, loc, currency, jobs, requisitions, applications, interviews, offers } = useScoped();
   const { role } = useApp();
   const today = todayISO();
+  const [scheduling, setScheduling] = useState<{ app?: Application } | null>(null);
+  const [notice, setNotice] = useState('');
+  const mailer = useStageMail((t) => setNotice(t));
+  // People past screening who have no interview booked: the next thing a hiring manager has to do.
+  const waiting = applications
+    .filter((a) => !a.exit && ['Screening', 'Technical Interview', 'HR Interview'].includes(a.stage) && !interviewsForApp(s, a.id).some((i) => i.status === 'Scheduled'))
+    .sort((a, b) => STAGES.indexOf(b.stage) - STAGES.indexOf(a.stage));
 
   const openJobs = jobs.filter((j) => j.status === 'Open');
   const openPositions = openJobs.reduce((n, j) => n + Math.max(0, j.positions - j.filled), 0);
@@ -79,6 +89,9 @@ export default function HiringDashboardPage() {
         description="Headcount approved, candidates in the pipeline, interviews and offers, in one place."
         actions={
           <>
+            <Button onClick={() => setScheduling({})}>
+              <ClockIcon /> Schedule interview
+            </Button>
             <Link href="/hiring/candidates?add=1">
               <Button>
                 <PlusIcon /> Add candidate
@@ -93,6 +106,8 @@ export default function HiringDashboardPage() {
         }
         bar={level === 'manager' ? <span className="hm-foot-inline">Showing your own requisitions and jobs</span> : undefined}
       />
+
+      {notice && <Banner onClose={() => setNotice('')}>{notice}</Banner>}
 
       <StatStrip
         items={[
@@ -154,6 +169,40 @@ export default function HiringDashboardPage() {
           )}
         </Card>
       </div>
+
+      <Card>
+        <CardHeader title="Waiting for an interview" sub={waiting.length ? `${waiting.length} candidate${waiting.length === 1 ? '' : 's'} with no interview booked` : 'Everyone past screening has an interview booked'} />
+        {!waiting.length ? (
+          <EmptyState icon={<ClockIcon />} title="Nobody is waiting" description="Candidates you move to Screening, Technical or HR interview appear here until an interview is booked." />
+        ) : (
+          <div className="hm-att">
+            {waiting.slice(0, 6).map((a) => {
+              const c = candById(s, a.candidateId);
+              return (
+                <div key={a.id} className="hm-att-row">
+                  <span className="hm-att-ic blue">
+                    <ClockIcon />
+                  </span>
+                  <Link href={`/hiring/candidates/${a.candidateId}`} className="hm-att-tx">
+                    <b>{c?.name ?? 'Candidate'}</b>
+                    <small>
+                      {jobById(s, a.jobId)?.title} · {a.stage}
+                    </small>
+                  </Link>
+                  <Button size="sm" variant="primary" onClick={() => setScheduling({ app: a })}>
+                    Schedule
+                  </Button>
+                </div>
+              );
+            })}
+            {waiting.length > 6 && (
+              <button type="button" className="lnk" style={{ padding: '10px 18px', textAlign: 'left' }} onClick={() => setScheduling({})}>
+                {waiting.length - 6} more: choose from the list
+              </button>
+            )}
+          </div>
+        )}
+      </Card>
 
       <div className="hm-grid hm-grid-wide">
         <Card>
@@ -241,6 +290,16 @@ export default function HiringDashboardPage() {
           </div>
         )}
       </Card>
+      {mailer.dialog}
+      <InterviewDrawer
+        open={!!scheduling}
+        application={scheduling?.app}
+        onClose={() => setScheduling(null)}
+        onDone={(i, rescheduled) => {
+          setScheduling(null);
+          mailer.after(i.applicationId, rescheduled ? 'Interview rescheduled' : 'Interview scheduled', { interview: i }, `${i.round} scheduled for ${fmtDate(i.date)} at ${i.time}.`);
+        }}
+      />
     </div>
   );
 }

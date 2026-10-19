@@ -2,6 +2,7 @@ import { useSyncExternalStore } from 'react';
 import { addDays, daysBetween, todayISO } from '@/lib/dates';
 import { Role } from '@/lib/types';
 import { logAudit } from '@/lib/employeeStore';
+import { EMPLOYEES } from '@/lib/data';
 import { chainSteps } from '@/lib/workflow';
 import { seedHiring } from '@/lib/hiringSeed';
 import { pushNotice } from '@/lib/notifications';
@@ -44,9 +45,14 @@ function load() {
   loaded = true;
   try {
     const raw = localStorage.getItem(KEY);
-    if (!raw) return;
+    if (!raw) {
+      state = withHires(state);
+      return;
+    }
     const parsed = JSON.parse(raw) as Partial<HiringState>;
-    if (parsed.requisitions && parsed.jobs && parsed.candidates && parsed.applications && parsed.interviews && parsed.offers) state = parsed as HiringState;
+    if (parsed.requisitions && parsed.jobs && parsed.candidates && parsed.applications && parsed.interviews && parsed.offers) {
+      state = withHires(parsed as HiringState);
+    }
   } catch {
     /* unreadable saved data: keep the sample data */
   }
@@ -98,6 +104,47 @@ const nowIso = () => {
   const p = (n: number) => String(n).padStart(2, '0');
   return `${todayISO()}T${p(d.getHours())}:${p(d.getMinutes())}:00`;
 };
+/** An accepted offer is a hire: the candidate moves to Hired and the position counts as filled (the job becomes Filled
+    when every approved position is). Returns the data unchanged when the candidate is already Hired. */
+function applyHire(st: HiringState, offerId: string, by: string): HiringState {
+  const o = st.offers.find((x) => x.id === offerId);
+  const a = o && st.applications.find((x) => x.id === o.applicationId);
+  const j = a && st.jobs.find((x) => x.id === a.jobId);
+  if (!o || !a || !j || a.stage === 'Hired') return st;
+  const stamp = nowIso();
+  const filled = j.filled + 1;
+  const jobStatus: JobStatus = filled >= j.positions ? 'Filled' : j.status;
+  const cand = st.candidates.find((c) => c.id === a.candidateId);
+  return {
+    ...st,
+    applications: st.applications.map((x) =>
+      x.id === a.id ? { ...x, stage: 'Hired', exit: undefined, exitFrom: undefined, exitReason: undefined, exitNote: undefined, history: [...x.history, { id: uid('sc'), at: stamp, by, from: x.stage, to: 'Hired', note: `Offer ${o.code} accepted` }] } : x,
+    ),
+    jobs: st.jobs.map((x) =>
+      x.id === j.id
+        ? {
+            ...x,
+            filled,
+            status: jobStatus,
+            updatedAt: stamp,
+            history: [
+              ...(x.history ?? []),
+              { id: uid('jh'), at: stamp, by, text: `${cand?.name ?? 'Candidate'} accepted ${o.code}: ${filled} of ${j.positions} positions filled` },
+              ...(jobStatus !== j.status ? [{ id: uid('jh'), at: stamp, by: 'System', text: `Status changed from ${j.status} to ${jobStatus}` }] : []),
+            ],
+          }
+        : x,
+    ),
+  };
+}
+
+/** Offers accepted before an acceptance counted as a hire (older saved data, and the sample data): bring them in line. */
+function withHires(st: HiringState): HiringState {
+  let next = st;
+  st.offers.filter((o) => o.status === 'Accepted' && !o.employeeId).forEach((o) => (next = applyHire(next, o.id, 'System')));
+  return next;
+}
+
 const nextCode = (prefix: string, existing: string[]) => `${prefix}-${String(existing.reduce((m, c) => Math.max(m, parseInt(c.replace(/\D/g, ''), 10) || 0), 0) + 1).padStart(4, '0')}`;
 
 const HR_ROLES: Role[] = ['HR', 'Office Admin', 'Super Admin'];
@@ -175,6 +222,7 @@ export interface RequisitionInput {
   companyId: string;
   departmentId: string;
   department: string;
+  designationTitle?: string;
   location: string;
   positions: number;
   employmentType: EmploymentKind;
@@ -287,6 +335,7 @@ export interface JobInput {
   referralEligible: boolean;
   closingDate: string;
   designationTitle: string;
+  recruiterId: string;
   publish: boolean;
 }
 
@@ -324,6 +373,23 @@ export function createJob(requisitionId: string, input: JobInput, actor: Actor):
   commit({ ...state, jobs: [job, ...state.jobs] });
   audit(job.id, 'Job created', '—', `${job.code} · ${job.title} (${job.status})`, actor.name);
   return { ok: true, job };
+}
+
+/** The recruiter of a job; for jobs saved before recruiters existed, the person who created it. */
+export const recruiterIdOf = (j: Job): string | undefined => j.recruiterId ?? EMPLOYEES.find((e) => e.name === j.createdBy)?.id;
+
+export function setJobRecruiter(id: string, recruiterId: string, actor: Actor): Result {
+  const j = jobById(state, id);
+  if (!j) return fail('Job not found.');
+  const next = EMPLOYEES.find((e) => e.id === recruiterId);
+  if (!next) return fail('Choose a recruiter.');
+  const prev = EMPLOYEES.find((e) => e.id === recruiterIdOf(j));
+  if (prev?.id === next.id) return { ok: true };
+  const stamp = nowIso();
+  commit({ ...state, jobs: state.jobs.map((x) => (x.id === id ? { ...x, recruiterId, updatedAt: stamp, history: [...(x.history ?? []), { id: uid('jh'), at: stamp, by: actor.name, text: `Recruiter changed from ${prev?.name ?? 'none'} to ${next.name}` }] } : x)) });
+  audit(id, 'Job recruiter', prev?.name ?? '—', next.name, actor.name);
+  if (next.id !== actor.id) pushNotice({ kind: 'hiring', tone: 'info', title: `You are now the recruiter for ${j.code}`, sub: j.title, href: `/hiring/jobs/${j.id}`, toIds: [next.id], by: actor.id });
+  return { ok: true };
 }
 
 export function setJobStatus(id: string, status: JobStatus, actor: Actor): Result {
@@ -595,6 +661,15 @@ export function setOfferStatus(id: string, status: OfferStatus, actor: Actor): R
     const oj = oa && jobById(state, oa.jobId);
     pushNotice({ kind: 'hiring', tone: status === 'Accepted' ? 'active' : 'expired', title: `${o.code} was ${status.toLowerCase()}`, sub: `${oc?.name ?? 'Candidate'} · ${oj?.title ?? ''}`, href: '/hiring/offers', toRoles: HR_ROLES, toIds: oj ? [oj.hiringManagerId] : [], by: actor.id });
   }
+  if (status === 'Accepted') {
+    const before = state;
+    const next = applyHire(state, id, actor.name);
+    if (next !== before) {
+      commit(next);
+      const ha = appById(next, o.applicationId);
+      if (ha) audit(ha.id, 'Hired', 'Offer', `Offer ${o.code} accepted`, actor.name);
+    }
+  }
   if (status === 'Declined') exitApplication(o.applicationId, 'Withdrawn', actor, 'Offer declined');
   return { ok: true };
 }
@@ -693,7 +768,9 @@ export function completeHire(offerId: string, employee: { id: string; code: stri
   if (!o || !a || !j) return fail('Offer not found.');
   if (o.employeeId) return fail(`This offer was already used to onboard ${o.employeeId}.`);
   const stamp = nowIso();
-  const filled = j.filled + 1;
+  // Accepting the offer already moved the candidate to Hired and counted the position; older data may not have.
+  const counted = a.stage === 'Hired';
+  const filled = counted ? j.filled : j.filled + 1;
   const jobStatus: JobStatus = filled >= j.positions ? 'Filled' : j.status;
   commit({
     ...state,
@@ -711,7 +788,7 @@ export function completeHire(offerId: string, employee: { id: string; code: stri
             updatedAt: stamp,
             history: [
               ...(x.history ?? []),
-              { id: uid('jh'), at: stamp, by: actor.name, text: `${employee.name} hired (${employee.code}): ${filled} of ${j.positions} positions filled` },
+              { id: uid('jh'), at: stamp, by: actor.name, text: counted ? `Onboarding started for ${employee.name} (${employee.code})` : `${employee.name} hired (${employee.code}): ${filled} of ${j.positions} positions filled` },
               ...(jobStatus !== j.status ? [{ id: uid('jh'), at: stamp, by: 'System', text: `Status changed from ${j.status} to ${jobStatus}` }] : []),
             ],
           }

@@ -6,6 +6,7 @@ import { EMPLOYEES } from '@/lib/data';
 import { todayISO } from '@/lib/dates';
 import { EMAIL_RE } from '@/lib/options';
 import { ENTITY_NAME } from '@/lib/org';
+import { GS_LOGO } from '@/lib/brandAssets';
 import { Fg, TEXTAREA_STYLE } from '@/components/hiring/HiringBits';
 import { Actor, addCandidate, applyToJob, findDuplicates, getHiring } from '@/lib/hiringStore';
 import { sendRuleMail } from '@/lib/hiringMail';
@@ -36,16 +37,23 @@ export const acceptingApplications = (j: Job) => j.status === 'Open' && j.closin
 
 const PUBLIC_ACTOR: Actor = { id: 'careers-page', name: 'Careers page', role: 'Employee' };
 
-export function CareersFrame({ children, foot, title = 'Careers' }: { children: React.ReactNode; foot?: React.ReactNode; title?: string }) {
+export function CareersFrame({ children, foot, title = 'Careers', hero, wide }: { children: React.ReactNode; foot?: React.ReactNode; title?: string; hero?: React.ReactNode; wide?: boolean }) {
   return (
     <div className="cr-page">
       <header className="cr-top">
-        <Link href="/careers" className="cr-brand">
-          <span>GS</span>
-          {ENTITY_NAME} <small>{title}</small>
-        </Link>
+        <div className="cr-top-in">
+          <Link href="/careers" className="cr-brand" aria-label={`${ENTITY_NAME} ${title}`}>
+            {/* eslint-disable-next-line @next/next/no-img-element */}
+            <img src={GS_LOGO} alt="" />
+            <small>{title}</small>
+          </Link>
+          <a className="cr-mail" href="mailto:hr@globalsurf.ae">
+            hr@globalsurf.ae
+          </a>
+        </div>
       </header>
-      <main className="cr-main">{children}</main>
+      {hero}
+      <main className={`cr-main ${wide ? 'wide' : ''}`}>{children}</main>
       <footer className="cr-foot">
         {foot ?? `${ENTITY_NAME} · We store your details only to consider you for this and similar roles, and you can ask us to remove them at any time.`}
       </footer>

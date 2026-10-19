@@ -65,6 +65,7 @@ function job(n: number, r: Requisition, p: Pick<Job, 'designationTitle' | 'descr
     ...rest,
     status: 'Open',
     hiringManagerId: r.hiringManagerId,
+    recruiterId: r.location === 'Kochi' ? 'GS-133' : 'GS-119',
     budgetMin: r.budgetMin,
     budgetMax: r.budgetMax,
     currency: r.currency,

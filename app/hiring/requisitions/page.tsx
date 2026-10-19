@@ -110,7 +110,7 @@ function Requisitions() {
                         <Link href={`/hiring/requisitions/${r.id}`} className="hm-link">
                           <div style={{ fontWeight: 600 }}>{r.title}</div>
                           <div className="tx-s faint">
-                            {r.code} · {r.department} · {r.reason}
+                            {r.code} · {r.department}{r.designationTitle ? ` · ${r.designationTitle}` : ''} · {r.reason}
                           </div>
                         </Link>
                       </td>
