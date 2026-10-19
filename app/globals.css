@@ -11696,3 +11696,45 @@ select:not([multiple]):not([size]):disabled {
 .cr-body form.cr-card > .btn.primary {
   margin-top: 20px !important;
 }
+
+
+/* Dashboard: cards are as tall as what they hold; long lists open on request; grids adapt to the width */
+.dg2,
+.dg3 {
+  align-items: stretch;
+}
+.dg3 {
+  grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));
+}
+.dg2 {
+  grid-template-columns: repeat(auto-fit, minmax(380px, 1fr));
+}
+.dk-grid {
+  grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+}
+.dg2 > .card,
+.dg3 > .card {
+  height: 100%;
+}
+.sm-toggle {
+  display: block;
+  width: calc(100% - 16px);
+  margin: 6px 8px 8px;
+  padding: 8px;
+  border: 1px dashed var(--border);
+  border-radius: 10px;
+  background: #fff;
+  font: inherit;
+  font-size: 12.5px;
+  font-weight: 600;
+  color: var(--primary);
+  cursor: pointer;
+}
+.sm-toggle:hover {
+  background: var(--primary-50);
+}
+.da-list .sm-toggle,
+.at-body .sm-toggle {
+  width: 100%;
+  margin: 6px 0 0;
+}

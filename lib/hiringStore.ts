@@ -759,6 +759,50 @@ export function respondToOffer(token: string, decision: 'Accepted' | 'Declined',
   return setOfferStatus(o.id, decision, { id: 'candidate', name: 'Candidate (offer link)', role: 'Employee' });
 }
 
+/** The candidate backed out after accepting, before an employee was created. The offer is closed as declined, the
+    candidate leaves the Hired column (withdrawn from the Offer stage) and the position is open again. */
+export function withdrawAcceptedOffer(offerId: string, reason: string, actor: Actor): Result {
+  const o = offerById(state, offerId);
+  const a = o && appById(state, o.applicationId);
+  const j = a && jobById(state, a.jobId);
+  if (!o || !a || !j) return fail('Offer not found.');
+  if (o.status !== 'Accepted') return fail('Only an accepted offer can be withdrawn this way.');
+  if (o.employeeId) return fail(`${o.employeeId} was already created from this offer. Close it from Offboarding instead.`);
+  if (!reason.trim()) return fail('Say why the candidate backed out.');
+  const stamp = nowIso();
+  const counted = a.stage === 'Hired';
+  const filled = counted ? Math.max(0, j.filled - 1) : j.filled;
+  const jobStatus: JobStatus = j.status === 'Filled' && filled < j.positions ? 'Open' : j.status;
+  const cand = candById(state, a.candidateId);
+  commit({
+    ...state,
+    offers: state.offers.map((x) => (x.id === offerId ? { ...x, status: 'Declined', declineReason: reason.trim(), updatedAt: stamp, events: addEvent(x, `Withdrawn after acceptance by ${actor.name}: ${reason.trim()}`) } : x)),
+    applications: state.applications.map((x) =>
+      x.id === a.id
+        ? { ...x, stage: 'Offer', exit: 'Withdrawn', exitFrom: 'Offer', exitReason: 'Backed out after accepting', exitNote: reason.trim(), history: [...x.history, { id: uid('sc'), at: stamp, by: actor.name, from: x.stage, to: 'Withdrawn', note: `Backed out after accepting ${o.code}: ${reason.trim()}` }] }
+        : x,
+    ),
+    jobs: state.jobs.map((x) =>
+      x.id === j.id
+        ? {
+            ...x,
+            filled,
+            status: jobStatus,
+            updatedAt: stamp,
+            history: [
+              ...(x.history ?? []),
+              { id: uid('jh'), at: stamp, by: actor.name, text: `${cand?.name ?? 'Candidate'} backed out after accepting ${o.code}: ${filled} of ${j.positions} positions filled` },
+              ...(jobStatus !== j.status ? [{ id: uid('jh'), at: stamp, by: 'System', text: `Status changed from ${j.status} to ${jobStatus}` }] : []),
+            ],
+          }
+        : x,
+    ),
+  });
+  audit(offerId, 'Accepted offer withdrawn', 'Accepted', `Declined: ${reason.trim()}`, actor.name);
+  pushNotice({ kind: 'hiring', tone: 'expired', title: `${o.code} was withdrawn after acceptance`, sub: `${cand?.name ?? 'Candidate'} · ${j.title}`, href: `/hiring/jobs/${j.id}`, toRoles: HR_ROLES, toIds: [j.hiringManagerId], by: actor.id });
+  return { ok: true };
+}
+
 /** Onboarding was started from an accepted offer: link candidate and employee both ways, mark the candidate hired and
     count the position as filled (the job becomes Filled when every approved position is). */
 export function completeHire(offerId: string, employee: { id: string; code: string; name: string }, actor: Actor): Result {

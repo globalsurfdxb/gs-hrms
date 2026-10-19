@@ -9,6 +9,7 @@ import { CheckIcon, ClockIcon, FileTextIcon, JoinIcon, PlusIcon, WarnIcon } from
 import { Banner, HiringHeader, OfferBadge, fmtDate, money, payUnit, useActor } from '@/components/hiring/HiringBits';
 import { OfferDrawer } from '@/components/hiring/HiringForms';
 import { OfferLetterDrawer } from '@/components/hiring/OfferLetterDrawer';
+import { WithdrawOfferDialog } from '@/components/hiring/WithdrawOfferDialog';
 import { useStageMail } from '@/components/hiring/Mail';
 import { useScoped } from '@/components/hiring/useScoped';
 import { daysBetween, todayISO } from '@/lib/dates';
@@ -22,6 +23,7 @@ export default function OffersPage() {
   const [picker, setPicker] = useState(false);
   const [offerFor, setOfferFor] = useState<Application | null>(null);
   const [letterId, setLetterId] = useState<string | null>(null);
+  const [withdrawing, setWithdrawing] = useState<string | null>(null);
   const today = todayISO();
   const mailer = useStageMail((text, tone = 'info') => setNotice({ text, tone }));
 
@@ -157,9 +159,14 @@ export default function OffersPage() {
                             </Button>
                           )}
                           {canManage && o.status === 'Accepted' && !o.employeeId && (
-                            <Link href={`/onboarding?hire=${o.id}`} className="btn sm primary">
-                              Start onboarding
-                            </Link>
+                            <>
+                              <Link href={`/onboarding?hire=${o.id}`} className="btn sm primary">
+                                Start onboarding
+                              </Link>
+                              <Button size="sm" variant="ghost" title="The candidate backed out after accepting" onClick={() => setWithdrawing(o.id)}>
+                                Candidate backed out
+                              </Button>
+                            </>
                           )}
                           {o.employeeId && (
                             <Link href={`/directory/${o.employeeId}`} className="btn sm ghost">
@@ -181,6 +188,7 @@ export default function OffersPage() {
       </Card>
 
       {mailer.dialog}
+      <WithdrawOfferDialog offerId={withdrawing} onClose={() => setWithdrawing(null)} onDone={(text) => { setWithdrawing(null); setNotice({ text, tone: 'info' }); }} />
       <OfferLetterDrawer offerId={letterId} onClose={() => setLetterId(null)} onSent={emailLink} onNotice={(text, tone = 'info') => setNotice({ text, tone })} />
       <Drawer open={picker} onClose={() => setPicker(false)} title="New offer" description="Choose a candidate who is at the Offer stage.">
         {!ready.length ? (

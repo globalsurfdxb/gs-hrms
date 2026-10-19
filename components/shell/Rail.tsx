@@ -8,7 +8,7 @@ import { APP_MODULES, HIRING_TABS, PERS, RAIL_LABEL, RailModule, inModule, resol
 import { getLaLastRail, laCall, laIcon, useLaChrome } from '@/lib/laStore';
 import { lastModule } from '@/lib/lastModule';
 import { hiringLevel } from '@/lib/hiringAccess';
-import { CheckIcon, ChevronRightIcon, ClockIcon, FileTextIcon, GearIcon, GridIcon, HomeIcon, InboxIcon, JoinIcon, OpsIcon, PackageIcon, PeopleIcon, ReceiptIcon, RefreshIcon, ReportsIcon } from '@/components/icons';
+import { CheckIcon, ChevronRightIcon, ClockIcon, ExitIcon, FileTextIcon, GearIcon, GridIcon, HomeIcon, InboxIcon, JoinIcon, OpsIcon, PackageIcon, PeopleIcon, ReceiptIcon, RefreshIcon, ReportsIcon } from '@/components/icons';
 
 const MODULE_ICON: Record<string, React.ComponentType<{ className?: string }>> = {
   employee: PeopleIcon,
@@ -53,6 +53,14 @@ const RAIL_HREF: Record<RailModule, string> = {
   reports: '/reports',
   administration: '/administration',
 };
+
+/* The Employee Management tools used every day, one click from anywhere in the module (HR and administrators). */
+const EMPLOYEE_SHORTCUTS: { key: string; label: string; href: string; Icon: React.ComponentType<{ className?: string }> }[] = [
+  { key: 'directory', label: 'Directory', href: '/directory', Icon: PeopleIcon },
+  { key: 'onboarding', label: 'Onboarding', href: '/onboarding', Icon: JoinIcon },
+  { key: 'offboarding', label: 'Offboarding', href: '/offboarding', Icon: ExitIcon },
+];
+const onShortcut = (pathname: string, href: string) => pathname === href || pathname.startsWith(`${href}/`);
 
 function RailLink({ m, active, onClick }: { m: RailModule; active: boolean; onClick: () => void }) {
   const Icon = RAIL_ICON[m];
@@ -140,7 +148,20 @@ export function Rail({ open, onClose }: { open: boolean; onClose: () => void }) 
                       </Link>
                     );
                   })
-                : mainModules.map((m) => <RailLink key={m} m={m} active={activeModule === m} onClick={onClose} />)}
+                : mainModules.map((m) => (
+                    <div key={m} style={{ display: 'contents' }}>
+                      <RailLink m={m} active={activeModule === m && !(m === 'operations' && EMPLOYEE_SHORTCUTS.some((t) => onShortcut(pathname, t.href)))} onClick={onClose} />
+                      {m === 'operations' &&
+                        EMPLOYEE_SHORTCUTS.map(({ key, label, href, Icon }) => (
+                          <Link key={key} href={href} className={`zrail-i ${onShortcut(pathname, href) ? 'active' : ''}`} onClick={onClose}>
+                            <div className="rc">
+                              <Icon />
+                            </div>
+                            <span>{label}</span>
+                          </Link>
+                        ))}
+                    </div>
+                  ))}
         </div>
         <div className="zrail-bottom">
           <button type="button" className={`zrail-i ${onModulePage || switcherOpen ? 'active' : ''}`} onClick={() => setSwitcherOpen((v) => !v)} aria-haspopup="menu" aria-expanded={switcherOpen}>

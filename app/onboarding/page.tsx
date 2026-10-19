@@ -1,6 +1,6 @@
 'use client';
 
-import { Suspense, useEffect, useId, useMemo, useRef, useState } from 'react';
+import { Suspense, useEffect, useId, useMemo, useRef, useState, useSyncExternalStore } from 'react';
 import Link from 'next/link';
 import { useRouter, useSearchParams } from 'next/navigation';
 import { useApp, useCurrentEmployee } from '@/context/AppContext';
@@ -12,6 +12,7 @@ import { Location, LocationDef, Role } from '@/lib/types';
 import { PageHeader } from '@/components/ui/PageHeader';
 import { Card, CardHeader, Button, EmptyState } from '@/components/ui/Card';
 import { StatusBadge } from '@/components/ui/Badge';
+import { WithdrawOfferDialog } from '@/components/hiring/WithdrawOfferDialog';
 import { Avatar } from '@/components/ui/Avatar';
 import { StatStrip } from '@/components/ui/StatStrip';
 import { daysBetween, todayISO } from '@/lib/dates';
@@ -244,6 +245,76 @@ const blankEducation = (): EducationRow => ({ qualification: '', institution: ''
 const blankFamily = (): FamilyRow => ({ name: '', relationship: '', occupation: '' });
 const anyFilled = (r: object, ignore: string[] = []) => Object.entries(r).some(([k, x]) => !ignore.includes(k) && String(x).trim() !== '');
 
+/* An unfinished onboarding is saved in this browser as the form is filled in, so a closed tab, a refresh or a
+   break in the middle does not lose the work. One draft per person: a new hire, or one started from an accepted offer. */
+interface Draft {
+  step: number;
+  office: Location;
+  fullName: string;
+  dob: string;
+  joiningDate: string;
+  organizationId: string;
+  departmentId: string;
+  designationId: string;
+  managerId: string;
+  role: Role;
+  workEmail: string;
+  visaStep: number;
+  assetFlags: string[];
+  notifyDocs: boolean;
+  expiries: Record<string, string>;
+  reminderDays: string[];
+  reminderTo: string[];
+  fv: Record<string, string>;
+  sal: Record<string, string>;
+  emA: EmergencyRow[];
+  emB: EmergencyRow[];
+  exp: ExperienceRow[];
+  edu: EducationRow[];
+  fam: FamilyRow[];
+  savedAt: string;
+}
+const draftKey = (personId: string, offerId?: string) => `gsit.onboarding.draft.v1:${personId}:${offerId ?? 'new'}`;
+function loadDraft(key: string): Draft | null {
+  try {
+    const raw = localStorage.getItem(key);
+    return raw ? (JSON.parse(raw) as Draft) : null;
+  } catch {
+    return null;
+  }
+}
+const clearDraft = (key: string) => {
+  try {
+    localStorage.removeItem(key);
+  } catch {
+    /* storage unavailable */
+  }
+};
+/** What the list shows about an unfinished onboarding. */
+interface DraftInfo {
+  step: number;
+  name: string;
+  joining: string;
+  at: string;
+}
+/** The unfinished onboardings of this person ('new' for one started by hand, or an accepted offer's id), read from
+    storage on the client only. */
+function useDrafts(personId: string, ids: string[]): Record<string, DraftInfo> {
+  const raw = useSyncExternalStore(
+    () => () => {},
+    () =>
+      JSON.stringify(
+        ids.flatMap((id) => {
+          const d = loadDraft(draftKey(personId, id));
+          return d ? [[id, { step: d.step, name: d.fullName, joining: d.joiningDate, at: d.savedAt }]] : [];
+        }),
+      ),
+    () => '[]',
+  );
+  return useMemo(() => Object.fromEntries(JSON.parse(raw) as [string, DraftInfo][]), [raw]);
+}
+const clockTime = (iso: string) => new Date(iso).toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit' });
+
 interface Problem {
   key: string;
   step: number;
@@ -281,12 +352,26 @@ function OnboardingHome({ hireId }: { hireId: string | null }) {
     if (hireId) router.replace('/onboarding');
   };
   const { role: viewerRole } = useApp();
+  const viewer = useCurrentEmployee();
+  const [, setTick] = useState(0);
+  const [withdrawing, setWithdrawing] = useState<string | null>(null);
+  const [removedNote, setRemovedNote] = useState('');
   const waiting = hiringLevel(viewerRole) === 'full' ? hiring.offers.filter((o) => o.status === 'Accepted' && !o.employeeId) : [];
+  const drafts = useDrafts(viewer.id, ['new', ...waiting.map((o) => o.id)]);
   const [listQ, setListQ] = useState('');
   const [listStatus, setListStatus] = useState<'All' | (typeof ONBOARDING_REQUESTS)[number]['status']>('All');
   useEmployeeVersion();
 
-  if (showWizard) return <Wizard prefill={wizardPrefill ?? undefined} onClose={closeWizard} />;
+  if (showWizard)
+    return (
+      <Wizard
+        prefill={wizardPrefill ?? undefined}
+        onClose={() => {
+          setTick((n) => n + 1);
+          closeWizard();
+        }}
+      />
+    );
 
   const pipeline = ONBOARDING_REQUESTS;
   const awaiting = pipeline.filter((r) => r.status === 'Pending Approval').length;
@@ -295,7 +380,27 @@ function OnboardingHome({ hireId }: { hireId: string | null }) {
     return d >= 0 && d <= 30;
   }).length;
   const avgProgress = pipeline.length ? Math.round((pipeline.reduce((n, r) => n + r.step, 0) / pipeline.length / STEPS.length) * 100) : 0;
+  // Onboardings that have been started but not finished: they move here from the accepted offers as soon as the wizard is opened.
+  const draftRows = Object.entries(drafts)
+    .filter(([id]) => id === 'new' || waiting.some((o) => o.id === id))
+    .map(([id, d]) => {
+      const offer = hiring.offers.find((o) => o.id === id);
+      const app = offer && hiring.applications.find((x) => x.id === offer.applicationId);
+      const cand = app && hiring.candidates.find((c) => c.id === app.candidateId);
+      const job = app && hiring.jobs.find((j) => j.id === app.jobId);
+      return {
+        id,
+        name: d.name.trim() || cand?.name || 'New joiner',
+        detail: job ? `${job.title} · ${job.department} · ${job.location}` : 'Started by hand · not yet linked to a hiring offer',
+        joining: d.joining || offer?.joiningDate || '',
+        step: d.step + 1,
+        at: d.at,
+        offerId: id === 'new' ? null : id,
+      };
+    })
+    .sort((x, y) => y.at.localeCompare(x.at));
   const needle = listQ.trim().toLowerCase();
+  const draftsShown = draftRows.filter((r) => (listStatus === 'All' || listStatus === 'In Progress') && (!needle || `${r.name} ${r.detail}`.toLowerCase().includes(needle)));
   const listed = pipeline.filter(
     (r) => (listStatus === 'All' || r.status === listStatus) && (!needle || `${r.candidateName} ${r.designation} ${r.department} ${r.location}`.toLowerCase().includes(needle)),
   );
@@ -328,6 +433,16 @@ function OnboardingHome({ hireId }: { hireId: string | null }) {
         ]}
       />
 
+      {removedNote && (
+        <div className="note-box" style={{ marginBottom: 14 }} role="status">
+          <CheckIcon />
+          <div style={{ flex: 1 }}>{removedNote}</div>
+          <button type="button" className="icon-act" aria-label="Dismiss" onClick={() => setRemovedNote('')}>
+            <XIcon />
+          </button>
+        </div>
+      )}
+
       {unavailable && (
         <div className="note-box" style={{ marginBottom: 14 }}>
           <ShieldIcon />
@@ -338,11 +453,11 @@ function OnboardingHome({ hireId }: { hireId: string | null }) {
         </div>
       )}
 
-      {waiting.length > 0 && (
+      {waiting.filter((o) => !(o.id in drafts)).length > 0 && (
         <Card className="row-gap">
           <CardHeader title="Accepted offers" sub="From Hiring Management. Start onboarding with the candidate's details already filled in." />
           <div className="lc-list">
-            {waiting.map((o) => {
+            {waiting.filter((o) => !(o.id in drafts)).map((o) => {
               const app = hiring.applications.find((a) => a.id === o.applicationId);
               const cand = hiring.candidates.find((c) => c.id === app?.candidateId);
               const job = hiring.jobs.find((j) => j.id === app?.jobId);
@@ -362,6 +477,9 @@ function OnboardingHome({ hireId }: { hireId: string | null }) {
                     <Link href={`/onboarding?hire=${o.id}`} className="btn sm primary">
                       Start onboarding
                     </Link>
+                    <Button size="sm" variant="ghost" title="The candidate backed out after accepting" onClick={() => setWithdrawing(o.id)}>
+                      Candidate backed out
+                    </Button>
                   </div>
                 </div>
               );
@@ -369,6 +487,17 @@ function OnboardingHome({ hireId }: { hireId: string | null }) {
           </div>
         </Card>
       )}
+
+      <WithdrawOfferDialog
+        offerId={withdrawing}
+        onClose={() => setWithdrawing(null)}
+        onDone={(text) => {
+          if (withdrawing) clearDraft(draftKey(viewer.id, withdrawing));
+          setWithdrawing(null);
+          setRemovedNote(text);
+          setTick((n) => n + 1);
+        }}
+      />
 
       <Card className="row-gap">
         <CardHeader title="In-progress onboardings" sub="Across all locations" />
@@ -397,18 +526,18 @@ function OnboardingHome({ hireId }: { hireId: string | null }) {
           )}
           <span className="sp" />
           <span className="lc-count">
-            {listed.length} of {pipeline.length}
+            {listed.length + draftsShown.length} of {pipeline.length + draftRows.length}
           </span>
         </div>
 
-        {!listed.length ? (
+        {!listed.length && !draftsShown.length ? (
           <div>
             <EmptyState
               icon={<JoinIcon />}
-              title={pipeline.length ? 'No matching onboardings' : 'No onboardings in progress'}
-              description={pipeline.length ? 'Try a different search or filter.' : 'Start a new onboarding to capture a joiner’s record and provision their assets.'}
+              title={pipeline.length + draftRows.length ? 'No matching onboardings' : 'No onboardings in progress'}
+              description={pipeline.length + draftRows.length ? 'Try a different search or filter.' : 'Start a new onboarding to capture a joiner’s record and provision their assets.'}
             />
-            {!pipeline.length && (
+            {!pipeline.length && !draftRows.length && (
               <div style={{ padding: '0 0 20px', textAlign: 'center' }}>
                 <Button variant="primary" onClick={() => setShowWizard(true)}>
                   New onboarding
@@ -418,6 +547,55 @@ function OnboardingHome({ hireId }: { hireId: string | null }) {
           </div>
         ) : (
           <div className="lc-list">
+            {draftsShown.map((r) => (
+              <div key={`draft-${r.id}`} className="doc">
+                <div className="lc-onb-row" style={{ flex: 1, minWidth: 0 }}>
+                  <Avatar initials={initialsOf(r.name)} seed={r.name} size={42} />
+                  <div className="grow">
+                    <div className="nm">{r.name}</div>
+                    <div className="mt">{r.detail}</div>
+                    <div className="mt" style={{ marginTop: 2 }}>
+                      {r.joining ? `Joins ${r.joining} · ` : ''}saved {new Date(r.at).toLocaleDateString('en-GB', { day: 'numeric', month: 'short' })} at {clockTime(r.at)}
+                    </div>
+                  </div>
+                  <div className="lc-onb-prog">
+                    <div className="lc-prog">
+                      <i style={{ width: `${(r.step / STEPS.length) * 100}%` }} />
+                    </div>
+                    <span>
+                      Step {r.step}/{STEPS.length}
+                    </span>
+                  </div>
+                  <span className="hm-chip on" style={{ background: '#fdf3df', color: '#B45309' }}>
+                    Not submitted
+                  </span>
+                  {r.offerId ? (
+                    <Link href={`/onboarding?hire=${r.offerId}`} className="btn sm primary">
+                      Continue
+                    </Link>
+                  ) : (
+                    <Button size="sm" variant="primary" onClick={() => setShowWizard(true)}>
+                      Continue
+                    </Button>
+                  )}
+                  <Button
+                    size="sm"
+                    variant="ghost"
+                    onClick={() => {
+                      clearDraft(draftKey(viewer.id, r.offerId ?? undefined));
+                      setTick((n) => n + 1);
+                    }}
+                  >
+                    Discard
+                  </Button>
+                  {r.offerId && (
+                    <Button size="sm" variant="ghost" title="The candidate backed out after accepting" onClick={() => setWithdrawing(r.offerId)}>
+                      Backed out
+                    </Button>
+                  )}
+                </div>
+              </div>
+            ))}
             {listed.map((r) => (
               <div key={r.id} className="doc">
                 <div className="lc-onb-row" style={{ flex: 1, minWidth: 0 }}>
@@ -446,10 +624,10 @@ function OnboardingHome({ hireId }: { hireId: string | null }) {
           </div>
         )}
 
-        {!!listed.length && (
+        {!!(listed.length + draftsShown.length) && (
           <div className="tfoot lc-foot">
             <span>
-              Showing {listed.length} of {pipeline.length} onboarding{pipeline.length === 1 ? '' : 's'}
+              Showing {listed.length + draftsShown.length} of {pipeline.length + draftRows.length} onboarding{pipeline.length + draftRows.length === 1 ? '' : 's'}
             </span>
             <span>Start a new onboarding to add another joiner</span>
           </div>
@@ -463,33 +641,37 @@ function Wizard({ onClose, prefill }: { onClose: () => void; prefill?: Onboardin
   const { location, role: myRole } = useApp();
   const orgNow = useOrg();
   const me = useCurrentEmployee();
-  const [step, setStep] = useState(0);
-  const [office, setOffice] = useState<Location>(prefill?.location ?? location);
+  const dKey = draftKey(me.id, prefill?.offerId);
+  const [draft] = useState(() => loadDraft(dKey));
+  const [savedAt, setSavedAt] = useState<string | null>(draft?.savedAt ?? null);
+  const [step, setStep] = useState(draft?.step ?? 0);
+  const [office, setOffice] = useState<Location>(draft?.office ?? prefill?.location ?? location);
   const [created, setCreated] = useState<{ code: string; name: string; email: string; role: Role; country: string; assets: string } | null>(null);
   const done = created !== null;
   /** Steps the user has tried to leave (or submit) with problems; their errors are shown. */
   const [attempted, setAttempted] = useState<number[]>([]);
 
-  const [fullName, setFullName] = useState(prefill?.name ?? '');
-  const [dob, setDob] = useState('');
-  const [joiningDate, setJoiningDate] = useState(prefill?.joiningDate ?? '');
-  const [organizationId, setOrganizationId] = useState(prefill?.companyId ?? '');
-  const [departmentId, setDepartmentId] = useState(prefill?.departmentId ?? '');
-  const [designationId, setDesignationId] = useState(() => (prefill ? (orgNow.designations.find((d) => d.departmentId === prefill.departmentId && d.title === prefill.designationTitle)?.id ?? '') : ''));
-  const [managerId, setManagerId] = useState(prefill?.managerId ?? '');
-  const [role, setRole] = useState<Role>('Employee');
-  const [workEmail, setWorkEmail] = useState('');
+  const [fullName, setFullName] = useState(draft?.fullName ?? prefill?.name ?? '');
+  const [dob, setDob] = useState(draft?.dob ?? '');
+  const [joiningDate, setJoiningDate] = useState(draft?.joiningDate ?? prefill?.joiningDate ?? '');
+  const [organizationId, setOrganizationId] = useState(draft?.organizationId ?? prefill?.companyId ?? '');
+  const [departmentId, setDepartmentId] = useState(draft?.departmentId ?? prefill?.departmentId ?? '');
+  const [designationId, setDesignationId] = useState(() => (draft ? draft.designationId : prefill ? (orgNow.designations.find((d) => d.departmentId === prefill.departmentId && d.title === prefill.designationTitle)?.id ?? '') : ''));
+  const [managerId, setManagerId] = useState(draft?.managerId ?? prefill?.managerId ?? '');
+  const [role, setRole] = useState<Role>(draft?.role ?? 'Employee');
+  const [workEmail, setWorkEmail] = useState(draft?.workEmail ?? '');
   const [roleError, setRoleError] = useState('');
-  const [visaStep, setVisaStep] = useState(0);
-  const [assetFlags, setAssetFlags] = useState<Set<string>>(new Set(['Laptop', 'Access card']));
-  const [notifyDocs, setNotifyDocs] = useState(true);
-  const [expiries, setExpiries] = useState<Record<string, string>>({});
-  const [reminderDays, setReminderDays] = useState<Set<string>>(new Set(REMINDER_DAYS));
-  const [reminderTo, setReminderTo] = useState<Set<string>>(new Set(['Employee', 'HR']));
+  const [visaStep, setVisaStep] = useState(draft?.visaStep ?? 0);
+  const [assetFlags, setAssetFlags] = useState<Set<string>>(new Set(draft?.assetFlags ?? ['Laptop', 'Access card']));
+  const [notifyDocs, setNotifyDocs] = useState(draft?.notifyDocs ?? true);
+  const [expiries, setExpiries] = useState<Record<string, string>>(draft?.expiries ?? {});
+  const [reminderDays, setReminderDays] = useState<Set<string>>(new Set(draft?.reminderDays ?? REMINDER_DAYS));
+  const [reminderTo, setReminderTo] = useState<Set<string>>(new Set(draft?.reminderTo ?? ['Employee', 'HR']));
 
   /* every other field, keyed like the employee record (see FIELDS in lib/employeeStore) */
   const [fv, setFv] = useState<Record<string, string>>(() => {
     const base: Record<string, string> = { maritalStatus: 'Single', employmentType: 'Permanent' };
+    if (draft) return draft.fv;
     if (!prefill) return base;
     const def0 = orgNow.locationDef(prefill.location);
     // The candidate's number may carry the country code; keep only the digits the location's format takes.
@@ -500,12 +682,35 @@ function Wizard({ onClose, prefill }: { onClose: () => void; prefill?: Onboardin
   });
   const f = (k: string) => fv[k] ?? '';
   const setF = (k: string, val: string) => setFv((p) => ({ ...p, [k]: val }));
-  const [sal, setSal] = useState<Record<string, string>>(prefill?.salary ?? {});
-  const [emA, setEmA] = useState<EmergencyRow[]>([blankContact()]);
-  const [emB, setEmB] = useState<EmergencyRow[]>([blankContact()]);
-  const [exp, setExp] = useState<ExperienceRow[]>([blankExperience()]);
-  const [edu, setEdu] = useState<EducationRow[]>([blankEducation()]);
-  const [fam, setFam] = useState<FamilyRow[]>([blankFamily()]);
+  const [sal, setSal] = useState<Record<string, string>>(draft?.sal ?? prefill?.salary ?? {});
+  const [emA, setEmA] = useState<EmergencyRow[]>(draft?.emA ?? [blankContact()]);
+  const [emB, setEmB] = useState<EmergencyRow[]>(draft?.emB ?? [blankContact()]);
+  const [exp, setExp] = useState<ExperienceRow[]>(draft?.exp ?? [blankExperience()]);
+  const [edu, setEdu] = useState<EducationRow[]>(draft?.edu ?? [blankEducation()]);
+  const [fam, setFam] = useState<FamilyRow[]>(draft?.fam ?? [blankFamily()]);
+
+  // Save the form a moment after each change. A form that is still empty is not worth keeping.
+  const snapshot = JSON.stringify({ step, office, fullName, dob, joiningDate, organizationId, departmentId, designationId, managerId, role, workEmail, visaStep, assetFlags: [...assetFlags], notifyDocs, expiries, reminderDays: [...reminderDays], reminderTo: [...reminderTo], fv, sal, emA, emB, exp, edu, fam });
+
+  useEffect(() => {
+    if (done) {
+      clearDraft(dKey);
+      return;
+    }
+    const started = fullName.trim() !== '' || dob !== '' || workEmail.trim() !== '' || Object.entries(fv).some(([k, x]) => x.trim() !== '' && !(k === 'maritalStatus' && x === 'Single') && !(k === 'employmentType' && x === 'Permanent'));
+    if (!started) return;
+    const t = setTimeout(() => {
+      const at = new Date().toISOString();
+      try {
+        localStorage.setItem(dKey, JSON.stringify({ ...(JSON.parse(snapshot) as object), savedAt: at }));
+        setSavedAt(at);
+      } catch {
+        /* storage full or unavailable: the form still works, it just is not kept */
+      }
+    }, 700);
+    return () => clearTimeout(t);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [snapshot, done, dKey]);
 
   const { companies, departments, designations, locations, locationsLabel, locationDef } = useOrg();
   const def = locationDef(office) ?? locations[0];
@@ -1612,7 +1817,7 @@ function Wizard({ onClose, prefill }: { onClose: () => void; prefill?: Onboardin
         {!done && (
           <div className="wizfoot">
             <div className="autosave">
-              <span className="dot" /> Draft saved automatically
+              <span className="dot" /> {savedAt ? `Draft saved at ${clockTime(savedAt)}` : 'Saved automatically as you type'}
               {roleError && <span style={{ marginLeft: 14, color: '#B91C1C', fontWeight: 600 }}>{roleError}</span>}
             </div>
             <div style={{ display: 'flex', gap: 9 }}>
@@ -1621,9 +1826,20 @@ function Wizard({ onClose, prefill }: { onClose: () => void; prefill?: Onboardin
                   Back
                 </Button>
               )}
+              {savedAt && (
+                <Button
+                  variant="ghost"
+                  onClick={() => {
+                    clearDraft(dKey);
+                    onClose();
+                  }}
+                >
+                  Discard draft
+                </Button>
+              )}
               {step === 0 && (
                 <Button variant="ghost" onClick={onClose}>
-                  Cancel
+                  {savedAt ? 'Save and close' : 'Cancel'}
                 </Button>
               )}
               <Button variant="primary" onClick={next}>

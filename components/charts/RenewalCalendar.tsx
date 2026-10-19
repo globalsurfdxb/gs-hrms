@@ -1,3 +1,7 @@
+'use client';
+
+import { ShowMore } from '@/components/ui/ShowMore';
+
 interface RenewalItem {
   id: string;
   label: string;
@@ -31,15 +35,16 @@ export function RenewalCalendar({ items }: { items: RenewalItem[] }) {
         <span>+60d</span>
         <span>+90d</span>
       </div>
-      {items.map((it) => {
+      <ShowMore items={items} limit={8} noun="more renewals">
+        {(it) => {
         const pos = it.offsetDays < 0 ? 2 : Math.min(96, (it.offsetDays / 90) * 100);
         const color = colorFor(it.offsetDays);
         const label = it.offsetDays < 0 ? `${it.offsetDays}d` : `+${it.offsetDays}d`;
         return (
-          <div key={it.id} style={{ display: 'grid', gridTemplateColumns: '150px 1fr', alignItems: 'center', gap: 10, padding: '5px 0', borderBottom: '1px solid var(--border-soft)' }}>
-            <div style={{ fontSize: 12, fontWeight: 600 }}>
+          <div key={it.id} style={{ display: 'grid', gridTemplateColumns: 'minmax(150px, 38%) 1fr', alignItems: 'center', gap: 10, padding: '5px 0', borderBottom: '1px solid var(--border-soft)' }}>
+            <div style={{ fontSize: 13, fontWeight: 600 }}>
               {it.label}
-              <div style={{ fontSize: 10.5, color: 'var(--faint)', fontWeight: 500 }}>{it.sub}</div>
+              <div style={{ fontSize: 11.5, color: 'var(--muted)', fontWeight: 500 }}>{it.sub}</div>
             </div>
             <div style={{ position: 'relative', height: 22 }}>
               <div style={{ position: 'absolute', left: 0, right: 0, top: '50%', height: 2, background: 'var(--border-soft)', borderRadius: 2 }} />
@@ -63,7 +68,8 @@ export function RenewalCalendar({ items }: { items: RenewalItem[] }) {
             </div>
           </div>
         );
-      })}
+        }}
+      </ShowMore>
     </div>
   );
 }

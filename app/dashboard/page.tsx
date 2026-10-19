@@ -2,6 +2,7 @@
 
 import { useSyncExternalStore } from 'react';
 import Link from 'next/link';
+import { ShowMore } from '@/components/ui/ShowMore';
 import { useApp, useCurrentEmployee } from '@/context/AppContext';
 import {
   ASSETS,
@@ -272,7 +273,8 @@ function EmployeeHome({ now }: { now: number }) {
           <CardHeader title="My renewals" sub="Your documents, soonest first" action={<Link href="/my/expiry" className="lnk">Open →</Link>} />
           {docs.length ? (
             <div className="da-list">
-              {docs.slice(0, 5).map(({ r, days }) => (
+              <ShowMore items={docs} limit={5} noun="more documents">
+                {({ r, days }) => (
                 <div key={r.key} className="da-row">
                   <span className={`da-ic t-${docState(r) === 'expired' ? 'expired' : docState(r) === 'soon' ? 'soon' : 'active'}`}>
                     <ClockIcon />
@@ -285,7 +287,8 @@ function EmployeeHome({ now }: { now: number }) {
                   </div>
                   <Badge tone={docState(r) === 'expired' ? 'expired' : docState(r) === 'soon' ? 'soon' : 'active'}>{docState(r) === 'ok' ? 'Valid' : docState(r) === 'soon' ? 'Soon' : 'Expired'}</Badge>
                 </div>
-              ))}
+                )}
+              </ShowMore>
             </div>
           ) : (
             <div className="empty">
@@ -316,7 +319,8 @@ function EmployeeHome({ now }: { now: number }) {
             )}
             <div className="at-sub">Upcoming leave</div>
             {upcomingLeave.length ? (
-              upcomingLeave.slice(0, 3).map((r) => (
+              <ShowMore items={upcomingLeave} limit={3} noun="more leave">
+                {(r) => (
                 <div key={r.id} className="at-leave">
                   <span className="at-av">{r.days}d</span>
                   <div style={{ minWidth: 0, flex: 1 }}>
@@ -327,7 +331,8 @@ function EmployeeHome({ now }: { now: number }) {
                     </div>
                   </div>
                 </div>
-              ))
+                )}
+              </ShowMore>
             ) : (
               <div className="at-d" style={{ padding: '6px 0' }}>No leave booked.</div>
             )}
@@ -507,7 +512,8 @@ function TeamLeadHome({ now }: { now: number }) {
           <CardHeader title="Team renewals" sub="Documents expiring within 90 days" action={<Link href="/team/expiry" className="lnk">Open →</Link>} />
           {renewals.length ? (
             <div className="da-list">
-              {renewals.slice(0, 5).map(({ r, days }) => (
+              <ShowMore items={renewals} limit={5} noun="more renewals">
+                {({ r, days }) => (
                 <div key={r.key} className="da-row">
                   <span className={`da-ic t-${docState(r) === 'expired' ? 'expired' : 'soon'}`}>
                     <ClockIcon />
@@ -522,7 +528,8 @@ function TeamLeadHome({ now }: { now: number }) {
                   </div>
                   <Badge tone={docState(r) === 'expired' ? 'expired' : 'soon'}>{docState(r) === 'expired' ? 'Expired' : 'Soon'}</Badge>
                 </div>
-              ))}
+                )}
+              </ShowMore>
             </div>
           ) : (
             <div className="empty">
@@ -821,7 +828,8 @@ export default function DashboardPage() {
             </div>
             <div className="at-sub">Pending leave requests</div>
             {pendingLeave.length ? (
-              pendingLeave.slice(0, 3).map((r) => {
+              <ShowMore items={pendingLeave} limit={3} noun="more requests">
+                {(r) => {
                 const e = employeeById(r.employeeId);
                 return (
                   <div key={r.id} className="at-leave">
@@ -835,7 +843,8 @@ export default function DashboardPage() {
                     </div>
                   </div>
                 );
-              })
+                }}
+              </ShowMore>
             ) : (
               <div className="at-d" style={{ padding: '6px 0' }}>No pending leave requests.</div>
             )}
