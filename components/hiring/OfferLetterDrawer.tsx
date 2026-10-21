@@ -9,7 +9,7 @@ import { LetterFrame } from '@/components/hiring/LetterFrame';
 import { OfferBadge, fmtDateTime, useActor } from '@/components/hiring/HiringBits';
 import { appById, candById, jobById, revokeOfferLink, saveOfferLetter, sendOffer, useHiring } from '@/lib/hiringStore';
 import { Offer } from '@/lib/hiringTypes';
-import { buildLetter, downloadLetterPdf, useLetterState } from '@/lib/hiringLetters';
+import { buildLetter, companyOfOffer, downloadLetterPdf, useLetterState } from '@/lib/hiringLetters';
 
 export const offerLink = (token: string) => `${typeof window === 'undefined' ? '' : window.location.origin}/offer/respond/${token}`;
 
@@ -96,7 +96,7 @@ function Body({ offer, onClose, onSent, onNotice }: { offer: Offer; onClose: () 
         </div>
       )}
 
-      <LetterFrame html={html} title={`Offer letter ${offer.code}`} height={520} location={offer.location} />
+      <LetterFrame html={html} title={`Offer letter ${offer.code}`} height={520} location={offer.location} companyId={companyOfOffer(s, offer)} />
 
       {!locked && (
         <div className="hm-lt-act">
@@ -147,7 +147,7 @@ function Body({ offer, onClose, onSent, onNotice }: { offer: Offer; onClose: () 
       )}
       {locked && (
         <div className="hm-lt-act">
-          <Button onClick={() => void downloadLetterPdf(html, `Offer letter ${offer.code}`, offer.location)}>Download PDF</Button>
+          <Button onClick={() => void downloadLetterPdf(html, `Offer letter ${offer.code}`, offer.location, companyOfOffer(s, offer))}>Download PDF</Button>
         </div>
       )}
 

@@ -697,7 +697,7 @@ function Wizard({ onClose, prefill }: { onClose: () => void; prefill?: Onboardin
       clearDraft(dKey);
       return;
     }
-    const started = fullName.trim() !== '' || dob !== '' || workEmail.trim() !== '' || Object.entries(fv).some(([k, x]) => x.trim() !== '' && !(k === 'maritalStatus' && x === 'Single') && !(k === 'employmentType' && x === 'Permanent'));
+    const started = fullName.trim() !== '' || dob !== '' || workEmail.trim() !== '' || Object.entries(fv).some(([k, x]) => (x ?? '').trim() !== '' && !(k === 'maritalStatus' && x === 'Single') && !(k === 'employmentType' && x === 'Permanent'));
     if (!started) return;
     const t = setTimeout(() => {
       const at = new Date().toISOString();

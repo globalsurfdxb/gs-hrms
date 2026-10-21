@@ -11,6 +11,9 @@ import { Banner, Fg, fmtDateTime, useActor } from '@/components/hiring/HiringBit
 import { LetterFrame } from '@/components/hiring/LetterFrame';
 import {
   LETTER_FIELDS,
+  companiesAt,
+  perCompany,
+  slotKey,
   importTemplateFile,
   renderLetter,
   resetLetterSlot,
@@ -35,26 +38,34 @@ export default function OfferLetterSetupPage() {
   const actor = useActor();
   const fileRef = useRef<HTMLInputElement>(null);
   const [slot, setSlot] = useState('Dubai');
+  // In the UAE every company has its own letter; India has a single one.
+  const [coId, setCoId] = useState(() => companiesAt('Dubai')[0]?.id ?? '');
   const [notice, setNotice] = useState<{ text: string; tone: 'info' | 'warn' } | null>(null);
   const [busy, setBusy] = useState(false);
   const [edit, setEdit] = useState<string | null>(null);
   const [resetting, setResetting] = useState(false);
 
-  const own = ls.slots[slot];
-  const active = templateFor(ls, slot);
+  const perCo = perCompany(slot);
+  const key = slotKey(slot, perCo ? coId : undefined);
+  const companies = perCo ? companiesAt(slot) : [];
+  const coName = perCo ? companies.find((c) => c.id === coId)?.name : undefined;
+  const locLabel = SLOTS.find((x) => x.id === slot)?.label ?? slot;
+  const target = coName ? `${coName} (${locLabel})` : locLabel;
+  const own = ls.slots[key];
+  const active = templateFor(ls, slot, perCo ? coId : undefined);
   const showing = edit ?? active.html;
   const unknown = useMemo(() => [...new Set([...showing.matchAll(/\{\{\s*([\w.]+)\s*\}\}/g)].map((m) => m[1]))].filter((k) => !KNOWN.has(k)), [showing]);
   const previewLocation = slot;
-  const preview = useMemo(() => renderLetter(showing, sampleLetterValues(previewLocation, signatoryFor(ls, previewLocation))).html, [showing, previewLocation, ls]);
+  const preview = useMemo(() => renderLetter(showing, sampleLetterValues(previewLocation, signatoryFor(ls, previewLocation), perCo ? coId : undefined)).html, [showing, previewLocation, ls, coId, perCo]);
 
   const upload = async (file: File | undefined) => {
     if (!file) return;
     setBusy(true);
     try {
       const r = await importTemplateFile(file);
-      saveLetterSlot(slot, r.html, 'upload', actor.name, file.name);
+      saveLetterSlot(key, r.html, 'upload', actor.name, file.name);
       setEdit(null);
-      setNotice({ text: `${file.name} is now the offer letter for ${SLOTS.find((x) => x.id === slot)?.label.toLowerCase()}. ${r.note} Check the preview below.`, tone: 'info' });
+      setNotice({ text: `${file.name} is now the offer letter for ${target}. ${r.note} Check the preview below.`, tone: 'info' });
     } catch (e) {
       setNotice({ text: e instanceof Error ? e.message : 'That file could not be read.', tone: 'warn' });
     } finally {
@@ -87,7 +98,7 @@ export default function OfferLetterSetupPage() {
 
       <div className="hm-lt-grid" style={{ marginTop: 16 }}>
         <Card>
-          <CardHeader title="Letter template" sub="One letter for each work location" />
+          <CardHeader title="Letter template" sub={perCo ? 'Each UAE company has its own letter' : 'One letter for India'} />
           <div className="hm-lt-slots" role="tablist" aria-label="Location">
             {SLOTS.map((x) => (
               <button
@@ -98,14 +109,37 @@ export default function OfferLetterSetupPage() {
                 className={`hm-lt-slot ${slot === x.id ? 'on' : ''}`}
                 onClick={() => {
                   setSlot(x.id);
+                  setCoId(perCompany(x.id) ? (companiesAt(x.id)[0]?.id ?? '') : '');
                   setEdit(null);
                 }}
               >
                 {x.label}
-                {ls.slots[x.id] ? ' ●' : ''}
+                {perCompany(x.id) ? (companiesAt(x.id).some((c) => ls.slots[slotKey(x.id, c.id)]) ? ' ●' : '') : ls.slots[x.id] ? ' ●' : ''}
               </button>
             ))}
           </div>
+          {perCo && companies.length > 0 && (
+            <div className="hm-lt-cos" role="tablist" aria-label="Company">
+              <span>Company</span>
+              {companies.map((c) => (
+                <button
+                  key={c.id || 'all'}
+                  type="button"
+                  role="tab"
+                  aria-selected={coId === c.id}
+                  className={`hm-lt-co ${coId === c.id ? 'on' : ''}`}
+                  onClick={() => {
+                    setCoId(c.id);
+                    setEdit(null);
+                  }}
+                  title={ls.slots[slotKey(slot, c.id)] ? 'Has its own letter' : 'Uses the built-in letter'}
+                >
+                  {c.name}
+                  {ls.slots[slotKey(slot, c.id)] ? ' ●' : ''}
+                </button>
+              ))}
+            </div>
+          )}
           <div className="hm-lt-body">
             <div className="hm-lt-meta">
               <span>
@@ -118,7 +152,7 @@ export default function OfferLetterSetupPage() {
             <div className="hm-lt-act">
               <input ref={fileRef} type="file" accept=".docx,.html,.htm,.txt,.md" hidden onChange={(e) => void upload(e.target.files?.[0])} />
               <Button variant="primary" disabled={busy} onClick={() => fileRef.current?.click()}>
-                {busy ? 'Reading the file…' : own ? 'Upload a new file' : 'Upload template'}
+                {busy ? 'Reading the file…' : own ? 'Upload a new file' : coName ? `Upload ${coName} letter` : 'Upload template'}
               </Button>
               {edit === null ? (
                 <Button onClick={() => setEdit(active.html)}>Edit the text</Button>
@@ -127,7 +161,7 @@ export default function OfferLetterSetupPage() {
                   <Button
                     variant="primary"
                     onClick={() => {
-                      saveLetterSlot(slot, edit, 'edited', actor.name, own?.fileName);
+                      saveLetterSlot(key, edit, 'edited', actor.name, own?.fileName);
                       setEdit(null);
                       setNotice({ text: 'Template saved. New letters use it; letters already prepared keep the text they were prepared with.', tone: 'info' });
                     }}
@@ -163,7 +197,7 @@ export default function OfferLetterSetupPage() {
               <div className="tx-s faint" style={{ marginBottom: 6 }}>
                 Preview with sample details
               </div>
-              <LetterFrame html={preview} title="Offer letter preview" height={640} location={previewLocation} />
+              <LetterFrame html={preview} title="Offer letter preview" height={640} location={previewLocation} companyId={perCo ? coId : undefined} />
             </div>
           </div>
         </Card>
@@ -198,11 +232,11 @@ export default function OfferLetterSetupPage() {
       <ConfirmDialog
         open={resetting}
         title="Back to the built-in letter?"
-        message={`The uploaded template for ${SLOTS.find((x) => x.id === slot)?.label.toLowerCase()} is removed and the built-in letter is used for new offers. Letters already prepared are not changed.`}
+        message={`The uploaded template for ${target} is removed and the built-in letter is used for new offers. Letters already prepared are not changed.`}
         confirmLabel="Use built-in letter"
         onCancel={() => setResetting(false)}
         onConfirm={() => {
-          resetLetterSlot(slot, actor.name);
+          resetLetterSlot(key, actor.name);
           setResetting(false);
           setEdit(null);
           setNotice({ text: 'The built-in letter is in use again.', tone: 'info' });

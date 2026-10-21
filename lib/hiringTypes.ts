@@ -207,6 +207,8 @@ export interface Offer {
   code: string;
   applicationId: string;
   location: string;
+  /** The company issuing the offer (from the job). */
+  companyId?: string;
   status: OfferStatus;
   currency: string;
   /** Salary lines: UAE per month, India per year. */

@@ -5,7 +5,7 @@ import { useParams } from 'next/navigation';
 import { CareersFrame } from '@/components/hiring/Careers';
 import { LetterFrame } from '@/components/hiring/LetterFrame';
 import { appById, candById, jobById, offerByToken, recordOfferEvent, respondToOffer, useHiring } from '@/lib/hiringStore';
-import { downloadLetterPdf } from '@/lib/hiringLetters';
+import { companyOfOffer, downloadLetterPdf } from '@/lib/hiringLetters';
 import { ENTITY_NAME } from '@/lib/org';
 
 const long = (iso: string) => new Date(`${iso.slice(0, 10)}T00:00:00`).toLocaleDateString('en-GB', { day: 'numeric', month: 'long', year: 'numeric' });
@@ -57,7 +57,7 @@ export default function OfferRespondPage() {
     setSaving(true);
     setError('');
     try {
-      await downloadLetterPdf(html, `Offer letter ${offer.code}`, offer.location);
+      await downloadLetterPdf(html, `Offer letter ${offer.code}`, offer.location, companyOfOffer(s, offer));
       recordOfferEvent(token, 'downloaded');
     } catch {
       setError('The PDF could not be created. Please try again.');
@@ -133,7 +133,7 @@ export default function OfferRespondPage() {
 
       <div className="cr-card">
         <h2>Offer letter</h2>
-        <LetterFrame html={html} title={`Offer letter ${offer.code}`} height={620} location={offer.location} />
+        <LetterFrame html={html} title={`Offer letter ${offer.code}`} height={620} location={offer.location} companyId={companyOfOffer(s, offer)} />
         <div className="of-act">
           <button type="button" className="btn primary" disabled={saving} onClick={() => void getCopy()}>
             {saving ? 'Preparing your PDF…' : 'Download the letter (PDF)'}

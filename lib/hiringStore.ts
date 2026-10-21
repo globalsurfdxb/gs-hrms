@@ -626,6 +626,7 @@ export function createOffer(appId: string, input: OfferInput, actor: Actor): Res
     code: nextCode('OFF', state.offers.map((x) => x.code)),
     applicationId: appId,
     location: a.location,
+    companyId: j.companyId,
     status: 'Draft',
     currency: j.currency,
     ...input,

@@ -1,7 +1,7 @@
 import { useSyncExternalStore } from 'react';
 import { logAudit } from '@/lib/employeeStore';
 import { ENTITY_NAME, legalEntityFor } from '@/lib/org';
-import { employeeById } from '@/lib/data';
+import { COMPANIES, employeeById } from '@/lib/data';
 import { GS_LOGO } from '@/lib/brandAssets';
 import { candById, appById, jobById, offerById } from '@/lib/hiringStore';
 import { HiringState, Offer } from '@/lib/hiringTypes';
@@ -170,15 +170,36 @@ export const INDIA_LETTER_HTML = `<p>Date: {{letter.dateShort}}</p>
 /** The built-in letter for a location. */
 export const builtinFor = (location: string) => (location === 'Kochi' ? INDIA_LETTER_HTML : DEFAULT_LETTER_HTML);
 
+/* ---------------------------------------------------------------------- templates per company */
+
+/** The key a template is stored under: a location's own letter, or one for a company inside that location. */
+export const slotKey = (location: string, companyId?: string) => (companyId ? `${location}:${companyId}` : location);
+
+/** Locations where every company has its own letter. Elsewhere there is one letter for the whole location. */
+export const perCompany = (location: string) => location === 'Dubai';
+
+/** The companies that can issue letters in a location (a company can be tied to one location or work in both). */
+export const companiesAt = (location: string) => COMPANIES.filter((c) => c.status === 'Active' && (c.location === 'Both' || c.location === location));
+
+/** The name printed on a letter for a company: the legal entity where one is registered, otherwise the company's own name. */
+export function entityNameFor(location: string, companyId?: string): string {
+  const co = companyId ? COMPANIES.find((c) => c.id === companyId) : undefined;
+  if (!co || co.id === 'co-1') return legalEntityFor(location);
+  return co.name;
+}
+
+/** The company an offer is issued by, from its job. */
+export const companyOfOffer = (s: HiringState, offer: Offer): string | undefined => offer.companyId ?? jobById(s, appById(s, offer.applicationId)?.jobId ?? '')?.companyId;
+
 /* ---------------------------------------------------------------------- letterhead and page */
 
 /** Logo on top and address on the bottom of every page, per location. */
-export function letterhead(location?: string): { head: string; foot: string } {
+export function letterhead(location?: string, companyId?: string): { head: string; foot: string } {
   const head = `<div class="lh-head"><img src="${GS_LOGO}" alt="${escapeHtml(ENTITY_NAME)}"></div>`;
   const foot =
     location === 'Kochi'
       ? `<div class="lh-foot"><div>Global Surf IT Private Limited<br>Trans Asia Cyberpark, Infopark Phase 2, 10G, Tower 2<br>Kakkanad, Cochin- 682303</div><div><b>T:</b> 8075490551<br><b>E:</b> hr@globalsurf.ae</div></div>`
-      : `<div class="lh-foot"><div>${escapeHtml(legalEntityFor(location ?? ''))}</div></div>`;
+      : `<div class="lh-foot"><div>${escapeHtml(entityNameFor(location ?? '', companyId))}</div></div>`;
   return { head, foot };
 }
 
@@ -200,8 +221,8 @@ export function shell(inner: string, title = 'Offer letter'): string {
 }
 
 /** A letter as the reader sees it: letterhead, body and footer. */
-export function fullDocument(body: string, title = 'Offer letter', location?: string): string {
-  const { head, foot } = letterhead(location);
+export function fullDocument(body: string, title = 'Offer letter', location?: string, companyId?: string): string {
+  const { head, foot } = letterhead(location, companyId);
   return shell(`${head}<div class="lh-body">${body}</div>${foot}`, title);
 }
 
@@ -258,7 +279,7 @@ ${row('Gross Salary', gross)}${row('Employer PF Contribution', epf)}${row('CTC e
 export interface LetterContext {
   offer: Pick<Offer, 'code' | 'joiningDate' | 'probationMonths' | 'expiryDate' | 'currency' | 'total' | 'lines'>;
   candidate: string;
-  job: { title: string; department: string; location: string; employmentType: string; description: string };
+  job: { title: string; department: string; location: string; employmentType: string; description: string; companyId?: string };
   manager?: string;
 }
 
@@ -280,7 +301,7 @@ export function valuesFromContext(c: LetterContext, signatory: { name: string; t
     'job.location': e(c.job.location === 'Kochi' ? 'Kochi, India' : 'Dubai, United Arab Emirates'),
     'job.employmentType': e(c.job.employmentType),
     'job.responsibilities': bullets.length ? `<ul>${bullets.map((b) => `<li>${e(b)}</li>`).join('')}</ul>` : '<p>Your detailed responsibilities will be shared by your reporting manager.</p>',
-    'company.entity': e(legalEntityFor(c.job.location)),
+    'company.entity': e(entityNameFor(c.job.location, c.job.companyId)),
     'offer.reference': e(o.code),
     'offer.joiningDate': e(longDate(o.joiningDate)),
     'offer.probation': e(o.probationMonths ? `${o.probationMonths} month${o.probationMonths === 1 ? '' : 's'}` : 'no probation'),
@@ -290,7 +311,7 @@ export function valuesFromContext(c: LetterContext, signatory: { name: string; t
     'offer.payUnit': e(unit),
     'offer.salaryTable': breakup ? breakup.html : `<table><thead><tr><th>Component</th><th class="n">Amount (${e(unit)})</th></tr></thead><tbody>${rows}<tr class="t"><td>Total</td><td class="n">${e(o.currency)} ${money(o.total)}</td></tr></tbody></table>`,
     'offer.monthlyCtc': e(breakup ? `${o.currency} ${inr(breakup.monthlyCtc)}` : `${o.currency} ${money(o.total)}`),
-    'company.name': e(ENTITY_NAME),
+    'company.name': e(COMPANIES.find((x) => x.id === c.job.companyId)?.name ?? ENTITY_NAME),
     'letter.date': e(longDate(now)),
     'letter.dateShort': e(shortDate(now)),
     'recruiter.name': e(recruiter),
@@ -309,7 +330,7 @@ export function letterValues(s: HiringState, offer: Offer, signatory: { name: st
   const ctx: LetterContext = {
     offer,
     candidate: c?.name ?? '',
-    job: { title: j?.title ?? '', department: j?.department ?? '', location: j?.location ?? offer.location, employmentType: j?.employmentType ?? '', description: j?.description ?? '' },
+    job: { title: j?.title ?? '', department: j?.department ?? '', location: j?.location ?? offer.location, employmentType: j?.employmentType ?? '', description: j?.description ?? '', companyId: j?.companyId },
     manager: j ? employeeById(j.hiringManagerId)?.name : undefined,
   };
   const v = valuesFromContext(ctx, signatory, recruiter);
@@ -332,7 +353,7 @@ export function renderLetter(html: string, values: Record<string, string>): { ht
 }
 
 /** Sample details for the template preview; the salary table follows the location. */
-export function sampleLetterValues(location = 'Dubai', signatory: Signatory = signatoryFor(getLetterState(), location)): Record<string, string> {
+export function sampleLetterValues(location = 'Dubai', signatory: Signatory = signatoryFor(getLetterState(), location), companyId?: string): Record<string, string> {
   const india = location === 'Kochi';
   const ctx: LetterContext = {
     offer: {
@@ -347,7 +368,7 @@ export function sampleLetterValues(location = 'Dubai', signatory: Signatory = si
         : [{ label: 'Basic', amount: 9000 }, { label: 'Housing', amount: 2500 }, { label: 'Transport', amount: 1500 }],
     },
     candidate: 'Hamza Farouk',
-    job: { title: 'Network Engineer', department: 'Network Engineering', location, employmentType: 'Full-time', description: 'Design, deploy and support client networks.\nOwn incident response for managed customers.\nDocument changes and hand over to the service desk.' },
+    job: { title: 'Network Engineer', department: 'Network Engineering', location, employmentType: 'Full-time', description: 'Design, deploy and support client networks.\nOwn incident response for managed customers.\nDocument changes and hand over to the service desk.', companyId },
     manager: 'Harsha',
   };
   return valuesFromContext(ctx, signatory, 'Aslima');
@@ -440,17 +461,24 @@ export function getLetterState(): LetterState {
   return state;
 }
 
-/** The template that applies to a location: its own, else the built-in letter. */
-export function templateFor(s: LetterState, location: string): { html: string; slot: string; source: string } {
+/** The template that applies. In a location with a letter per company, the company's own letter, else the built-in one;
+    elsewhere the location's letter, else the built-in one. */
+export function templateFor(s: LetterState, location: string, companyId?: string): { html: string; slot: string; source: string } {
   const label = (x: LetterSlot) => (x.source === 'upload' ? `Uploaded${x.fileName ? ` (${x.fileName})` : ''}` : 'Edited');
-  const own = s.slots[location];
-  if (own) return { html: own.html, slot: location, source: label(own) };
-  return { html: builtinFor(location), slot: location, source: location === 'Kochi' ? 'Built-in (India letter of employment)' : 'Built-in' };
+  const key = perCompany(location) ? slotKey(location, companyId) : location;
+  const own = s.slots[key];
+  if (own) return { html: own.html, slot: key, source: label(own) };
+  return { html: builtinFor(location), slot: key, source: location === 'Kochi' ? 'Built-in (India letter of employment)' : 'Built-in' };
 }
+
+const slotLabel = (slot: string) => {
+  const [loc, co] = slot.split(':');
+  return `${loc === 'Kochi' ? 'India' : 'UAE'}${co ? ` · ${COMPANIES.find((c) => c.id === co)?.name ?? co}` : ''}`;
+};
 
 export function saveLetterSlot(slot: string, html: string, source: 'upload' | 'edited', by: string, fileName?: string) {
   commit({ ...state, slots: { ...state.slots, [slot]: { html, source, fileName, updatedAt: new Date().toISOString(), updatedBy: by } } });
-  logAudit({ employeeId: `hiring:letter-${slot}`, field: source === 'upload' ? 'Offer letter template uploaded' : 'Offer letter template edited', to: `${slot === 'Kochi' ? 'India' : 'UAE'}${fileName ? ` · ${fileName}` : ''}`, changedBy: by, module: 'Hiring' });
+  logAudit({ employeeId: `hiring:letter-${slot}`, field: source === 'upload' ? 'Offer letter template uploaded' : 'Offer letter template edited', to: `${slotLabel(slot)}${fileName ? ` · ${fileName}` : ''}`, changedBy: by, module: 'Hiring' });
 }
 
 export function resetLetterSlot(slot: string, by: string) {
@@ -469,7 +497,7 @@ export function saveSignatory(location: string, name: string, title: string, by:
 export function buildLetter(s: HiringState, offerId: string, recruiter: string, ls: LetterState = getLetterState()): { html: string; missing: string[]; source: string } | null {
   const o = offerById(s, offerId);
   if (!o) return null;
-  const t = templateFor(ls, o.location);
+  const t = templateFor(ls, o.location, companyOfOffer(s, o));
   const r = renderLetter(t.html, letterValues(s, o, signatoryFor(ls, o.location), recruiter));
   return { html: r.html, missing: r.missing, source: t.source };
 }
@@ -514,10 +542,10 @@ async function snap(html2canvas: Html2Canvas, markup: string): Promise<{ canvas:
 }
 
 /** Saves the letter as a PDF. Each page is drawn as an image, so the candidate gets a faithful copy that cannot be edited. */
-export async function downloadLetterPdf(html: string, fileBase: string, location?: string): Promise<void> {
+export async function downloadLetterPdf(html: string, fileBase: string, location?: string, companyId?: string): Promise<void> {
   const [{ default: html2canvas }, { jsPDF }] = await Promise.all([import('html2canvas'), import('jspdf')]);
   const h2c = html2canvas as unknown as Html2Canvas;
-  const { head, foot } = letterhead(location);
+  const { head, foot } = letterhead(location, companyId);
   const [header, footer, body] = await Promise.all([
     snap(h2c, shell(head, fileBase)),
     snap(h2c, shell(foot, fileBase)),
