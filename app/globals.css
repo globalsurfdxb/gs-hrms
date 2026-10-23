@@ -16383,3 +16383,211 @@ tbody tr:hover td {
   box-shadow: none;
   font-size: 13.5px;
 }
+
+/* ===== Employee edit page: header card, section list and form side by side ===== */
+.editpage .edhead {
+  margin-top: 4px;
+  overflow: hidden;
+}
+.editpage .edhead .profile-hd {
+  border-radius: 0;
+  background: radial-gradient(520px 160px at 100% -30%, #dbe5ff, transparent 70%), linear-gradient(180deg, #f3f6fd, #fff);
+}
+.editpage .roleflag {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 11px;
+  border-radius: 999px;
+  background: #fff6e2;
+  border: 1px solid #f2d58b;
+  color: #7a4f00;
+  font-size: 11.5px;
+  font-weight: 700;
+}
+.ed-layout {
+  display: grid;
+  grid-template-columns: 230px minmax(0, 1fr);
+  gap: 18px;
+  align-items: start;
+  margin-top: 16px;
+}
+.ed-nav {
+  position: sticky;
+  top: 76px;
+  display: grid;
+  gap: 2px;
+  padding: 8px;
+  border: 1px solid #e6eaf4;
+  border-radius: 20px;
+  background: #fff;
+  box-shadow: 0 1px 2px rgba(16, 24, 40, 0.04);
+}
+.ed-ni {
+  display: flex;
+  align-items: center;
+  gap: 11px;
+  padding: 10px 12px;
+  border: 0;
+  border-radius: 13px;
+  background: transparent;
+  font: inherit;
+  font-size: 13.5px;
+  font-weight: 600;
+  color: #4b5563;
+  text-align: left;
+  cursor: pointer;
+  transition: 0.13s;
+}
+.ed-ni:hover {
+  background: #f4f7ff;
+  color: var(--primary);
+}
+.ed-ni.on {
+  background: #e6edff;
+  color: var(--primary);
+  box-shadow: inset 0 0 0 1px #d3defa;
+}
+.ed-nn {
+  flex: none;
+  display: grid;
+  place-items: center;
+  width: 24px;
+  height: 24px;
+  border-radius: 8px;
+  background: #eef2fb;
+  font-size: 11.5px;
+  font-weight: 800;
+  color: #6b7a99;
+}
+.ed-ni.on .ed-nn {
+  background: var(--primary);
+  color: #fff;
+}
+.ed-nl {
+  flex: 1;
+  min-width: 0;
+  line-height: 1.25;
+}
+.ed-ni .tab-err {
+  margin-left: 0;
+  flex: none;
+}
+.ed-main {
+  min-width: 0;
+}
+.ed-main .form-grid {
+  grid-template-columns: repeat(auto-fit, minmax(250px, 1fr));
+}
+.ed-main .form-grid .fg.full {
+  grid-column: 1 / -1;
+}
+.editpage .subhd {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-bottom: 14px;
+  padding-bottom: 10px;
+  border-bottom: 1px solid #eef1f8;
+  font-size: 12px;
+  font-weight: 800;
+  letter-spacing: 0.08em;
+  color: var(--primary);
+}
+.editpage .subhd::before {
+  content: '';
+  width: 4px;
+  height: 14px;
+  border-radius: 4px;
+  background: linear-gradient(180deg, #4a6bd0, var(--primary));
+}
+.editpage .editbar {
+  border-radius: 18px;
+  box-shadow: 0 12px 36px rgba(26, 34, 51, 0.14);
+}
+@media (max-width: 980px) {
+  .ed-layout {
+    grid-template-columns: 1fr;
+    gap: 14px;
+  }
+  .ed-nav {
+    position: static;
+    display: flex;
+    overflow-x: auto;
+    gap: 4px;
+    padding: 6px;
+    border-radius: 16px;
+    scrollbar-width: none;
+  }
+  .ed-nav::-webkit-scrollbar {
+    display: none;
+  }
+  .ed-ni {
+    flex: none;
+    white-space: nowrap;
+    padding: 8px 12px;
+  }
+  .ed-nl {
+    flex: none;
+  }
+}
+
+/* ===== Employee profile page: header card, then section list and details side by side ===== */
+.lc-pf .profile-hd {
+  background: radial-gradient(520px 160px at 100% -30%, #dbe5ff, transparent 70%), linear-gradient(180deg, #f3f6fd, #fff);
+}
+.lc-pf .profile-hd h2 {
+  font-size: 24px;
+  font-weight: 800;
+  letter-spacing: -0.02em;
+}
+.lc-pf-facts {
+  border-bottom: 0;
+  background: #fff;
+}
+.lc-pf-facts > div {
+  padding: 15px 24px;
+}
+.lc-pf-facts .k {
+  font-size: 10.5px;
+  letter-spacing: 0.08em;
+}
+.lc-pf-facts .v {
+  font-size: 13.5px;
+  font-weight: 700;
+  color: #0f1737;
+}
+.ed-main .lc-pf-body .g2 > div {
+  border-radius: 18px;
+  border-color: #eef1f8;
+  background: #fbfcff;
+  padding: 16px 20px 8px;
+}
+.ed-main .lc-pf-body .subhd {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding-bottom: 10px;
+  margin-bottom: 4px;
+  font-size: 12px;
+  font-weight: 800;
+  letter-spacing: 0.08em;
+  color: var(--primary);
+}
+.ed-main .lc-pf-body .subhd::before {
+  content: '';
+  width: 4px;
+  height: 14px;
+  border-radius: 4px;
+  background: linear-gradient(180deg, #4a6bd0, var(--primary));
+}
+.ed-main .lc-pf-body .field {
+  padding: 11px 6px;
+  border-radius: 10px;
+}
+.ed-main .lc-pf-body .field .k {
+  font-size: 13px;
+}
+.ed-main .lc-pf-body .field .v {
+  font-weight: 600;
+}

@@ -111,11 +111,21 @@
     const direct = directs();
     const all = everyone();
     const list = (mode === 'all' ? all : direct).filter((r) => L.inLoc(r.n) && L.deptOk(r.n, 'rpDept') && (stF === 'All' || r.st === stF) && L.matches(q, r.n, r.id, r.d, r.dept));
-    return `<div class="toolbar"><div class="fw6" style="font-size:15px">${esc(me())} | GS IT</div>
-      <div style="margin-left:auto" class="hb"><div class="vtoggle"><button class="${mode === 'direct' ? 'on' : ''}" title="Direct" onclick="LA.setUi('rpMode','direct')">Direct ${direct.length}</button><button class="${mode === 'all' ? 'on' : ''}" title="All" onclick="LA.setUi('rpMode','all')">All ${all.length}</button></div>
-      <button class="iconbtn" title="Export" onclick="LA.rpExport()">${ic('download')}</button></div></div>
-      <div class="filters">${L.fDept('rpDept')}${L.fSel('rpStatus', 'Status today', ['All', 'In', 'Out'], 'All')}${L.searchBox('rpQ', 'Name, id, role')}${L.fReset(['rpDept', 'rpStatus', 'rpQ'])}</div>
-      ${list.length ? `<div class="rp-grid">${list.map((r) => `<div class="rp-card"><div class="avatar">${initials2(r.n)}</div><div style="flex:1"><div class="rp-n">${esc(r.id)} · ${esc(r.n)}</div><div class="rp-d">${esc(r.d)} · ${esc(L.locCity(r.loc))}</div><div style="color:${r.st === 'In' ? 'var(--g)' : 'var(--muted)'};font-weight:600;font-size:12.5px">${r.st}</div></div><button class="iconbtn" style="width:30px;height:30px" title="Contact" onclick="LA.contact('${r.id}')">${ic('bell')}</button></div>`).join('')}</div>` : L.empty('No team members match')}`;
+    const inN = list.filter((r) => r.st === 'In').length;
+    const locN = new Set(list.map((r) => r.loc)).size;
+    return pageHead('Reportees', `The people who report to ${esc(me())}, and everyone below them`, `<button class="btn" onclick="LA.rpExport()">${ic('download')} Export</button>`, 'Team')
+      + statStrip([
+        { lbl: mode === 'all' ? 'Everyone in your team' : 'Direct reports', val: list.length, icon: 'users', tone: 'b', hint: `${direct.length} direct · ${all.length} in total` },
+        { lbl: 'In today', val: inN, icon: 'usercheck', tone: 'g', hint: list.length ? `${Math.round((inN / list.length) * 100)}% of this view` : '' },
+        { lbl: 'Not in today', val: list.length - inN, icon: 'clock', tone: 'a', hint: 'Out, on leave or not yet in' },
+        { lbl: 'Locations', val: locN, icon: 'location', tone: 'p' },
+      ])
+      + `<div class="ap-tabs" role="group" aria-label="Team scope"><button type="button" class="ap-tab ${mode === 'direct' ? 'active' : ''}" onclick="LA.setUi('rpMode','direct')">Direct reports <em>${direct.length}</em></button><button type="button" class="ap-tab ${mode === 'all' ? 'active' : ''}" onclick="LA.setUi('rpMode','all')">Whole team <em>${all.length}</em></button></div>`
+      + `<div class="card ap-filterbar"><div class="filters">${L.fDept('rpDept')}${L.fSel('rpStatus', 'Status today', ['All', 'In', 'Out'], 'All')}${L.searchBox('rpQ', 'Name, id, role')}${L.fReset(['rpDept', 'rpStatus', 'rpQ'])}</div></div>`
+      + (list.length ? `<div class="rp2-grid">${list.map((r) => `<div class="rp2-card">
+        <div class="rp2-top"><div class="avatar">${initials2(r.n)}</div><div class="rp2-id"><div class="rp2-n">${esc(r.n)}</div><div class="rp2-d">${esc(r.d)}</div></div><span class="rp2-st ${r.st === 'In' ? 'in' : 'out'}">${r.st === 'In' ? 'In' : 'Out'}</span></div>
+        <div class="rp2-meta"><span class="mono">${esc(r.id)}</span><span>${esc(r.dept)}</span><span>${esc(L.locCity(r.loc))}</span></div>
+        <div class="rp2-acts">${r.email ? `<a class="btn sm pri" href="mailto:${esc(r.email)}">Email</a>` : ''}${r.phone ? `<a class="btn sm" href="tel:${esc(r.phone)}">Call</a>` : ''}</div></div>`).join('')}</div>` : card('', L.empty('No team members match')));
   }
   L.rpExport = () => { const mode = L.ui('rpMode', 'direct'); L.csv('team.csv', ['ID', 'Name', 'Role', 'Department', 'Location', 'Status today'], (mode === 'all' ? everyone() : directs()).filter((r) => L.inLoc(r.n) && L.deptOk(r.n, 'rpDept')).map((r) => [r.id, r.n, r.d, r.dept, L.locName(r.loc), r.st])); };
 
@@ -236,15 +246,17 @@
     const keys = items.map((x) => x.key);
     const picked = sel().filter((k) => keys.includes(k));
     const waiting = (PERSONA === 'hr' || PERSONA === 'admin') ? L.waitingExternal().filter((x) => L.inLoc(x.emp) && L.deptOk(x.emp, 'apDept')) : [];
-    return pageHead('Approvals', 'Unified inbox: leave, regularization, late/early, overtime and schedule changes',
-      `<button class="btn ok sm" onclick="LA.apprBulk()" ${picked.length ? '' : 'style="opacity:.6"'}>${ic('check')} Approve selected${picked.length ? ' (' + picked.length + ')' : ''}</button>`, 'Actions')
-      + `<div class="tabs">${[['all', `All (${scoped.length})`], ['leave', `Leave (${cnt('leave')})`], ['att', `Attendance (${cnt('att')})`], ['ot', `Overtime (${cnt('ot')})`]].map((t) => `<div class="tab ${t[0] === tab ? 'active' : ''}" onclick="LA.setUi('apprTab','${t[0]}')">${t[1]}</div>`).join('')}</div>`
-      + `<div class="filters" style="margin-bottom:12px">${L.fDept('apDept')}${L.fSel('apKind', 'Request type', kinds, 'All requests')}${L.searchBox('apprQ', 'Employee, id, request…')}${L.fReset(['apDept', 'apKind', 'apprQ'])}<div class="fld"><label>&nbsp;</label><label style="display:flex;gap:8px;align-items:center;height:36px;font-weight:500"><input type="checkbox" ${items.length && picked.length === items.length ? 'checked' : ''} onchange="LA.apprAll(${JSON.stringify(keys).replace(/"/g, '&quot;')},this.checked)"> Select all (${items.length})</label></div></div>`
-      + (items.length ? `<div class="stack">${items.map((it) => `<div class="card"><div class="card-b" style="display:flex;align-items:center;gap:14px;flex-wrap:wrap">
-        <input type="checkbox" ${picked.includes(it.key) ? 'checked' : ''} onchange="LA.apprToggle('${it.key}')">${personCell(it.emp, `${it.id} · ${L.locCity(L.locOf(it.emp))}`)}
-        <div style="flex:1;min-width:140px"><div class="fw6">${esc(it.kind)}</div><div class="muted" style="font-size:12.5px">${esc(it.detail)}</div></div>
-        ${it.flag ? bdg('s-a', esc(it.flag)) : ''}
-        <div class="hb"><button class="btn sm ok" onclick="LA.decide('${it.key}','approve')">${ic('check')} ${it.exception ? 'Approve as exception' : 'Approve'}</button><button class="btn sm danger" onclick="LA.decide('${it.key}','reject')">${ic('x')} Reject</button></div></div></div>`).join('')}</div>` : card('', L.empty(scoped.length ? 'No requests match this filter' : 'All caught up — nothing is waiting for approval')))
+    const tagOf = { leave: ['s-b', 'Leave'], att: ['s-a', 'Attendance'], ot: ['s-p', 'Overtime'] };
+    const allOn = items.length && picked.length === items.length;
+    return pageHead('Approvals', 'Unified inbox: leave, regularization, late/early, overtime and schedule changes', '', 'Actions')
+      + `<div class="ap-tabs">${[['all', 'All', scoped.length], ['leave', 'Leave', cnt('leave')], ['att', 'Attendance', cnt('att')], ['ot', 'Overtime', cnt('ot')]].map((t) => `<button type="button" class="ap-tab ${t[0] === tab ? 'active' : ''}" onclick="LA.setUi('apprTab','${t[0]}')">${t[1]} <em>${t[2]}</em></button>`).join('')}</div>`
+      + `<div class="card ap-filterbar"><div class="filters">${L.fDept('apDept')}${L.fSel('apKind', 'Request type', kinds, 'All requests')}${L.searchBox('apprQ', 'Employee, id, request…')}${L.fReset(['apDept', 'apKind', 'apprQ'])}</div></div>`
+      + (items.length ? `<div class="ap-bar ${picked.length ? 'on' : ''}"><label class="ap-all"><input type="checkbox" ${allOn ? 'checked' : ''} onchange="LA.apprAll(${JSON.stringify(keys).replace(/"/g, '&quot;')},this.checked)"> <span>Select all</span></label><span class="ap-count">${picked.length ? `<b>${picked.length}</b> of ${items.length} selected` : `${items.length} request${items.length === 1 ? '' : 's'} waiting for you`}</span><button class="btn ok sm" onclick="LA.apprBulk()" ${picked.length ? '' : 'disabled'}>${ic('check')} Approve selected${picked.length ? ' (' + picked.length + ')' : ''}</button></div>` : '')
+      + (items.length ? `<div class="ap-list">${items.map((it) => { const tg = tagOf[it.group] || ['s-gray', 'Request']; return `<div class="ap-row ${picked.includes(it.key) ? 'on' : ''}">
+        <input type="checkbox" class="ap-ck" aria-label="Select ${esc(it.id)}" ${picked.includes(it.key) ? 'checked' : ''} onchange="LA.apprToggle('${it.key}')">
+        <div class="ap-who">${personCell(it.emp, `${it.id} · ${L.locCity(L.locOf(it.emp))}`)}</div>
+        <div class="ap-req"><div class="ap-rt"><span class="bdg ${tg[0]}">${tg[1]}</span><span class="fw6">${esc(it.kind)}</span></div><div class="muted ap-rd">${esc(it.detail)}</div>${it.flag ? `<div class="ap-flag">${bdg('s-a', esc(it.flag))}</div>` : ''}</div>
+        <div class="hb ap-act"><button class="btn sm ok" onclick="LA.decide('${it.key}','approve')">${ic('check')} ${it.exception ? 'Approve as exception' : 'Approve'}</button><button class="btn sm danger" onclick="LA.decide('${it.key}','reject')">${ic('x')} Reject</button></div></div>`; }).join('')}</div>` : card('', L.empty(scoped.length ? 'No requests match this filter' : 'All caught up — nothing is waiting for approval')))
       + (waiting.length ? `<div style="height:16px"></div>${card('Waiting for an external approver', waiting.map((w) => `<div class="lrow">${personCell(w.emp, `${w.id} · ${L.locCity(L.locOf(w.emp))}`)}<div style="flex:1"><div class="li-t">${esc(w.kind === 'plan' ? `${L.typeName('Annual Leave', L.locOf(w.emp))} plan · segment ${w.rec.seg}` : L.typeName(w.rec.type, L.locOf(w.emp), w.rec.app))}</div><div class="li-s">${esc(L.fmtRange(w.rec.from, w.rec.to, true))}</div></div><div class="li-r">${bdg('s-a', `Waiting for ${esc(w.approverName)}`)}</div></div>`).join(''), { sub: 'Outside the system — HR is informed; nobody here can decide these' })}` : '');
   }
   window.filterApprovals = (k) => L.setUi('apprTab', k);

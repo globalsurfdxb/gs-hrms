@@ -168,14 +168,19 @@ export default function EmployeeProfilePage() {
           </div>
         </div>
 
-        <div className="tabs">
-          {TABS.map((t) => (
-            <button key={t} onClick={() => setTab(t)} className={`tab ${tab === t ? 'on' : ''}`}>
-              {t}
+      </Card>
+
+      <div className="ed-layout">
+        <nav className="ed-nav" aria-label="Profile sections">
+          {TABS.map((t, i) => (
+            <button key={t} type="button" onClick={() => setTab(t)} className={`ed-ni ${tab === t ? 'on' : ''}`} aria-current={tab === t ? 'page' : undefined}>
+              <span className="ed-nn">{i + 1}</span>
+              <span className="ed-nl">{t}</span>
             </button>
           ))}
-        </div>
+        </nav>
 
+        <Card className="ed-main">
         <div className="lc-pf-body">
           {tab === 'Overview' && (
             <div className="g2">
@@ -602,8 +607,8 @@ export default function EmployeeProfilePage() {
             </div>
           )}
         </div>
-      </Card>
-
+        </Card>
+      </div>
     </div>
   );
 }

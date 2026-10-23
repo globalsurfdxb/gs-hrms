@@ -566,7 +566,7 @@ function Editor({ e }: { e: Employee }) {
         </div>
       )}
 
-      <div className="card">
+      <div className="card edhead">
         <div className="profile-hd">
           <div className="av" style={{ background: 'var(--primary-100)', color: 'var(--primary)' }}>
             {e.avatarInitials}
@@ -588,15 +588,20 @@ function Editor({ e }: { e: Employee }) {
           </div>
         </div>
 
-        <div className="tabs">
-          {TABS.map((t) => (
-            <button key={t} onClick={() => setTab(t)} className={`tab ${tab === t ? 'on' : ''}`}>
-              {t}
-              {attempted && errorTabs.has(t) && <span className="tab-err" title="This tab has errors" />}
+      </div>
+
+      <div className="ed-layout">
+        <nav className="ed-nav" aria-label="Sections">
+          {TABS.map((t, i) => (
+            <button key={t} type="button" onClick={() => setTab(t)} className={`ed-ni ${tab === t ? 'on' : ''}`} aria-current={tab === t ? 'page' : undefined}>
+              <span className="ed-nn">{i + 1}</span>
+              <span className="ed-nl">{t}</span>
+              {attempted && errorTabs.has(t) && <span className="tab-err" title="This section has errors" />}
             </button>
           ))}
-        </div>
+        </nav>
 
+        <div className="card ed-main">
         <div style={{ padding: 22 }}>
           {/* ---------------- Personal ---------------- */}
           {tab === 'Personal' && (
@@ -1053,6 +1058,7 @@ function Editor({ e }: { e: Employee }) {
             </div>
           )}
         </div>
+      </div>
       </div>
 
       {review && changes.length > 0 && (
