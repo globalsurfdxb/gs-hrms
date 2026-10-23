@@ -129,7 +129,7 @@ export default function OffersPage() {
                             <span className={`hm-chip ${o.downloadedAt ? 'on' : ''}`}>{o.downloadedAt ? 'Downloaded' : 'Not downloaded'}</span>
                           </div>
                         )}
-                        {o.status === 'Accepted' && o.signedName && <div className="tx-s faint">Signed by {o.signedName}</div>}
+                        {o.status === 'Accepted' && o.signedName && <div className="tx-s faint">{o.signature ? 'E-signed by' : 'Signed by'} {o.signedName}</div>}
                         {o.status === 'Accepted' && o.respondedVia === 'hr' && <div className="tx-s faint">Recorded by HR</div>}
                         {o.status === 'Declined' && o.declineReason && <div className="tx-s faint">“{o.declineReason}”</div>}
                       </td>

@@ -682,13 +682,27 @@ const newToken = () => `${Math.random().toString(36).slice(2, 10)}${Date.now().t
 const addEvent = (o: Offer, text: string) => [...(o.events ?? []), { at: nowIso(), text }];
 
 /** Keeps the prepared letter on the offer (while it is still a draft or has been sent but not answered). */
-export function saveOfferLetter(id: string, html: string, actor: Actor): Result {
+export function saveOfferLetter(id: string, html: string, actor: Actor, companyId?: string): Result {
   const o = offerById(state, id);
   if (!o) return fail('Offer not found.');
   if (o.status === 'Accepted' || o.status === 'Declined') return fail('This offer has been answered; its letter can no longer change.');
-  commit({ ...state, offers: state.offers.map((x) => (x.id === id ? { ...x, letterHtml: html, letterAt: nowIso(), updatedAt: nowIso(), events: addEvent(x, `Letter prepared by ${actor.name}`) } : x)) });
+  commit({ ...state, offers: state.offers.map((x) => (x.id === id ? { ...x, letterHtml: html, letterAt: nowIso(), updatedAt: nowIso(), companyId: companyId ?? x.companyId, events: addEvent(x, `Letter prepared by ${actor.name}`) } : x)) });
   audit(id, 'Offer letter prepared', undefined, o.code, actor.name);
   return { ok: true };
+}
+
+const squash = (n: string) => n.normalize('NFD').replace(/[̀-ͯ]/g, '').toLowerCase().replace(/[.'’-]/g, ' ').replace(/\s+/g, ' ').trim();
+
+/** What is wrong with the name a candidate typed to accept an offer, in words for them; '' when it is fine. It must be a
+    real full name (letters only, a first and a last name) and the name on the offer, spelling differences in case,
+    accents and spacing aside. */
+export function nameProblem(entered: string, expected: string): string {
+  const typed = entered.replace(/\s+/g, ' ').trim();
+  if (!typed) return 'Type your full name to accept.';
+  if (!/^[\p{L}][\p{L}\s.'’-]*$/u.test(typed)) return 'Use letters only in your name (no numbers or symbols).';
+  if (expected.trim().split(/\s+/).length > 1 && typed.split(/\s+/).length < 2) return 'Enter your full name: first and last name.';
+  if (squash(typed) !== squash(expected)) return `Enter your name exactly as it appears on the offer: ${expected}.`;
+  return '';
 }
 
 /** Sends the offer: it needs a letter, gets a link token and moves to Sent. Sending again keeps the same link. */
@@ -740,7 +754,7 @@ export function recordOfferEvent(token: string, kind: 'viewed' | 'downloaded'): 
 }
 
 /** The candidate's answer from the public page. Accepting requires the letter to have been downloaded and a typed name. */
-export function respondToOffer(token: string, decision: 'Accepted' | 'Declined', input: { name?: string; reason?: string }): Result {
+export function respondToOffer(token: string, decision: 'Accepted' | 'Declined', input: { name?: string; reason?: string; signature?: string }): Result {
   const o = offerByToken(state, token);
   if (!o) return fail('This link is not valid any more.');
   if (o.status === 'Accepted' || o.status === 'Declined') return fail(`This offer was already ${o.status.toLowerCase()}.`);
@@ -748,12 +762,18 @@ export function respondToOffer(token: string, decision: 'Accepted' | 'Declined',
   if (o.expiryDate < todayISO()) return fail(`This offer expired on ${o.expiryDate}. Please contact HR.`);
   if (!o.downloadedAt) return fail('Download the letter first, then respond.');
   if (decision === 'Accepted' && !(input.name ?? '').trim()) return fail('Type your full name to accept.');
+  if (decision === 'Accepted') {
+    const who = candById(state, appById(state, o.applicationId)?.candidateId ?? '');
+    const bad = who ? nameProblem(input.name ?? '', who.name) : '';
+    if (bad) return fail(bad);
+  }
+  if (decision === 'Accepted' && !input.signature) return fail('Add your signature to accept.');
   if (decision === 'Declined' && !(input.reason ?? '').trim()) return fail('Tell us briefly why you are declining.');
   commit({
     ...state,
     offers: state.offers.map((x) =>
       x.id === o.id
-        ? { ...x, signedName: decision === 'Accepted' ? (input.name ?? '').trim() : x.signedName, declineReason: decision === 'Declined' ? (input.reason ?? '').trim() : undefined, respondedVia: 'link', events: addEvent(x, decision === 'Accepted' ? `Accepted by ${(input.name ?? '').trim()}` : 'Declined by the candidate') }
+        ? { ...x, signedName: decision === 'Accepted' ? (candById(state, appById(state, o.applicationId)?.candidateId ?? '')?.name ?? (input.name ?? '').replace(/\s+/g, ' ').trim()) : x.signedName, signature: decision === 'Accepted' ? input.signature : x.signature, signedAt: decision === 'Accepted' ? nowIso() : x.signedAt, declineReason: decision === 'Declined' ? (input.reason ?? '').trim() : undefined, respondedVia: 'link', events: addEvent(x, decision === 'Accepted' ? `Accepted and e-signed by ${(input.name ?? '').trim()}` : 'Declined by the candidate') }
         : x,
     ),
   });

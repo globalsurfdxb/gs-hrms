@@ -13,6 +13,8 @@ import { PageHeader } from '@/components/ui/PageHeader';
 import { Card, CardHeader, Button, EmptyState } from '@/components/ui/Card';
 import { StatusBadge } from '@/components/ui/Badge';
 import { WithdrawOfferDialog } from '@/components/hiring/WithdrawOfferDialog';
+import { JoiningFormActions, FormChip } from '@/components/onboarding/JoiningFormActions';
+import { getInvites, inviteForOffer, markImported, useInvites } from '@/lib/onboardingForms';
 import { Avatar } from '@/components/ui/Avatar';
 import { StatStrip } from '@/components/ui/StatStrip';
 import { daysBetween, todayISO } from '@/lib/dates';
@@ -358,6 +360,7 @@ function OnboardingHome({ hireId }: { hireId: string | null }) {
   const [removedNote, setRemovedNote] = useState('');
   const waiting = hiringLevel(viewerRole) === 'full' ? hiring.offers.filter((o) => o.status === 'Accepted' && !o.employeeId) : [];
   const drafts = useDrafts(viewer.id, ['new', ...waiting.map((o) => o.id)]);
+  const invites = useInvites();
   const [listQ, setListQ] = useState('');
   const [listStatus, setListStatus] = useState<'All' | (typeof ONBOARDING_REQUESTS)[number]['status']>('All');
   useEmployeeVersion();
@@ -473,9 +476,12 @@ function OnboardingHome({ hireId }: { hireId: string | null }) {
                       <div className="mt" style={{ marginTop: 2 }}>
                         Joins {o.joiningDate}
                       </div>
+                      <div className="jf-acts">
+                        <JoiningFormActions offer={o} candidate={cand} job={job} onNotice={setRemovedNote} />
+                      </div>
                     </div>
                     <Link href={`/onboarding?hire=${o.id}`} className="btn sm primary">
-                      Start onboarding
+                      {inviteForOffer(invites, o.id)?.status === 'Submitted' ? 'Review and start onboarding' : 'Start onboarding'}
                     </Link>
                     <Button size="sm" variant="ghost" title="The candidate backed out after accepting" onClick={() => setWithdrawing(o.id)}>
                       Candidate backed out
@@ -569,6 +575,7 @@ function OnboardingHome({ hireId }: { hireId: string | null }) {
                   <span className="hm-chip on" style={{ background: '#fdf3df', color: '#B45309' }}>
                     Not submitted
                   </span>
+                  {r.offerId && <FormChip invite={inviteForOffer(invites, r.offerId)} />}
                   {r.offerId ? (
                     <Link href={`/onboarding?hire=${r.offerId}`} className="btn sm primary">
                       Continue
@@ -637,6 +644,31 @@ function OnboardingHome({ hireId }: { hireId: string | null }) {
   );
 }
 
+/** In the wizard: tells HR the details came from the joiner's own form, or offers to bring in a form submitted after
+    this onboarding was started. */
+function JoinedNote({ prefill, fromDraft, onImport }: { prefill: OnboardingPrefill; fromDraft: boolean; onImport: () => void }) {
+  const invites = useInvites();
+  const inv = inviteForOffer(invites, prefill.offerId);
+  if (!inv || inv.status !== 'Submitted') return null;
+  const when = inv.submittedAt ? new Date(inv.submittedAt).toLocaleDateString('en-GB', { day: 'numeric', month: 'short' }) : '';
+  return (
+    <div className="note-box" style={{ marginBottom: 14 }} role="status">
+      <JoinIcon />
+      <div style={{ flex: 1 }}>
+        <b>{inv.name} filled in their joining form{when ? ` on ${when}` : ''}.</b>
+        <div style={{ fontSize: 12.5, color: 'var(--muted)' }}>
+          {fromDraft ? 'This onboarding was started before they submitted. Bring their details in to fill the personal, identity, bank, emergency, education and experience steps.' : 'Those steps are already filled in from it. Check them, then complete the HR steps: role, assets, salary and approval.'}
+        </div>
+      </div>
+      {fromDraft && (
+        <Button size="sm" variant="primary" onClick={onImport}>
+          Fill from their form
+        </Button>
+      )}
+    </div>
+  );
+}
+
 function Wizard({ onClose, prefill }: { onClose: () => void; prefill?: OnboardingPrefill }) {
   const { location, role: myRole } = useApp();
   const orgNow = useOrg();
@@ -652,7 +684,7 @@ function Wizard({ onClose, prefill }: { onClose: () => void; prefill?: Onboardin
   const [attempted, setAttempted] = useState<number[]>([]);
 
   const [fullName, setFullName] = useState(draft?.fullName ?? prefill?.name ?? '');
-  const [dob, setDob] = useState(draft?.dob ?? '');
+  const [dob, setDob] = useState(draft?.dob ?? prefill?.form?.dob ?? '');
   const [joiningDate, setJoiningDate] = useState(draft?.joiningDate ?? prefill?.joiningDate ?? '');
   const [organizationId, setOrganizationId] = useState(draft?.organizationId ?? prefill?.companyId ?? '');
   const [departmentId, setDepartmentId] = useState(draft?.departmentId ?? prefill?.departmentId ?? '');
@@ -664,7 +696,7 @@ function Wizard({ onClose, prefill }: { onClose: () => void; prefill?: Onboardin
   const [visaStep, setVisaStep] = useState(draft?.visaStep ?? 0);
   const [assetFlags, setAssetFlags] = useState<Set<string>>(new Set(draft?.assetFlags ?? ['Laptop', 'Access card']));
   const [notifyDocs, setNotifyDocs] = useState(draft?.notifyDocs ?? true);
-  const [expiries, setExpiries] = useState<Record<string, string>>(draft?.expiries ?? {});
+  const [expiries, setExpiries] = useState<Record<string, string>>(draft?.expiries ?? (prefill?.form?.passportExpiry ? { 'Passport Copy': prefill.form.passportExpiry } : {}));
   const [reminderDays, setReminderDays] = useState<Set<string>>(new Set(draft?.reminderDays ?? REMINDER_DAYS));
   const [reminderTo, setReminderTo] = useState<Set<string>>(new Set(draft?.reminderTo ?? ['Employee', 'HR']));
 
@@ -673,21 +705,35 @@ function Wizard({ onClose, prefill }: { onClose: () => void; prefill?: Onboardin
     const base: Record<string, string> = { maritalStatus: 'Single', employmentType: 'Permanent' };
     if (draft) return draft.fv;
     if (!prefill) return base;
+    const fromForm = prefill.form?.fv ?? {};
     const def0 = orgNow.locationDef(prefill.location);
     // The candidate's number may carry the country code; keep only the digits the location's format takes.
     const raw = prefill.phone.replace(/\D/g, '');
     const code = (def0?.phoneCode ?? '').replace(/\D/g, '');
     const local = code && raw.startsWith(code) && raw.length > (def0?.phoneDigits ?? 0) ? raw.slice(code.length) : raw;
-    return { ...base, employmentType: prefill.employmentType, personalEmail: prefill.personalEmail, personalMobile: local.slice(-(def0?.phoneDigits ?? local.length)), totalExperience: prefill.totalExperience };
+    return { ...base, employmentType: prefill.employmentType, personalEmail: prefill.personalEmail, personalMobile: local.slice(-(def0?.phoneDigits ?? local.length)), totalExperience: prefill.totalExperience, ...fromForm };
   });
   const f = (k: string) => fv[k] ?? '';
   const setF = (k: string, val: string) => setFv((p) => ({ ...p, [k]: val }));
   const [sal, setSal] = useState<Record<string, string>>(draft?.sal ?? prefill?.salary ?? {});
-  const [emA, setEmA] = useState<EmergencyRow[]>(draft?.emA ?? [blankContact()]);
-  const [emB, setEmB] = useState<EmergencyRow[]>(draft?.emB ?? [blankContact()]);
-  const [exp, setExp] = useState<ExperienceRow[]>(draft?.exp ?? [blankExperience()]);
-  const [edu, setEdu] = useState<EducationRow[]>(draft?.edu ?? [blankEducation()]);
+  const [emA, setEmA] = useState<EmergencyRow[]>(draft?.emA ?? (prefill?.form?.emA?.some((r) => r.name) ? prefill.form.emA : [blankContact()]));
+  const [emB, setEmB] = useState<EmergencyRow[]>(draft?.emB ?? (prefill?.form?.emB?.some((r) => r.name) ? prefill.form.emB : [blankContact()]));
+  const [exp, setExp] = useState<ExperienceRow[]>(draft?.exp ?? (prefill?.form?.exp?.length ? prefill.form.exp : [blankExperience()]));
+  const [edu, setEdu] = useState<EducationRow[]>(draft?.edu ?? (prefill?.form?.edu?.some((r) => r.qualification || r.institution) ? prefill.form.edu : [blankEducation()]));
   const [fam, setFam] = useState<FamilyRow[]>(draft?.fam ?? [blankFamily()]);
+
+  /** Fill the form from what the joiner submitted (used when the draft was started before they sent it). */
+  const importForm = () => {
+    const form = (prefill && inviteForOffer(getInvites(), prefill.offerId)?.data) ?? prefill?.form;
+    if (!form) return;
+    setDob(form.dob);
+    setFv((p) => ({ ...p, ...form.fv }));
+    if (form.emA.some((r) => r.name)) setEmA(form.emA);
+    if (form.emB.some((r) => r.name)) setEmB(form.emB);
+    if (form.edu.some((r) => r.qualification || r.institution)) setEdu(form.edu);
+    if (form.exp.length) setExp(form.exp);
+    if (form.passportExpiry) setExpiries((p) => ({ ...p, 'Passport Copy': form.passportExpiry }));
+  };
 
   // Save the form a moment after each change. A form that is still empty is not worth keeping.
   const snapshot = JSON.stringify({ step, office, fullName, dob, joiningDate, organizationId, departmentId, designationId, managerId, role, workEmail, visaStep, assetFlags: [...assetFlags], notifyDocs, expiries, reminderDays: [...reminderDays], reminderTo: [...reminderTo], fv, sal, emA, emB, exp, edu, fam });
@@ -935,6 +981,7 @@ function Wizard({ onClose, prefill }: { onClose: () => void; prefill?: Onboardin
     // Hiring Management is told in the same step: candidate and employee linked, job filled count updated.
     if (prefill) {
       completeHire(prefill.offerId, { id: hire.id, code: hire.employeeCode, name: hire.name }, { id: me.id, name: me.name, role: myRole });
+      if (prefill.form) markImported(prefill.offerId);
       const off = getHiring().offers.find((o) => o.id === prefill.offerId);
       // The welcome / pre-joining email for the Hired rule (logged in sandbox mode).
       if (off) sendRuleMail('Hired', off.applicationId, me.name, { includeAsk: true, offer: off });
@@ -972,6 +1019,10 @@ function Wizard({ onClose, prefill }: { onClose: () => void; prefill?: Onboardin
         title={fullName || 'New candidate'}
         description="A guided 10-step wizard capturing the full employee record. Creates the employee as Onboarding and sends the request through the approval chain."
       />
+
+      {prefill && (
+        <JoinedNote prefill={prefill} fromDraft={!!draft} onImport={() => importForm()} />
+      )}
 
       <Card className="lc-wiz">
         <div className="lc-wiz-top">

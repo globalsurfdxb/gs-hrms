@@ -1,5 +1,6 @@
 import { HiringState, EmploymentKind } from '@/lib/hiringTypes';
 import { appById, candById, jobById, offerById } from '@/lib/hiringStore';
+import { JoiningForm, getInvites } from '@/lib/onboardingForms';
 
 /* The handoff from an accepted offer to the onboarding wizard. */
 
@@ -29,6 +30,9 @@ export interface OnboardingPrefill {
   /** Offer lines the wizard has no matching line for. */
   unmapped: { label: string; amount: number }[];
   currency: string;
+  /** What the joiner entered on their joining form, when they have submitted it. */
+  form?: JoiningForm;
+  formSubmittedAt?: string;
 }
 
 const UAE_MAP: Record<string, string> = { Basic: 'Basic Salary', Housing: 'Accommodation Allowance', Transport: 'Transportation Allowance' };
@@ -53,7 +57,10 @@ export function onboardingPrefill(s: HiringState, offerId: string): OnboardingPr
     if (target && l.amount > 0) salary[target] = String(amount);
     else if (l.amount > 0) unmapped.push({ label: l.label, amount: l.amount });
   });
+  const invite = getInvites().find((i) => i.offerId === o.id && i.status === 'Submitted');
   return {
+    form: invite?.data,
+    formSubmittedAt: invite?.submittedAt,
     offerId: o.id,
     offerCode: o.code,
     candidateId: c.id,

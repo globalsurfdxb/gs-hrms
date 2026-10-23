@@ -37,25 +37,77 @@ export const acceptingApplications = (j: Job) => j.status === 'Open' && j.closin
 
 const PUBLIC_ACTOR: Actor = { id: 'careers-page', name: 'Careers page', role: 'Employee' };
 
-export function CareersFrame({ children, foot, title = 'Careers', hero, wide }: { children: React.ReactNode; foot?: React.ReactNode; title?: string; hero?: React.ReactNode; wide?: boolean }) {
+export function CareersFrame({ children, foot, title = 'Careers', hero, wide, landing, minimal }: { children: React.ReactNode; foot?: React.ReactNode; title?: string; hero?: React.ReactNode; wide?: boolean; landing?: boolean; minimal?: boolean }) {
   return (
     <div className="cr-page">
       <header className="cr-top">
         <div className="cr-top-in">
+          {minimal ? (
+            <span className="cr-brand" aria-label={`${ENTITY_NAME} ${title}`}>
+              {/* eslint-disable-next-line @next/next/no-img-element */}
+              <img src={GS_LOGO} alt="" />
+              <small>{title}</small>
+            </span>
+          ) : (
           <Link href="/careers" className="cr-brand" aria-label={`${ENTITY_NAME} ${title}`}>
             {/* eslint-disable-next-line @next/next/no-img-element */}
             <img src={GS_LOGO} alt="" />
             <small>{title}</small>
           </Link>
-          <a className="cr-mail" href="mailto:hr@globalsurf.ae">
-            hr@globalsurf.ae
-          </a>
+          )}
+          {minimal ? null : landing ? (
+            <nav className="cr-nav" aria-label="Page sections">
+              <Link href="/careers#roles">Open roles</Link>
+              <Link href="/careers#process">How we hire</Link>
+              <a href="#contact">Contact</a>
+              <Link href="/careers#roles" className="cr-nav-cta">
+                View openings
+              </Link>
+            </nav>
+          ) : (
+            <a className="cr-mail" href="mailto:hr@globalsurf.ae">
+              hr@globalsurf.ae
+            </a>
+          )}
         </div>
       </header>
       {hero}
-      <main className={`cr-main ${wide ? 'wide' : ''}`}>{children}</main>
-      <footer className="cr-foot">
-        {foot ?? `${ENTITY_NAME} · We store your details only to consider you for this and similar roles, and you can ask us to remove them at any time.`}
+      <main className={`cr-main ${wide ? 'wide' : ''} ${landing ? 'landing' : ''}`}>{children}</main>
+      <footer className="cr-foot" id="contact">
+        <div className="cr-foot-in">
+          <div className="cr-foot-brand">
+            {/* eslint-disable-next-line @next/next/no-img-element */}
+            <img src={GS_LOGO} alt={ENTITY_NAME} />
+            <p>Managed IT, cloud and network services from Dubai and Kochi.</p>
+          </div>
+          <div>
+            <h4>Dubai</h4>
+            <p>
+              SIT Tower, Dubai
+              <br />
+              United Arab Emirates
+            </p>
+          </div>
+          <div>
+            <h4>Kochi</h4>
+            <p>
+              Trans Asia Cyberpark, Infopark Phase 2
+              <br />
+              Kakkanad, Cochin 682303
+            </p>
+          </div>
+          <div>
+            <h4>Talk to HR</h4>
+            <p>
+              <a href="mailto:hr@globalsurf.ae">hr@globalsurf.ae</a>
+              <br />
+              +91 8075490551
+            </p>
+          </div>
+        </div>
+        <div className="cr-foot-legal">
+          {foot ?? `${ENTITY_NAME} · We store your details only to consider you for this and similar roles, and you can ask us to remove them at any time.`}
+        </div>
       </footer>
     </div>
   );
@@ -152,48 +204,85 @@ export function ApplyForm({ job, refCode, src = null }: { job: Job; refCode: str
     );
 
   return (
-    <form className="cr-card" onSubmit={submit} noValidate>
-      <h2>Apply for this role</h2>
+    <form className="cr-card cr-apply" onSubmit={submit} noValidate>
+      <div className="ap-head">
+        <h2>Apply for this role</h2>
+        <p>It takes about three minutes. Fields marked * are required.</p>
+      </div>
       {referrer && <div className="cr-ref">Referred by {referrer.name.split(' ')[0]} from our team.</div>}
       {error && <div className="tx-err" style={{ marginBottom: 12 }}>{error}</div>}
-      <div className="form-grid hm-form">
-        <Fg label="Full name" required error={shown('name')}>
-          <input value={v.name} onChange={(e) => set('name', e.target.value)} autoComplete="name" />
-        </Fg>
-        <Fg label="Email" required error={shown('email')}>
-          <input type="email" value={v.email} onChange={(e) => set('email', e.target.value)} autoComplete="email" />
-        </Fg>
-        <Fg label="Phone" required error={shown('phone')} hint="Include the country code.">
-          <input type="tel" value={v.phone} onChange={(e) => set('phone', e.target.value)} placeholder={job.location === 'Kochi' ? '+91 98765 43210' : '+971 50 123 4567'} autoComplete="tel" />
-        </Fg>
-        <Fg label="Total experience (years)" required error={shown('years')}>
-          <input type="number" min={0} step="0.5" value={v.years} onChange={(e) => set('years', e.target.value)} />
-        </Fg>
-        <Fg label="Current company">
-          <input value={v.company} onChange={(e) => set('company', e.target.value)} />
-        </Fg>
-        <Fg label="Current job title">
-          <input value={v.title} onChange={(e) => set('title', e.target.value)} />
-        </Fg>
-        <Fg label="Notice period (days)">
-          <input type="number" min={0} value={v.notice} onChange={(e) => set('notice', e.target.value)} />
-        </Fg>
-        <Fg label="LinkedIn or portfolio">
-          <input value={v.links} onChange={(e) => set('links', e.target.value)} placeholder="linkedin.com/in/…" />
-        </Fg>
-        <Fg label="CV" required error={shown('cv')} hint={v.cvName ? undefined : 'PDF or Word file.'} full>
-          <input type="file" accept=".pdf,.doc,.docx" onChange={(e) => set('cvName', e.target.files?.[0]?.name ?? '')} />
-        </Fg>
-        <Fg label="Anything you would like us to know" full>
-          <textarea rows={3} value={v.note} onChange={(e) => set('note', e.target.value)} style={TEXTAREA_STYLE} />
-        </Fg>
-        <Fg label="Data consent" error={shown('consent')} full>
-          <label className="hm-check">
-            <input type="checkbox" checked={v.consent} onChange={(e) => set('consent', e.target.checked)} /> I agree to {ENTITY_NAME} storing and processing my details to consider me for this and similar roles.
-          </label>
-        </Fg>
+
+      <div className="ap-group">
+        <h3>
+          <span>1</span> About you
+        </h3>
+        <div className="form-grid hm-form">
+          <Fg label="Full name" required error={shown('name')}>
+            <input value={v.name} onChange={(e) => set('name', e.target.value)} autoComplete="name" />
+          </Fg>
+          <Fg label="Email" required error={shown('email')}>
+            <input type="email" value={v.email} onChange={(e) => set('email', e.target.value)} autoComplete="email" />
+          </Fg>
+          <Fg label="Phone" required error={shown('phone')} hint="Include the country code.">
+            <input type="tel" value={v.phone} onChange={(e) => set('phone', e.target.value)} placeholder={job.location === 'Kochi' ? '+91 98765 43210' : '+971 50 123 4567'} autoComplete="tel" />
+          </Fg>
+          <Fg label="LinkedIn or portfolio">
+            <input value={v.links} onChange={(e) => set('links', e.target.value)} placeholder="linkedin.com/in/…" />
+          </Fg>
+        </div>
       </div>
-      <button type="submit" className="btn primary" style={{ marginTop: 6 }}>
+
+      <div className="ap-group">
+        <h3>
+          <span>2</span> Your experience
+        </h3>
+        <div className="form-grid hm-form">
+          <Fg label="Total experience (years)" required error={shown('years')}>
+            <input type="number" min={0} step="0.5" value={v.years} onChange={(e) => set('years', e.target.value)} />
+          </Fg>
+          <Fg label="Notice period (days)">
+            <input type="number" min={0} value={v.notice} onChange={(e) => set('notice', e.target.value)} />
+          </Fg>
+          <Fg label="Current company">
+            <input value={v.company} onChange={(e) => set('company', e.target.value)} />
+          </Fg>
+          <Fg label="Current job title">
+            <input value={v.title} onChange={(e) => set('title', e.target.value)} />
+          </Fg>
+        </div>
+      </div>
+
+      <div className="ap-group">
+        <h3>
+          <span>3</span> CV and anything else
+        </h3>
+        <div className="form-grid hm-form">
+          <Fg label="CV" required error={shown('cv')} full>
+            <label className={`ap-drop ${v.cvName ? 'has' : ''}`}>
+              <input type="file" accept=".pdf,.doc,.docx" onChange={(e) => set('cvName', e.target.files?.[0]?.name ?? '')} />
+              <span className="ap-drop-ic" aria-hidden>
+                {v.cvName ? '✓' : '↑'}
+              </span>
+              <span className="ap-drop-tx">
+                <b>{v.cvName || 'Choose your CV'}</b>
+                <small>{v.cvName ? 'Click to choose a different file' : 'PDF or Word file'}</small>
+              </span>
+            </label>
+          </Fg>
+          <Fg label="Anything you would like us to know" full>
+            <textarea rows={3} value={v.note} onChange={(e) => set('note', e.target.value)} style={TEXTAREA_STYLE} />
+          </Fg>
+        </div>
+      </div>
+
+      <div className="ap-consent">
+        <label className="hm-check">
+          <input type="checkbox" checked={v.consent} onChange={(e) => set('consent', e.target.checked)} />
+          <span>I agree to {ENTITY_NAME} storing and processing my details to consider me for this and similar roles.</span>
+        </label>
+        {shown('consent') && <div className="tx-err">{shown('consent')}</div>}
+      </div>
+      <button type="submit" className="btn primary ap-submit">
         Submit application
       </button>
     </form>

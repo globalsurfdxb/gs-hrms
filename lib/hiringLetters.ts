@@ -213,7 +213,8 @@ table{border-collapse:collapse;width:100%;margin:6px 0 12px;font-size:10pt}th,td
 td.n,th.n{text-align:right}tr.t td{font-weight:700;background:#f7f9fd}
 table.ctc th,table.ctc td{border:1px solid #000;padding:4px 7px}table.ctc th{background:#fff}table.ctc td.sec{text-align:center;font-weight:700}
 table.ctc td.e{background:#dce6f5}table.ctc td.d{background:#fde4d6}table.ctc td.c{background:#cfe3c2}table.ctc tr.b td{font-weight:700}
-img{max-width:100%}`;
+img{max-width:100%}
+.sigblock{margin:22px 0 6px;padding:12px 16px;border:1px solid #c9d0e0;border-radius:8px;break-inside:avoid;font-size:10pt}.sigblock img{display:block;height:70px;width:auto;margin:8px 0 4px}.sigblock small{color:#4b5563}`;
 
 /** A standalone page: a style sheet around whatever markup is given. */
 export function shell(inner: string, title = 'Offer letter'): string {
@@ -323,14 +324,14 @@ export function valuesFromContext(c: LetterContext, signatory: { name: string; t
 }
 
 /** Values for an offer in the hiring data. */
-export function letterValues(s: HiringState, offer: Offer, signatory: { name: string; title: string }, recruiter: string): Record<string, string> {
+export function letterValues(s: HiringState, offer: Offer, signatory: { name: string; title: string }, recruiter: string, companyId?: string): Record<string, string> {
   const a = appById(s, offer.applicationId);
   const c = a && candById(s, a.candidateId);
   const j = a && jobById(s, a.jobId);
   const ctx: LetterContext = {
     offer,
     candidate: c?.name ?? '',
-    job: { title: j?.title ?? '', department: j?.department ?? '', location: j?.location ?? offer.location, employmentType: j?.employmentType ?? '', description: j?.description ?? '', companyId: j?.companyId },
+    job: { title: j?.title ?? '', department: j?.department ?? '', location: j?.location ?? offer.location, employmentType: j?.employmentType ?? '', description: j?.description ?? '', companyId: companyId ?? offer.companyId ?? j?.companyId },
     manager: j ? employeeById(j.hiringManagerId)?.name : undefined,
   };
   const v = valuesFromContext(ctx, signatory, recruiter);
@@ -338,6 +339,13 @@ export function letterValues(s: HiringState, offer: Offer, signatory: { name: st
   if (!c) ['candidate.fullName', 'candidate.firstName'].forEach((k) => delete v[k]);
   if (!j) ['job.title', 'job.department', 'job.employmentType'].forEach((k) => delete v[k]);
   return v;
+}
+
+/** The letter with the candidate's electronic signature added at the end, once they have accepted. */
+export function withSignature(html: string, o: { signature?: string; signedName?: string; signedAt?: string }): string {
+  if (!o.signature || !/^data:image\/png;base64,[A-Za-z0-9+/=]+$/.test(o.signature)) return html;
+  const when = o.signedAt ? new Date(o.signedAt).toLocaleString('en-GB', { day: 'numeric', month: 'long', year: 'numeric', hour: '2-digit', minute: '2-digit' }) : '';
+  return `${html}<div class="sigblock"><div><b>Accepted and signed electronically</b></div><img src="${o.signature}" alt="Signature of ${escapeHtml(o.signedName ?? '')}"><div>${escapeHtml(o.signedName ?? '')}</div><small>${escapeHtml(when)}</small></div>`;
 }
 
 /** Fills the fields it has values for; the rest stay visible as {{field}} and are listed in `missing`. */
@@ -494,11 +502,12 @@ export function saveSignatory(location: string, name: string, title: string, by:
 }
 
 /** The offer letter for an offer: the location's template merged with the offer. */
-export function buildLetter(s: HiringState, offerId: string, recruiter: string, ls: LetterState = getLetterState()): { html: string; missing: string[]; source: string } | null {
+export function buildLetter(s: HiringState, offerId: string, recruiter: string, ls: LetterState = getLetterState(), companyId?: string): { html: string; missing: string[]; source: string } | null {
   const o = offerById(s, offerId);
   if (!o) return null;
-  const t = templateFor(ls, o.location, companyOfOffer(s, o));
-  const r = renderLetter(t.html, letterValues(s, o, signatoryFor(ls, o.location), recruiter));
+  const co = companyId ?? companyOfOffer(s, o);
+  const t = templateFor(ls, o.location, co);
+  const r = renderLetter(t.html, letterValues(s, o, signatoryFor(ls, o.location), recruiter, co));
   return { html: r.html, missing: r.missing, source: t.source };
 }
 
@@ -530,7 +539,7 @@ async function snap(html2canvas: Html2Canvas, markup: string): Promise<{ canvas:
     let starts: number[] = [];
     let forced: number[] = [];
     const measure = (root: HTMLElement) => {
-      starts = [...root.querySelectorAll('p,h1,h2,h3,li,table:not(.keep),table.keep>tbody>tr:first-child')].map((el) => Math.round(el.getBoundingClientRect().top));
+      starts = [...root.querySelectorAll('p,h1,h2,h3,li,.sigblock,table:not(.keep),table.keep>tbody>tr:first-child')].map((el) => Math.round(el.getBoundingClientRect().top));
       forced = [...root.querySelectorAll('.pb')].map((el) => Math.round(el.getBoundingClientRect().top));
     };
     measure(body);
@@ -539,6 +548,77 @@ async function snap(html2canvas: Html2Canvas, markup: string): Promise<{ canvas:
   } finally {
     frame.remove();
   }
+}
+
+/* ---------------------------------------------------------------------- pages on screen */
+
+export const LETTER_PAGE = { width: PAGE_W, height: PAGE_H };
+
+export interface LetterPlan {
+  /** The letter body this plan was made for. */
+  html: string;
+  /** For each page, the part of the body (top and bottom, in px) it shows. */
+  pages: [number, number][];
+  head: string;
+  foot: string;
+  /** Height left for the body on each page, under the letterhead and above the footer. */
+  room: number;
+}
+
+/** Lays out the letter on A4 pages: how much of it fits on each, breaking before a block (never through a line) and
+    before a heading marked to start a page. Measured in a hidden frame at page width, so the pages shown are the
+    pages the reader gets. */
+export async function planLetter(html: string, location?: string, companyId?: string): Promise<LetterPlan> {
+  const { head, foot } = letterhead(location, companyId);
+  const measure = async (markup: string) => {
+    const frame = document.createElement('iframe');
+    frame.setAttribute('sandbox', 'allow-same-origin');
+    frame.style.cssText = `position:fixed;left:-10000px;top:0;width:${PAGE_W}px;height:${PAGE_H}px;border:0`;
+    document.body.appendChild(frame);
+    try {
+      await new Promise<void>((resolve) => {
+        frame.onload = () => resolve();
+        frame.srcdoc = markup;
+      });
+      const doc = frame.contentDocument;
+      if (!doc) throw new Error('The letter could not be laid out.');
+      await Promise.all([...doc.images].map((i) => (i.complete ? Promise.resolve() : new Promise((r) => { i.onload = i.onerror = () => r(null); }))));
+      const body = doc.body;
+      return {
+        height: Math.ceil(body.getBoundingClientRect().height),
+        starts: [...body.querySelectorAll('p,h1,h2,h3,li,.sigblock,table:not(.keep),table.keep>tbody>tr:first-child')].map((el) => Math.round(el.getBoundingClientRect().top)),
+        forced: [...body.querySelectorAll('.pb')].map((el) => Math.round(el.getBoundingClientRect().top)),
+      };
+    } finally {
+      frame.remove();
+    }
+  };
+  const [header, footer, body] = await Promise.all([measure(shell(`<div style="display:flow-root">${head}</div>`)), measure(shell(`<div style="display:flow-root">${foot}</div>`)), measure(shell(`<div class="lh-body">${html}</div>`))]);
+  const room = PAGE_H - header.height - footer.height;
+  const pages: [number, number][] = [];
+  for (let start = 0; start < body.height; ) {
+    const limit = start + room;
+    if (limit >= body.height) {
+      pages.push([start, body.height]);
+      break;
+    }
+    const forced = body.forced.find((t) => t > start + 40 && t <= limit);
+    const natural = body.starts.filter((t) => t > start + room * 0.5 && t <= limit).pop();
+    const end = forced ?? natural ?? limit;
+    pages.push([start, end]);
+    start = end;
+  }
+  return { html, pages: pages.length ? pages : [[0, body.height]], head, foot, room };
+}
+
+/** One page of a planned letter: the letterhead, the part of the body that belongs on this page, and the footer. */
+export function pageDocument(plan: LetterPlan, index: number, title = 'Offer letter'): string {
+  const [from, to] = plan.pages[index];
+  const show = Math.min(plan.room, to - from);
+  return shell(
+    `${plan.head}<div style="height:${plan.room}px;overflow:hidden"><div style="height:${show}px;overflow:hidden"><div class="lh-body" style="margin-top:-${from}px">${plan.html}</div></div></div>${plan.foot}`,
+    title,
+  );
 }
 
 /** Saves the letter as a PDF. Each page is drawn as an image, so the candidate gets a faithful copy that cannot be edited. */

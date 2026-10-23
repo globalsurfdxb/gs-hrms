@@ -25,7 +25,7 @@ export function AppShell({ children }: { children: React.ReactNode }) {
   const auth = useAuth();
   const isLogin = pathname === '/login';
   // The careers pages are public: anyone with a job link can read the role and apply, without signing in.
-  const isPublic = pathname === '/careers' || pathname.startsWith('/careers/') || pathname.startsWith('/offer/');
+  const isPublic = pathname === '/careers' || pathname.startsWith('/careers/') || pathname.startsWith('/offer/') || pathname.startsWith('/onboarding/form/');
   const bare = isLogin || isPublic;
 
   useEffect(() => {

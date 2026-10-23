@@ -235,6 +235,9 @@ export interface Offer {
   downloadedAt?: string;
   /** Typed by the candidate when accepting. */
   signedName?: string;
+  /** Their signature (a PNG data URL) and when they signed. */
+  signature?: string;
+  signedAt?: string;
   declineReason?: string;
   /** How the answer arrived: through the link, or recorded by HR from a call or email. */
   respondedVia?: 'link' | 'hr';
