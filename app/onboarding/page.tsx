@@ -1,5 +1,6 @@
 'use client';
 
+import { DateField } from '@/components/ui/DateField';
 import { Suspense, useEffect, useId, useMemo, useRef, useState, useSyncExternalStore } from 'react';
 import Link from 'next/link';
 import { useRouter, useSearchParams } from 'next/navigation';
@@ -14,7 +15,7 @@ import { Card, CardHeader, Button, EmptyState } from '@/components/ui/Card';
 import { StatusBadge } from '@/components/ui/Badge';
 import { WithdrawOfferDialog } from '@/components/hiring/WithdrawOfferDialog';
 import { JoiningFormActions, FormChip } from '@/components/onboarding/JoiningFormActions';
-import { getInvites, inviteForOffer, markImported, useInvites } from '@/lib/onboardingForms';
+import { formLink, getInvites, inviteForOffer, markImported, useInvites } from '@/lib/onboardingForms';
 import { Avatar } from '@/components/ui/Avatar';
 import { StatStrip } from '@/components/ui/StatStrip';
 import { daysBetween, todayISO } from '@/lib/dates';
@@ -85,6 +86,7 @@ function Fg({ label, required, error, children }: { label: string; required?: bo
 }
 
 function Input({ type = 'text', placeholder, value, onChange, readOnly }: { type?: string; placeholder?: string; value?: string; onChange?: (v: string) => void; readOnly?: boolean }) {
+  if (type === 'date' && !readOnly) return <DateField value={value} onChange={onChange ? (e) => onChange(e.target.value) : undefined} />;
   return <input type={type} placeholder={placeholder} value={value} onChange={onChange ? (e) => onChange(e.target.value) : undefined} readOnly={readOnly} style={readOnly ? { background: 'var(--bg)', color: 'var(--text)' } : undefined} />;
 }
 
@@ -171,7 +173,7 @@ function UploadBox({ label, expiry }: { label: string; expiry?: { value: string;
           <label style={{ fontSize: 12, fontWeight: 600, color: 'var(--text-2)' }}>
             Expiry date <span style={{ fontWeight: 400, color: 'var(--faint)' }}>· used for reminders</span>
           </label>
-          <input type="date" value={expiry.value} onChange={(e) => expiry.onChange(e.target.value)} style={{ width: '100%', marginTop: 4 }} />
+          <DateField value={expiry.value} onChange={(e) => expiry.onChange(e.target.value)} style={{ width: '100%', marginTop: 4 }} />
           {note && <span className="hint" style={{ color: note.color }}>{note.text}</span>}
         </div>
       )}
@@ -576,6 +578,21 @@ function OnboardingHome({ hireId }: { hireId: string | null }) {
                     Not submitted
                   </span>
                   {r.offerId && <FormChip invite={inviteForOffer(invites, r.offerId)} />}
+                  {r.offerId && inviteForOffer(invites, r.offerId) && (
+                    <Button
+                      size="sm"
+                      variant="ghost"
+                      title="Copy the link of this joiner's joining form"
+                      onClick={() => {
+                        const inv = inviteForOffer(invites, r.offerId!);
+                        if (!inv) return;
+                        void navigator.clipboard?.writeText(formLink(inv.token));
+                        setRemovedNote('Joining form link copied.');
+                      }}
+                    >
+                      Copy form link
+                    </Button>
+                  )}
                   {r.offerId ? (
                     <Link href={`/onboarding?hire=${r.offerId}`} className="btn sm primary">
                       Continue

@@ -83,29 +83,31 @@ export default function HiringDashboardPage() {
   const top = Math.max(1, reached[0]);
 
   return (
-    <div className="hm-page">
-      <HiringHeader
-        title="Hiring dashboard"
-        description="Headcount approved, candidates in the pipeline, interviews and offers, in one place."
-        actions={
-          <>
-            <Button onClick={() => setScheduling({})}>
-              <ClockIcon /> Schedule interview
-            </Button>
-            <Link href="/hiring/candidates?add=1">
-              <Button>
-                <PlusIcon /> Add candidate
+    <div className="hm-page hm-dash">
+      <div className="hm-banner">
+        <HiringHeader
+          title="Hiring dashboard"
+          description="Headcount approved, candidates in the pipeline, interviews and offers, in one place."
+          actions={
+            <>
+              <Button onClick={() => setScheduling({})}>
+                <ClockIcon /> Schedule interview
               </Button>
-            </Link>
-            <Link href="/hiring/requisitions?new=1">
-              <Button variant="primary">
-                <PlusIcon /> New requisition
-              </Button>
-            </Link>
-          </>
-        }
-        bar={level === 'manager' ? <span className="hm-foot-inline">Showing your own requisitions and jobs</span> : undefined}
-      />
+              <Link href="/hiring/candidates?add=1">
+                <Button>
+                  <PlusIcon /> Add candidate
+                </Button>
+              </Link>
+              <Link href="/hiring/requisitions?new=1">
+                <Button variant="primary">
+                  <PlusIcon /> New requisition
+                </Button>
+              </Link>
+            </>
+          }
+          bar={level === 'manager' ? <span className="hm-foot-inline">Showing your own requisitions and jobs</span> : undefined}
+        />
+      </div>
 
       {notice && <Banner onClose={() => setNotice('')}>{notice}</Banner>}
 

@@ -1,5 +1,6 @@
 'use client';
 
+import { DateField } from '@/components/ui/DateField';
 import { useState } from 'react';
 import Link from 'next/link';
 import { AUDIT_LOG, employeeById } from '@/lib/data';
@@ -127,11 +128,11 @@ export default function AuditLogPage() {
           </select>
           <label className="ad-date">
             From
-            <input type="date" value={from} max={to || undefined} onChange={(e) => setFrom(e.target.value)} />
+            <DateField value={from} max={to || undefined} onChange={(e) => setFrom(e.target.value)} />
           </label>
           <label className="ad-date">
             To
-            <input type="date" value={to} min={from || undefined} onChange={(e) => setTo(e.target.value)} />
+            <DateField value={to} min={from || undefined} onChange={(e) => setTo(e.target.value)} />
           </label>
           {filtering && (
             <Button size="sm" variant="ghost" onClick={clear}>

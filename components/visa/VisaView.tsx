@@ -1,5 +1,6 @@
 'use client';
 
+import { DateField } from '@/components/ui/DateField';
 import { useState } from 'react';
 import Link from 'next/link';
 import { useApp, useCurrentEmployee } from '@/context/AppContext';
@@ -414,8 +415,7 @@ export function VisaView({ forceTeam = false }: { forceTeam?: boolean }) {
                 <label>
                   New visa expiry date <span className="req">*</span>
                 </label>
-                <input
-                  type="date"
+                <DateField
                   value={newExpiry}
                   onChange={(e) => {
                     setNewExpiry(e.target.value);
@@ -433,7 +433,7 @@ export function VisaView({ forceTeam = false }: { forceTeam?: boolean }) {
               </div>
               <div className="fg">
                 <label>New Emirates ID expiry</label>
-                <input type="date" value={eidExpiry} onChange={(e) => setEidExpiry(e.target.value)} />
+                <DateField value={eidExpiry} onChange={(e) => setEidExpiry(e.target.value)} />
               </div>
               <div className="fg">
                 <label>Application / reference no.</label>

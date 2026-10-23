@@ -1,11 +1,13 @@
 'use client';
 
+import { DateField } from '@/components/ui/DateField';
 import { useState } from 'react';
 import Link from 'next/link';
 import { Button } from '@/components/ui/Card';
 import { Drawer } from '@/components/ui/Drawer';
 import { TEXTAREA_STYLE, useActor } from '@/components/hiring/HiringBits';
-import { EMPLOYEES } from '@/lib/data';
+import { COMPANIES, EMPLOYEES } from '@/lib/data';
+import { companyOfOffer } from '@/lib/hiringLetters';
 import { addDays, todayISO } from '@/lib/dates';
 import { mergeValues, renderText, sendMail, useHiringMail } from '@/lib/hiringMail';
 import { useHiring } from '@/lib/hiringStore';
@@ -109,7 +111,7 @@ function SendDialog({ offer, candidate, job, invite, onClose, onSent }: { offer:
     if (personal.trim() && !EMAIL_RE.test(personal.trim())) return setError('The personal email address does not look right.');
     if (!subject.trim() || !body.trim()) return setError('The email needs a subject and a message.');
     if (unresolved.length) return setError(`These fields have no value: ${unresolved.map((k) => `{{${k}}}`).join(', ')}. Remove them or fix them in the email.`);
-    const inv = sendInvite({ offerId: offer.id, candidateId: candidate.id, name: candidate.name, location: offer.location, toWork: work.trim().toLowerCase(), toPersonal: personal.trim().toLowerCase(), joiningDate: offer.joiningDate, dueDate: due, token }, actor.name);
+    const inv = sendInvite({ offerId: offer.id, candidateId: candidate.id, name: candidate.name, location: offer.location, company: COMPANIES.find((c) => c.id === companyOfOffer(s, offer))?.name, toWork: work.trim().toLowerCase(), toPersonal: personal.trim().toLowerCase(), joiningDate: offer.joiningDate, dueDate: due, token }, actor.name);
     sendMail({ candidateId: candidate.id, applicationId: offer.applicationId, templateName: 'Joining form', to: inv.toWork, cc: inv.toPersonal, subject: subject.trim(), body, by: actor.name, trigger: 'Joining form' });
     onSent(`Joining form ${invite ? 'sent again' : 'sent'} to ${inv.toWork}${inv.toPersonal ? ` (copy to ${inv.toPersonal})` : ''}. Email is logged in the sandbox; nothing is delivered until a mail server is connected.`);
     onClose();
@@ -150,7 +152,7 @@ function SendDialog({ offer, candidate, job, invite, onClose, onSent }: { offer:
         </div>
         <div className="fg full">
           <label>Complete by</label>
-          <input type="date" value={due} min={todayISO()} max={offer.joiningDate} onChange={(e) => setDue(e.target.value)} />
+          <DateField value={due} min={todayISO()} max={offer.joiningDate} onChange={(e) => setDue(e.target.value)} />
         </div>
       </div>
 

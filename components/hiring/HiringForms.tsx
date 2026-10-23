@@ -1,5 +1,6 @@
 'use client';
 
+import { DateField } from '@/components/ui/DateField';
 import { useMemo, useState } from 'react';
 import Link from 'next/link';
 import { useCurrentEmployee } from '@/context/AppContext';
@@ -293,7 +294,7 @@ function RequisitionForm({
           <input type="number" min={0} value={Number.isNaN(v.budgetMax) ? '' : v.budgetMax} onChange={(e) => set('budgetMax', num(e.target.value))} />
         </Fg>
         <Fg label="Target start date" required error={shown('targetStart')}>
-          <input type="date" value={v.targetStart} min={today} onChange={(e) => set('targetStart', e.target.value)} />
+          <DateField value={v.targetStart} min={today} onChange={(e) => set('targetStart', e.target.value)} />
         </Fg>
         <Fg label="Hiring manager" required error={shown('hiringManagerId')}>
           <SearchSelect options={people()} value={v.hiringManagerId} onChange={(x) => set('hiringManagerId', x)} placeholder="Search employee…" />
@@ -424,7 +425,7 @@ function JobForm({ requisition, onClose, onDone }: { requisition: Requisition; o
           <PanelPicker value={v.panelIds} onChange={(x) => set('panelIds', x)} />
         </Fg>
         <Fg label="Closing date" required error={shown('closingDate')}>
-          <input type="date" value={v.closingDate} onChange={(e) => set('closingDate', e.target.value)} />
+          <DateField value={v.closingDate} onChange={(e) => set('closingDate', e.target.value)} />
         </Fg>
         <div className="fg hm-checks">
           <label className="hm-check">
@@ -861,7 +862,7 @@ function InterviewForm({ application, interview, onClose, onDone }: { applicatio
           </select>
         </Fg>
         <Fg label="Date" required error={shown('date')}>
-          <input type="date" value={v.date} min={interview ? undefined : todayISO()} onChange={(e) => set('date', e.target.value)} />
+          <DateField value={v.date} min={interview ? undefined : todayISO()} onChange={(e) => set('date', e.target.value)} />
         </Fg>
         <Fg label="Time" required error={shown('time')} hint={app ? TZ_LABEL[app.location] : undefined}>
           <input type="time" value={v.time} onChange={(e) => set('time', e.target.value)} />
@@ -984,7 +985,7 @@ function OfferForm({ application, onClose, onDone }: { application: Application;
           {over && <span className="hint" style={{ color: '#B45309' }}>Above the requisition budget maximum. In a later phase this adds an extra approval step; for now it is flagged on the offer.</span>}
         </div>
         <Fg label="Joining date" required error={shown('joining')}>
-          <input type="date" value={joining} min={todayISO()} onChange={(e) => setJoining(e.target.value)} />
+          <DateField value={joining} min={todayISO()} onChange={(e) => setJoining(e.target.value)} />
         </Fg>
         <Fg label="Probation (months)">
           <select value={probation} onChange={(e) => setProbation(e.target.value)}>
@@ -996,7 +997,7 @@ function OfferForm({ application, onClose, onDone }: { application: Application;
           </select>
         </Fg>
         <Fg label="Offer expires on" required error={shown('expiry')}>
-          <input type="date" value={expiry} onChange={(e) => setExpiry(e.target.value)} />
+          <DateField value={expiry} onChange={(e) => setExpiry(e.target.value)} />
         </Fg>
       </div>
     </Drawer>

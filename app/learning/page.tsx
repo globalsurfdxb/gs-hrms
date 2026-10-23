@@ -1,5 +1,6 @@
 'use client';
 
+import { DateField } from '@/components/ui/DateField';
 import { useState } from 'react';
 import Link from 'next/link';
 import { EMPLOYEES, REFERENCE_TODAY, employeeById, matchesEmployee } from '@/lib/data';
@@ -384,7 +385,7 @@ export default function LearningPage() {
             {open.status === 'In Progress' && (
               <div className="form-grid">
                 <Fg label="Completion date" required>
-                  <input type="date" max={REFERENCE_TODAY} value={doneOn} onChange={(e) => { setDoneOn(e.target.value); setDetailError(''); }} />
+                  <DateField max={REFERENCE_TODAY} value={doneOn} onChange={(e) => { setDoneOn(e.target.value); setDetailError(''); }} />
                 </Fg>
                 <Fg label="Score (%)">
                   <input type="number" min={0} max={100} value={score} onChange={(e) => { setScore(e.target.value); setDetailError(''); }} placeholder="Optional" />
@@ -476,7 +477,7 @@ export default function LearningPage() {
             </>
           )}
           <Fg label="Due date" required>
-            <input type="date" value={due} onChange={(e) => { setDue(e.target.value); setAssignError(''); }} />
+            <DateField value={due} onChange={(e) => { setDue(e.target.value); setAssignError(''); }} />
           </Fg>
         </div>
 

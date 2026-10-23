@@ -1,5 +1,6 @@
 'use client';
 
+import { DateField } from '@/components/ui/DateField';
 import { useEffect, useId, useMemo, useRef, useState } from 'react';
 import Link from 'next/link';
 import { notFound, useParams, useRouter } from 'next/navigation';
@@ -489,7 +490,8 @@ function Editor({ e }: { e: Employee }) {
   const leave = (href: string) => (changes.length ? setLeaveTo(href) : router.push(href));
   const cancel = () => leave(profileHref);
 
-  const input = (k: string, props: React.InputHTMLAttributes<HTMLInputElement> = {}) => <input {...props} value={v[k] ?? ''} onChange={(ev) => set(k, ev.target.value)} />;
+  const input = (k: string, props: React.InputHTMLAttributes<HTMLInputElement> = {}) =>
+    props.type === 'date' ? <DateField value={v[k] ?? ''} onChange={(ev) => set(k, ev.target.value)} /> : <input {...props} value={v[k] ?? ''} onChange={(ev) => set(k, ev.target.value)} />;
   const select = (k: string, options: string[]) => (
     <select value={v[k] ?? ''} onChange={(ev) => set(k, ev.target.value)}>
       {!v[k] && <option value="">Select…</option>}
@@ -838,10 +840,10 @@ function Editor({ e }: { e: Employee }) {
                       </select>
                     </Fg>
                     <Fg label="From">
-                      <input type="date" value={r.from} onChange={(ev) => up({ from: ev.target.value })} />
+                      <DateField value={r.from} onChange={(ev) => up({ from: ev.target.value })} />
                     </Fg>
                     <Fg label="To" error={shownErrors(`experience.${i}.to`)}>
-                      <input type="date" value={r.to} onChange={(ev) => up({ to: ev.target.value })} />
+                      <DateField value={r.to} onChange={(ev) => up({ to: ev.target.value })} />
                     </Fg>
                   </>
                 )}
@@ -1012,7 +1014,7 @@ function Editor({ e }: { e: Employee }) {
                         <input value={r.type} onChange={(ev) => up({ type: ev.target.value })} placeholder="e.g. Medical Insurance" />
                       </Fg>
                       <Fg label="Expiry date" hint={linked ? `Taken from the identity tab (${linked}).` : undefined}>
-                        <input type="date" value={linked || r.expiryDate} disabled={!!linked} onChange={(ev) => up({ expiryDate: ev.target.value })} />
+                        <DateField value={linked || r.expiryDate} disabled={!!linked} onChange={(ev) => up({ expiryDate: ev.target.value })} />
                       </Fg>
                       <Fg label="File" full hint={r.type.trim() ? undefined : 'Name the document first, then attach its file.'}>
                         <FileAttach empId={e.id} name={r.type.trim()} />

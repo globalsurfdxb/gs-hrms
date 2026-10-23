@@ -43,6 +43,8 @@ export interface OnboardingInvite {
   name: string;
   /** Work location id ('Dubai' or 'Kochi'): it decides which identity and bank fields are asked. */
   location: string;
+  /** The company the offer is issued by (for example "GS IT"). Older forms do not carry it. */
+  company?: string;
   /** The company mailbox the form was sent to, and the personal address it was copied to. */
   toWork: string;
   toPersonal: string;
@@ -116,6 +118,7 @@ export interface InviteInput {
   candidateId: string;
   name: string;
   location: string;
+  company?: string;
   toWork: string;
   toPersonal: string;
   joiningDate: string;

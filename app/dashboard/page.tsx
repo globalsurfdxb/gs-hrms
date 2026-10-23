@@ -184,7 +184,7 @@ function EmployeeHome({ now }: { now: number }) {
   const hours = locationDef(me.location)?.workingHours ?? '—';
 
   return (
-    <div>
+    <div className="dash">
       <div className="dh">
         <div className="dh-main">
           <div className="dh-eyebrow" suppressHydrationWarning>{liveLabel(now)}</div>
@@ -397,7 +397,7 @@ function TeamLeadHome({ now }: { now: number }) {
   const total = team.length || 1;
 
   return (
-    <div>
+    <div className="dash">
       <div className="dh">
         <div className="dh-main">
           <div className="dh-eyebrow" suppressHydrationWarning>{liveLabel(now)}</div>
@@ -712,7 +712,7 @@ export default function DashboardPage() {
   };
 
   return (
-    <div>
+    <div className="dash">
       <div className="dh">
         <div className="dh-main">
           <div className="dh-eyebrow" suppressHydrationWarning>{liveLabel(now)}</div>

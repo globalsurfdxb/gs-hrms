@@ -1,11 +1,15 @@
 'use client';
 
+import { DateField } from '@/components/ui/DateField';
 import { useEffect, useState, useSyncExternalStore } from 'react';
 import { useParams } from 'next/navigation';
 import { CareersFrame } from '@/components/hiring/Careers';
 import { Fg, TEXTAREA_STYLE } from '@/components/hiring/HiringBits';
 import { BLOOD_GROUPS, GENDERS, MARITAL_STATUSES, NATIONALITIES } from '@/lib/options';
 import { ENTITY_NAME } from '@/lib/org';
+import { COMPANIES } from '@/lib/data';
+import { companyOfOffer } from '@/lib/hiringLetters';
+import { useHiring } from '@/lib/hiringStore';
 import type { EducationRow, EmergencyRow, ExperienceRow } from '@/lib/employeeStore';
 import { JoiningForm, OnboardingInvite, blankJoiningForm, inviteByToken, markOpened, saveFormDraft, submitForm, useInvites } from '@/lib/onboardingForms';
 
@@ -18,17 +22,22 @@ export default function JoiningFormPage() {
   const { token } = useParams<{ token: string }>();
   const mounted = useMounted();
   const invites = useInvites();
-  const invite = mounted ? inviteByToken(invites, token) : undefined;
-  const foot = `${ENTITY_NAME} · This page is private to you. Your details are only used for your employment record.`;
+  const hiring = useHiring();
+  const found = mounted ? inviteByToken(invites, token) : undefined;
+  // The company the offer is from. Forms sent before it was recorded look it up from the offer.
+  const offer = found ? hiring.offers.find((o) => o.id === found.offerId) : undefined;
+  const company = found?.company ?? COMPANIES.find((c) => c.id === (offer ? companyOfOffer(hiring, offer) : undefined))?.name ?? ENTITY_NAME;
+  const invite = found ? { ...found, company } : undefined;
+  const foot = `${company} · This page is private to you. Your details are only used for your employment record.`;
 
   useEffect(() => {
     if (invite?.status === 'Sent') markOpened(token);
   }, [token, invite?.status]);
 
-  if (!mounted) return <CareersFrame title="Joining details" foot={foot}>{null}</CareersFrame>;
+  if (!mounted) return <CareersFrame minimal title="Joining details" foot={foot}>{null}</CareersFrame>;
   if (!invite)
     return (
-      <CareersFrame title="Joining details" foot={foot}>
+      <CareersFrame minimal title="Joining details" foot={foot}>
         <div className="cr-card cr-empty">
           <h2>This link is not valid</h2>
           <p>It may be mistyped or no longer active. Please contact the HR team at {ENTITY_NAME}, who can send you a new one.</p>
@@ -37,7 +46,7 @@ export default function JoiningFormPage() {
     );
   if (invite.status === 'Submitted')
     return (
-      <CareersFrame title="Joining details" foot={foot}>
+      <CareersFrame minimal title="Joining details" foot={foot}>
         <div className="cr-card cr-done">
           <div className="cr-done-ic" aria-hidden>
             ✓
@@ -89,6 +98,19 @@ function FormBody({ invite, foot }: { invite: OnboardingInvite; foot: string }) 
   if (!d.docs['Passport Size Photo']) errors.photo = 'Attach a passport size photo.';
   if (!d.declared) errors.declared = 'Please confirm the details are correct.';
   const shown = (k: string) => (attempted ? errors[k] : undefined);
+  const steps: { id: string; label: string; done: boolean; optional?: boolean }[] = [
+    { id: 'about', label: 'About you', done: !errors.dob && !errors.gender && !errors.nationality && !errors.nationalityOther && !errors.personalMobile && !errors.currentAddress },
+    { id: 'identity', label: 'Identity', optional: true, done: !!(f('passportNumber') || f('aadhaar') || f('pan') || f('emiratesId')) },
+    { id: 'bank', label: 'Bank details', done: !errors.bank },
+    { id: 'emergency', label: 'Emergency contacts', done: !errors.emA },
+    { id: 'education', label: 'Education', optional: true, done: d.edu.some((r) => r.qualification.trim() || r.institution.trim()) },
+    { id: 'experience', label: 'Work experience', optional: true, done: d.exp.some((r) => r.company.trim()) },
+    { id: 'documents', label: 'Documents', done: !errors.photo },
+    { id: 'confirm', label: 'Confirm and submit', done: !errors.declared },
+  ];
+  const required = steps.filter((st) => !st.optional);
+  const doneCount = required.filter((st) => st.done).length;
+  const pct = Math.round((doneCount / required.length) * 100);
 
   const submit = () => {
     setAttempted(true);
@@ -106,25 +128,70 @@ function FormBody({ invite, foot }: { invite: OnboardingInvite; foot: string }) 
   return (
     <CareersFrame
       wide
+      minimal
       title="Joining details"
       foot={foot}
       hero={
-        <section className="cr-hero job">
-          <div className="cr-hero-in">
-            <span className="cr-eyebrow">Welcome</span>
-            <h1>Complete your joining details, {invite.name.split(' ')[0]}</h1>
-            <div className="cr-hero-chips">
-              <span>Joining on {long(invite.joiningDate)}</span>
-              <span>Please finish by {long(invite.dueDate)}</span>
-              <span>About 10 minutes</span>
+        <section className="jh">
+          <span className="cr2-blob b1" aria-hidden />
+          <span className="cr2-blob b2" aria-hidden />
+          <div className="jh-in">
+            <div className="jh-copy">
+              <span className="cr2-pill">
+                <i /> Welcome to {invite.company}
+              </span>
+              <h1>
+                Complete your joining details, <em>{invite.name.split(' ')[0]}</em>
+              </h1>
+              <p>This takes about 10 minutes. Your answers save as you type, so you can pause and return to this same link at any time.</p>
             </div>
+            <dl className="jh-facts">
+              <div>
+                <dt>Joining date</dt>
+                <dd>{long(invite.joiningDate)}</dd>
+              </div>
+              <div>
+                <dt>Please finish by</dt>
+                <dd>{long(invite.dueDate)}</dd>
+              </div>
+              <div>
+                <dt>Work location</dt>
+                <dd>{india ? 'Kochi, India' : 'Dubai, UAE'}</dd>
+              </div>
+            </dl>
           </div>
         </section>
       }
     >
+      <div className="jf-layout">
+        <aside className="jf-side" aria-label="Form progress">
+          <div className="jf-prog">
+            <div className="jf-prog-top">
+              <b>{pct}%</b>
+              <span>
+                {doneCount} of {required.length} required sections done
+              </span>
+            </div>
+            <div className="jf-bar" role="progressbar" aria-valuenow={pct} aria-valuemin={0} aria-valuemax={100}>
+              <i style={{ width: `${pct}%` }} />
+            </div>
+          </div>
+          <nav className="jf-steps">
+            {steps.map((st, i) => (
+              <a key={st.id} href={`#jf-${st.id}`} className={st.done ? 'done' : ''}>
+                <span className="jf-dot">{st.done ? '✓' : i + 1}</span>
+                <span className="jf-st-t">
+                  {st.label}
+                  {st.optional && <small>Optional</small>}
+                </span>
+              </a>
+            ))}
+          </nav>
+          <p className="jf-saved">{savedAt ? `Saved automatically at ${savedAt}` : 'Saved automatically as you type'}</p>
+        </aside>
       <div className="jf">
         <p className="jf-note">
-          Fill in what you can now. Your answers are saved as you type, so you can close this page and come back to the same link. {savedAt && <b>Saved at {savedAt}.</b>}
+          Fill in what you can now. Your answers are saved as you type, so you can close this page and come back to the same link. Fields marked * are required.
         </p>
         {error && (
           <div className="tx-err" role="alert" style={{ marginBottom: 12 }}>
@@ -132,14 +199,14 @@ function FormBody({ invite, foot }: { invite: OnboardingInvite; foot: string }) 
           </div>
         )}
 
-        <section className="cr-card">
+        <section className="cr-card jf-sec" id="jf-about">
           <h2>About you</h2>
           <div className="form-grid hm-form">
             <Fg label="Full name">
               <input value={invite.name} readOnly style={{ background: 'var(--bg)' }} />
             </Fg>
             <Fg label="Date of birth" required error={shown('dob')}>
-              <input type="date" value={d.dob} onChange={(e) => setD({ ...d, dob: e.target.value })} />
+              <DateField value={d.dob} onChange={(e) => setD({ ...d, dob: e.target.value })} />
             </Fg>
             <Fg label="Gender" required error={shown('gender')}>
               <select value={f('gender')} onChange={(e) => setF('gender', e.target.value)}>
@@ -192,14 +259,14 @@ function FormBody({ invite, foot }: { invite: OnboardingInvite; foot: string }) 
           </div>
         </section>
 
-        <section className="cr-card">
+        <section className="cr-card jf-sec" id="jf-identity">
           <h2>Identity</h2>
           <div className="form-grid hm-form">
             <Fg label="Passport number">
               <input value={f('passportNumber')} onChange={(e) => setF('passportNumber', e.target.value.toUpperCase())} autoComplete="off" />
             </Fg>
             <Fg label="Passport expiry date">
-              <input type="date" value={d.passportExpiry} onChange={(e) => setD({ ...d, passportExpiry: e.target.value })} />
+              <DateField value={d.passportExpiry} onChange={(e) => setD({ ...d, passportExpiry: e.target.value })} />
             </Fg>
             {india ? (
               <>
@@ -221,7 +288,7 @@ function FormBody({ invite, foot }: { invite: OnboardingInvite; foot: string }) 
           </div>
         </section>
 
-        <section className="cr-card">
+        <section className="cr-card jf-sec" id="jf-bank">
           <h2>Bank details</h2>
           <p className="cr-sub" style={{ marginTop: 0 }}>
             For your salary. {india ? 'Savings account in your own name.' : 'Your own account; an IBAN is preferred.'}
@@ -239,7 +306,7 @@ function FormBody({ invite, foot }: { invite: OnboardingInvite; foot: string }) 
           </div>
         </section>
 
-        <section className="cr-card">
+        <section className="cr-card jf-sec" id="jf-emergency">
           <h2>Emergency contacts</h2>
           {[
             { key: 'emA' as const, title: india ? 'Primary contact' : 'Contact in the UAE', required: true },
@@ -265,7 +332,7 @@ function FormBody({ invite, foot }: { invite: OnboardingInvite; foot: string }) 
           ))}
         </section>
 
-        <section className="cr-card">
+        <section className="cr-card jf-sec" id="jf-education">
           <h2>Education</h2>
           {d.edu.map((r, i) => (
             <div key={i} className="jf-group">
@@ -301,7 +368,7 @@ function FormBody({ invite, foot }: { invite: OnboardingInvite; foot: string }) 
           </button>
         </section>
 
-        <section className="cr-card">
+        <section className="cr-card jf-sec" id="jf-experience">
           <h2>Work experience</h2>
           <p className="cr-sub" style={{ marginTop: 0 }}>
             Your previous jobs, latest first. Skip this if it is your first job.
@@ -322,10 +389,10 @@ function FormBody({ invite, foot }: { invite: OnboardingInvite; foot: string }) 
                   <input value={r.title} onChange={(e) => setD({ ...d, exp: setRow<ExperienceRow>(d.exp, i, { title: e.target.value }) })} />
                 </Fg>
                 <Fg label="From">
-                  <input type="month" value={r.from} onChange={(e) => setD({ ...d, exp: setRow<ExperienceRow>(d.exp, i, { from: e.target.value }) })} />
+                  <DateField mode="month" value={r.from} onChange={(e) => setD({ ...d, exp: setRow<ExperienceRow>(d.exp, i, { from: e.target.value }) })} />
                 </Fg>
                 <Fg label="To">
-                  <input type="month" value={r.to} onChange={(e) => setD({ ...d, exp: setRow<ExperienceRow>(d.exp, i, { to: e.target.value }) })} />
+                  <DateField mode="month" value={r.to} onChange={(e) => setD({ ...d, exp: setRow<ExperienceRow>(d.exp, i, { to: e.target.value }) })} />
                 </Fg>
                 <Fg label="City / country">
                   <input value={r.location} onChange={(e) => setD({ ...d, exp: setRow<ExperienceRow>(d.exp, i, { location: e.target.value }) })} />
@@ -338,7 +405,7 @@ function FormBody({ invite, foot }: { invite: OnboardingInvite; foot: string }) 
           </button>
         </section>
 
-        <section className="cr-card">
+        <section className="cr-card jf-sec" id="jf-documents">
           <h2>Documents</h2>
           <p className="cr-sub" style={{ marginTop: 0 }}>
             Attach clear copies (PDF or image). Bring the originals on your first day.
@@ -358,16 +425,18 @@ function FormBody({ invite, foot }: { invite: OnboardingInvite; foot: string }) 
           </div>
         </section>
 
-        <section className="cr-card">
+        <section className="cr-card jf-sec jf-confirm" id="jf-confirm">
+          <h2>Confirm and submit</h2>
           <label className="hm-check">
             <input type="checkbox" checked={d.declared} onChange={(e) => setD({ ...d, declared: e.target.checked })} />
-            <span>I confirm the details above are true and complete, and I agree to {ENTITY_NAME} storing them for my employment record.</span>
+            <span>I confirm the details above are true and complete, and I agree to {invite.company} storing them for my employment record.</span>
           </label>
           {shown('declared') && <div className="tx-err">{shown('declared')}</div>}
           <button type="button" className="btn primary" style={{ marginTop: 18 }} onClick={submit}>
             Submit my details
           </button>
         </section>
+      </div>
       </div>
     </CareersFrame>
   );

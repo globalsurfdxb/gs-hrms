@@ -1,5 +1,6 @@
 'use client';
 
+import { DateField } from '@/components/ui/DateField';
 import { useState } from 'react';
 import Link from 'next/link';
 import { ASSETS, EMPLOYEES, REFERENCE_TODAY, employeeById, managerOf, matchesEmployee } from '@/lib/data';
@@ -539,8 +540,7 @@ export default function OffboardingPage() {
             </select>
           </Fg>
           <Fg label="Resignation / notice date" required>
-            <input
-              type="date"
+            <DateField
               value={resDate}
               onChange={(e) => {
                 setResDate(e.target.value);
@@ -565,8 +565,7 @@ export default function OffboardingPage() {
             </select>
           </Fg>
           <Fg label="Last working day" required>
-            <input
-              type="date"
+            <DateField
               value={lwd}
               onChange={(e) => {
                 setLwdManual(e.target.value);

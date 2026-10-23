@@ -1,5 +1,6 @@
 'use client';
 
+import { DateField } from '@/components/ui/DateField';
 import { useMemo, useState } from 'react';
 import { useCurrentEmployee } from '@/context/AppContext';
 import { useOrg } from '@/context/OrgContext';
@@ -181,7 +182,7 @@ function Form({ onClose, onRaise }: { onClose: () => void; onRaise: (r: NewReque
                   ))}
                 </select>
               ) : (
-                <input type={def.kind} value={value} onChange={(e) => setValue(e.target.value)} />
+                def.kind === 'date' ? <DateField value={value} onChange={(e) => setValue(e.target.value)} /> : <input type={def.kind} value={value} onChange={(e) => setValue(e.target.value)} />
               )}
             </Fg>
           </>
@@ -239,7 +240,7 @@ function Form({ onClose, onRaise }: { onClose: () => void; onRaise: (r: NewReque
               <textarea rows={4} value={purpose} onChange={(e) => setPurpose(e.target.value)} style={{ padding: '9px 12px', border: '1px solid var(--border)', borderRadius: 'var(--r-sm)', fontSize: 13, fontFamily: 'inherit', resize: 'vertical' }} />
             </Fg>
             <Fg label="Needed by" hint="Optional.">
-              <input type="date" value={needBy} onChange={(e) => setNeedBy(e.target.value)} />
+              <DateField value={needBy} onChange={(e) => setNeedBy(e.target.value)} />
             </Fg>
           </>
         )}
