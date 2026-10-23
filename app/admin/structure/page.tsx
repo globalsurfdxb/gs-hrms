@@ -51,6 +51,9 @@ export default function AdminStructurePage() {
   const [selectedId, setSelectedId] = useState('');
   const [q, setQ] = useState('');
   const [locFilter, setLocFilter] = useState('all');
+  const [headFilter, setHeadFilter] = useState<'all' | 'with' | 'none'>('all');
+  const [staffFilter, setStaffFilter] = useState<'all' | 'staffed' | 'empty'>('all');
+  const [sort, setSort] = useState<'default' | 'name' | 'people' | 'desig'>('default');
   const [closed, setClosed] = useState<Record<string, boolean>>({});
 
   const [deptOpen, setDeptOpen] = useState(false);
@@ -84,7 +87,21 @@ export default function AdminStructurePage() {
       const desigs = deptHit ? all : all.filter((x) => x.title.toLowerCase().includes(needle));
       return { d, all, desigs, hit: deptHit || desigs.length > 0 };
     })
-    .filter((x) => x.hit && (locFilter === 'all' || x.d.locations.includes(locFilter)));
+    .filter((x) => x.hit)
+    .filter((x) => locFilter === 'all' || x.d.locations.includes(locFilter))
+    .filter((x) => headFilter === 'all' || (headFilter === 'with' ? x.d.head !== 'Unassigned' : x.d.head === 'Unassigned'))
+    .filter((x) => staffFilter === 'all' || (staffFilter === 'staffed' ? people(x.d.name) > 0 : people(x.d.name) === 0));
+  if (sort === 'name') shown.sort((a, b) => a.d.name.localeCompare(b.d.name));
+  else if (sort === 'people') shown.sort((a, b) => people(b.d.name) - people(a.d.name) || a.d.name.localeCompare(b.d.name));
+  else if (sort === 'desig') shown.sort((a, b) => b.all.length - a.all.length || a.d.name.localeCompare(b.d.name));
+  const filtersOn = needle.length > 0 || locFilter !== 'all' || headFilter !== 'all' || staffFilter !== 'all';
+  const clearFilters = () => {
+    setQ('');
+    setLocFilter('all');
+    setHeadFilter('all');
+    setStaffFilter('all');
+  };
+  const inLoc = (id: string) => companyDepts.filter((d) => d.locations.includes(id)).length;
 
   const isClosed = (id: string) => (needle ? false : !!closed[id]);
   const flip = (id: string) => setClosed((c) => ({ ...c, [id]: !c[id] }));
@@ -243,26 +260,91 @@ export default function AdminStructurePage() {
             </div>
           </div>
 
-          <div className="tbar st-bar">
-            <div className="tsearch">
-              <SearchIcon />
-              <input value={q} onChange={(e) => setQ(e.target.value)} placeholder="Search departments, heads or designations…" />
+          <div className="st-filters">
+            <div className="st-frow">
+              <div className="tsearch">
+                <SearchIcon />
+                <input value={q} onChange={(e) => setQ(e.target.value)} placeholder="Search departments, heads or designations…" aria-label="Search departments" />
+                {q && (
+                  <button type="button" className="st-x" onClick={() => setQ('')} aria-label="Clear search">
+                    <XIcon />
+                  </button>
+                )}
+              </div>
+              <label className="st-sort">
+                <span>Sort</span>
+                <select value={sort} onChange={(e) => setSort(e.target.value as typeof sort)} aria-label="Sort departments">
+                  <option value="default">Default order</option>
+                  <option value="name">Name A–Z</option>
+                  <option value="people">Most people</option>
+                  <option value="desig">Most designations</option>
+                </select>
+              </label>
+              <div className="st-fa">
+                <Button size="sm" onClick={() => setAll(false)}>
+                  Expand all
+                </Button>
+                <Button size="sm" onClick={() => setAll(true)}>
+                  Collapse all
+                </Button>
+              </div>
             </div>
-            <select value={locFilter} onChange={(e) => setLocFilter(e.target.value)} style={{ height: 36 }}>
-              <option value="all">All locations</option>
-              {locations.map((l) => (
-                <option key={l.id} value={l.id}>
-                  {l.name} ({l.city})
-                </option>
-              ))}
-            </select>
-            <div style={{ marginLeft: 'auto', display: 'flex', gap: 6 }}>
-              <Button size="sm" onClick={() => setAll(false)}>
-                Expand all
-              </Button>
-              <Button size="sm" onClick={() => setAll(true)}>
-                Collapse all
-              </Button>
+
+            <div className="st-fgroups">
+              <div className="st-fg">
+                <span>Location</span>
+                <div className="subseg" role="group" aria-label="Location">
+                  <button type="button" className={locFilter === 'all' ? 'on' : ''} onClick={() => setLocFilter('all')}>
+                    All <em>{companyDepts.length}</em>
+                  </button>
+                  {locations.map((l) => (
+                    <button key={l.id} type="button" className={locFilter === l.id ? 'on' : ''} onClick={() => setLocFilter(l.id)}>
+                      {l.name} <em>{inLoc(l.id)}</em>
+                    </button>
+                  ))}
+                </div>
+              </div>
+              <div className="st-fg">
+                <span>Department head</span>
+                <div className="subseg" role="group" aria-label="Department head">
+                  <button type="button" className={headFilter === 'all' ? 'on' : ''} onClick={() => setHeadFilter('all')}>
+                    Any
+                  </button>
+                  <button type="button" className={headFilter === 'with' ? 'on' : ''} onClick={() => setHeadFilter('with')}>
+                    Has a head
+                  </button>
+                  <button type="button" className={headFilter === 'none' ? 'on' : ''} onClick={() => setHeadFilter('none')}>
+                    No head
+                  </button>
+                </div>
+              </div>
+              <div className="st-fg">
+                <span>People</span>
+                <div className="subseg" role="group" aria-label="People">
+                  <button type="button" className={staffFilter === 'all' ? 'on' : ''} onClick={() => setStaffFilter('all')}>
+                    Any
+                  </button>
+                  <button type="button" className={staffFilter === 'staffed' ? 'on' : ''} onClick={() => setStaffFilter('staffed')}>
+                    Has people
+                  </button>
+                  <button type="button" className={staffFilter === 'empty' ? 'on' : ''} onClick={() => setStaffFilter('empty')}>
+                    Empty
+                  </button>
+                </div>
+              </div>
+            </div>
+
+            <div className="st-fsum" role="status">
+              <span>
+                Showing <b>{shown.length}</b> of {companyDepts.length} department{companyDepts.length === 1 ? '' : 's'}
+                {' · '}
+                <b>{shown.reduce((n, x) => n + x.desigs.length, 0)}</b> designation{shown.reduce((n, x) => n + x.desigs.length, 0) === 1 ? '' : 's'}
+              </span>
+              {filtersOn && (
+                <button type="button" className="st-clear" onClick={clearFilters}>
+                  <XIcon /> Clear filters
+                </button>
+              )}
             </div>
           </div>
 
@@ -279,7 +361,10 @@ export default function AdminStructurePage() {
 
           {companyDepts.length > 0 && shown.length === 0 && (
             <Card className="row-gap">
-              <EmptyState icon={<SearchIcon />} title="Nothing matches" description="Try a different search, or clear the location filter." />
+              <EmptyState icon={<SearchIcon />} title="Nothing matches" description="No department fits the search and filters you chose. Clear them to see every department." />
+              <div style={{ padding: '0 0 20px', textAlign: 'center' }}>
+                <Button onClick={clearFilters}>Clear filters</Button>
+              </div>
             </Card>
           )}
 

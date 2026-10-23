@@ -150,7 +150,7 @@ export function Rail({ open, onClose }: { open: boolean; onClose: () => void }) 
                   })
                 : mainModules.map((m) => (
                     <div key={m} style={{ display: 'contents' }}>
-                      <RailLink m={m} active={activeModule === m && !(m === 'operations' && EMPLOYEE_SHORTCUTS.some((t) => onShortcut(pathname, t.href)))} onClick={onClose} />
+                      <RailLink m={m} active={activeModule === m && !((m === 'operations' || m === 'home') && mainModules.includes('operations') && EMPLOYEE_SHORTCUTS.some((t) => onShortcut(pathname, t.href)))} onClick={onClose} />
                       {m === 'operations' &&
                         EMPLOYEE_SHORTCUTS.map(({ key, label, href, Icon }) => (
                           <Link key={key} href={href} className={`zrail-i ${onShortcut(pathname, href) ? 'active' : ''}`} onClick={onClose}>

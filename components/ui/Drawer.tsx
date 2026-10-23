@@ -9,6 +9,7 @@ export function Drawer({
   title,
   description,
   footer,
+  wide,
   children,
 }: {
   open: boolean;
@@ -16,6 +17,7 @@ export function Drawer({
   title: string;
   description?: string;
   footer?: React.ReactNode;
+  wide?: boolean;
   children: React.ReactNode;
 }) {
   const [mounted, setMounted] = useState(false);
@@ -38,7 +40,7 @@ export function Drawer({
   return (
     <>
       <div className={`drawer-scrim ${entered ? 'open' : ''}`} onClick={onClose} />
-      <div className={`drawer ${entered ? 'open' : ''}`} role="dialog" aria-modal="true">
+      <div className={`drawer ${wide ? 'wide' : ''} ${entered ? 'open' : ''}`} role="dialog" aria-modal="true">
         <div className="drawer-head">
           <div>
             <h3>{title}</h3>

@@ -445,7 +445,7 @@ function TeamLeadHome({ now }: { now: number }) {
       <div className="dg2 row-gap">
         <Card>
           <CardHeader title="Waiting for my decision" sub="Requests routed to me and leave to approve" />
-          <div>
+          <div className="da-docs">
             {awaiting.map((r) => (
               <ApprovalRow key={r.id} r={r} onAct={act} />
             ))}
@@ -941,7 +941,7 @@ export default function DashboardPage() {
 
       <Card className="row-gap">
         <CardHeader title="Pending employee requests" sub={`${scopeName} · routed to HR / Manager`} action={<Link href="/requests" className="lnk">Open →</Link>} />
-        <div>
+        <div className="da-docs">
           {pendingRequests.length ? (
             pendingRequests.map((r) => <ApprovalRow key={r.id} r={r} onAct={act} />)
           ) : (

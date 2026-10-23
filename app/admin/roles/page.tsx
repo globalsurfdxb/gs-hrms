@@ -56,37 +56,13 @@ const blankRole = (): RoleDef => ({ id: '', name: '', description: '', system: f
 const catFeatures = (c: AccessCategory) => c.features;
 const modFeatures = (m: AccessModule) => m.categories.flatMap(catFeatures);
 
-function Check({ checked, some, onChange, title }: { checked: boolean; some?: boolean; onChange: () => void; title?: string }) {
-  return (
-    <input
-      type="checkbox"
-      title={title}
-      checked={checked}
-      ref={(el) => {
-        if (el) el.indeterminate = !!some && !checked;
-      }}
-      onChange={onChange}
-      style={{ width: 15, height: 15, accentColor: 'var(--primary)', cursor: 'pointer' }}
-    />
-  );
-}
-
 /** Every permission key a feature can have: View plus whichever of Add/Edit/Delete apply. */
 const fullKeys = (f: AccessFeature) => [f.id, ...(f.actions ?? []).map((a) => permKey(f.id, a))];
-const fullStat = (perms: string[], list: AccessFeature[]) => {
-  const keys = list.flatMap(fullKeys);
-  const n = keys.filter((k) => perms.includes(k)).length;
-  return { n, all: n === keys.length && keys.length > 0, some: n > 0 };
-};
 /** Add/Edit/Delete need View, so ticking one ticks View and clearing View clears them all. */
 const flipAction = (perms: string[], f: AccessFeature, a: AccessAction): string[] => {
   if (a === 'view') return perms.includes(f.id) ? perms.filter((p) => p !== f.id && !p.startsWith(`${f.id}#`)) : [...perms, f.id];
   const k = permKey(f.id, a);
   return perms.includes(k) ? perms.filter((p) => p !== k) : [...new Set([...perms, f.id, k])];
-};
-const flipFull = (perms: string[], list: AccessFeature[]): string[] => {
-  const keys = list.flatMap(fullKeys);
-  return keys.every((k) => perms.includes(k)) ? perms.filter((p) => !keys.includes(p)) : [...new Set([...perms, ...keys])];
 };
 const countAction = (perms: string[], list: AccessFeature[], a: ExtraAction) => list.filter((f) => perms.includes(permKey(f.id, a))).length;
 
@@ -138,17 +114,175 @@ function Acts({ f, perms, who, onToggle }: { f: AccessFeature; perms: string[]; 
   );
 }
 
-function Acc({ open, onToggle, level, title, meta, icon, badge, children }: { open: boolean; onToggle: () => void; level: 1 | 2; title: string; meta?: string; icon?: React.ReactNode; badge?: string; children: React.ReactNode }) {
+/* ---------- role editor ---------- */
+type Level = 'none' | 'view' | 'edit' | 'full';
+const LEVELS: { key: Level; label: string; hint: string }[] = [
+  { key: 'none', label: 'No access', hint: 'Cannot open these screens' },
+  { key: 'view', label: 'View only', hint: 'Can open and read, nothing else' },
+  { key: 'edit', label: 'View & edit', hint: 'Can view, add and edit, but not delete' },
+  { key: 'full', label: 'Full access', hint: 'Can view, add, edit and delete' },
+];
+const keysAt = (f: AccessFeature, level: Level): string[] => {
+  if (level === 'none') return [];
+  if (level === 'view') return [f.id];
+  if (level === 'full') return fullKeys(f);
+  return [f.id, ...(f.actions ?? []).filter((a) => a !== 'delete').map((a) => permKey(f.id, a))];
+};
+/** Which preset a set of features matches, or 'custom' when it is a mix. */
+const levelOf = (perms: string[], list: AccessFeature[]): Level | 'custom' => {
+  if (!list.length) return 'none';
+  const have = new Set(list.flatMap(fullKeys).filter((k) => perms.includes(k)));
+  for (const lv of ['none', 'view', 'edit', 'full'] as const) {
+    const want = new Set(list.flatMap((f) => keysAt(f, lv)));
+    if (want.size === have.size && [...want].every((k) => have.has(k))) return lv;
+  }
+  return 'custom';
+};
+const applyLevel = (perms: string[], list: AccessFeature[], level: Level): string[] => {
+  const all = new Set(list.flatMap(fullKeys));
+  return [...perms.filter((p) => !all.has(p)), ...list.flatMap((f) => keysAt(f, level))];
+};
+/** What a role can do with one feature, in plain words. */
+const describeFeature = (perms: string[], f: AccessFeature): string => {
+  if (!perms.includes(f.id)) return 'No access';
+  const extra = (f.actions ?? []).filter((a) => perms.includes(permKey(f.id, a)));
+  if (!extra.length) return f.actions?.length ? 'Can view only' : 'Can view';
+  if (extra.length === (f.actions ?? []).length) return 'Full access';
+  return `Can view, ${extra.join(', ')}`;
+};
+
+function LevelSelect({ value, onChange, label }: { value: Level | 'custom'; onChange: (l: Level) => void; label: string }) {
   return (
-    <div className={`acc acc-l${level} ${open ? 'open' : ''}`}>
-      <button type="button" className="acc-h" onClick={onToggle} aria-expanded={open}>
-        <span className="acc-chev">{open ? <ChevronDownIcon /> : <ChevronRightIcon />}</span>
-        {icon && <span className="acc-ic">{icon}</span>}
-        <span className="acc-t">{title}</span>
-        {badge && <span className="chip" style={{ padding: '2px 8px', fontSize: 11 }}>{badge}</span>}
-        {meta && <span className="acc-m">{meta}</span>}
-      </button>
-      {open && <div className="acc-b">{children}</div>}
+    <select className={`re-level lv-${value}`} value={value} onChange={(e) => onChange(e.target.value as Level)} aria-label={label} title={LEVELS.find((l) => l.key === value)?.hint ?? 'A mix of access levels'}>
+      {value === 'custom' && (
+        <option value="custom" disabled>
+          Custom mix
+        </option>
+      )}
+      {LEVELS.map((l) => (
+        <option key={l.key} value={l.key}>
+          {l.label}
+        </option>
+      ))}
+    </select>
+  );
+}
+
+/** Edit what a role can do: start from a preset, then adjust a module, a section or a single feature. */
+function RoleEditor({ catalog, perms, onChange, open, onOpen }: { catalog: AccessModule[]; perms: string[]; onChange: (p: string[]) => void; open: Record<string, boolean>; onOpen: (key: string) => void }) {
+  const [q, setQ] = useState('');
+  const needle = q.trim().toLowerCase();
+  const searching = needle.length > 0;
+  const everything = catalog.flatMap(modFeatures);
+  const total = everything.length;
+  const allLevel = levelOf(perms, everything);
+  const countOf = (a: AccessAction) => everything.filter((f) => perms.includes(permKey(f.id, a))).length;
+
+  return (
+    <div className="re">
+      <div className="re-sum">
+        <div className="re-sum-t">
+          <b>{countOf('view')}</b> of {total} features can be opened
+        </div>
+        <div className="re-meter">
+          <i style={{ width: `${total ? (countOf('view') / total) * 100 : 0}%` }} />
+        </div>
+        <div className="re-sum-s">
+          <span><i className="act-key act-add">+</i> {countOf('add')} can add</span>
+          <span><i className="act-key act-edit">✎</i> {countOf('edit')} can edit</span>
+          <span><i className="act-key act-delete">×</i> {countOf('delete')} can delete</span>
+        </div>
+      </div>
+
+      <div className="re-step">
+        <span className="re-n">1</span>
+        <div>
+          <b>Pick a starting point</b>
+          <small>Applies to every module. You can fine-tune below.</small>
+        </div>
+      </div>
+      <div className="re-presets" role="group" aria-label="Starting point">
+        {LEVELS.map((l) => (
+          <button key={l.key} type="button" className={`re-preset ${allLevel === l.key ? 'on' : ''}`} aria-pressed={allLevel === l.key} onClick={() => onChange(applyLevel(perms, everything, l.key))}>
+            <b>{l.label}</b>
+            <small>{l.hint}</small>
+          </button>
+        ))}
+      </div>
+
+      <div className="re-step">
+        <span className="re-n">2</span>
+        <div>
+          <b>Adjust by module</b>
+          <small>Open a module to set a section or one feature. The buttons are View, Add, Edit and Delete.</small>
+        </div>
+      </div>
+      <div className="re-find">
+        <SearchIcon />
+        <input value={q} onChange={(e) => setQ(e.target.value)} placeholder="Find a feature…" aria-label="Find a feature" />
+      </div>
+
+      {catalog.map((m) => {
+        const cats = m.categories
+          .map((c) => ({ ...c, features: searching ? c.features.filter((f) => `${f.label} ${c.label} ${m.name}`.toLowerCase().includes(needle)) : c.features }))
+          .filter((c) => c.features.length);
+        if (searching && !cats.length) return null;
+        const mf = modFeatures(m);
+        const granted = mf.filter((f) => perms.includes(f.id)).length;
+        const isOpen = searching || !!open[m.id];
+        const Icon = MODULE_ICON[m.id] ?? KeyIcon;
+        return (
+          <section key={m.id} className={`re-mod ${isOpen ? 'open' : ''}`}>
+            <div className="re-mh">
+              <button type="button" className="re-toggle" onClick={() => onOpen(m.id)} aria-expanded={isOpen}>
+                <span className="re-chev">{isOpen ? <ChevronDownIcon /> : <ChevronRightIcon />}</span>
+                <span className="re-ic">
+                  <Icon />
+                </span>
+                <span className="re-mt">
+                  <b>{m.name}</b>
+                  <small>
+                    {granted} of {mf.length} features open{m.common ? ' · shared by every module' : ''}
+                  </small>
+                </span>
+              </button>
+              <LevelSelect value={levelOf(perms, mf)} onChange={(l) => onChange(applyLevel(perms, mf, l))} label={`Access to all of ${m.name}`} />
+            </div>
+            {isOpen && (
+              <div className="re-mb">
+                {cats.map((c) => (
+                  <div key={c.id} className="re-cat">
+                    <div className="re-ch">
+                      <span>{c.label}</span>
+                      <LevelSelect value={levelOf(perms, c.features)} onChange={(l) => onChange(applyLevel(perms, c.features, l))} label={`Access to all of ${c.label}`} />
+                    </div>
+                    {c.features.map((f) => (
+                      <div key={f.id} className={`re-feat ${perms.includes(f.id) ? 'on' : ''}`}>
+                        <div className="re-ft">
+                          <b>{f.label}</b>
+                          <small>{describeFeature(perms, f)}</small>
+                        </div>
+                        <div className="re-chips">
+                          {ACTIONS.filter((a) => a.key === 'view' || (f.actions ?? []).includes(a.key as ExtraAction)).map((a) => {
+                            const on = perms.includes(permKey(f.id, a.key));
+                            return (
+                              <button key={a.key} type="button" className={`re-chip act-${a.key} ${on ? 'on' : ''}`} aria-pressed={on} title={a.hint} onClick={() => onChange(flipAction(perms, f, a.key))}>
+                                {on ? '✓ ' : ''}
+                                {a.label}
+                              </button>
+                            );
+                          })}
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                ))}
+              </div>
+            )}
+          </section>
+        );
+      })}
+      {searching && !catalog.some((m) => m.categories.some((c) => c.features.some((f) => `${f.label} ${c.label} ${m.name}`.toLowerCase().includes(needle)))) && <div className="re-none">No feature matches “{q.trim()}”.</div>}
     </div>
   );
 }
@@ -234,8 +368,6 @@ export default function AdminRolesPage() {
     setRoleError('');
     setRoleDrawer(true);
   };
-  const draftFull = (list: AccessFeature[]) => setDraft((d) => ({ ...d, perms: flipFull(d.perms, list) }));
-  const draftAct = (f: AccessFeature, a: AccessAction) => setDraft((d) => ({ ...d, perms: flipAction(d.perms, f, a) }));
 
   const saveRole = () => {
     const name = draft.name.trim();
@@ -582,9 +714,10 @@ export default function AdminRolesPage() {
 
       <Drawer
         open={roleDrawer}
+        wide
         onClose={() => setRoleDrawer(false)}
         title={mode === 'add' ? 'Add role' : 'Edit role'}
-        description={mode === 'add' ? 'Create a custom role and choose which features it can use in each module.' : `Editing ${draft.name || 'role'}.`}
+        description={mode === 'add' ? 'Name the role, then choose what it can do. Nothing is saved until you press the button below.' : `Editing ${draft.name || 'role'}. Nothing is saved until you press Save changes.`}
         footer={
           <>
             <Button variant="ghost" onClick={() => setRoleDrawer(false)}>
@@ -620,43 +753,7 @@ export default function AdminRolesPage() {
         </div>
         {roleError && <div style={{ marginTop: 6, fontSize: 12, color: 'var(--danger)' }}>{roleError}</div>}
 
-        <div style={{ marginTop: 18 }}>
-          {catalog.map((m) => {
-            const mf = modFeatures(m);
-            const ms = stat(draft.perms, mf);
-            const mfl = fullStat(draft.perms, mf);
-            const Icon = MODULE_ICON[m.id] ?? KeyIcon;
-            return (
-              <Acc key={m.id} level={1} open={!!draftOpen[m.id]} onToggle={() => setDraftOpen((o) => ({ ...o, [m.id]: !o[m.id] }))} icon={<Icon />} title={m.name} badge={m.common ? 'Common' : undefined} meta={`${ms.n}/${mf.length}`}>
-                <label className="perm-item" style={{ marginBottom: 8, background: 'var(--bg)' }}>
-                  <Check checked={mfl.all} some={mfl.some} onChange={() => draftFull(mf)} />
-                  <div className="nm">Full access to the entire module</div>
-                </label>
-                {m.categories.map((c) => {
-                  const cs = stat(draft.perms, c.features);
-                  const cfl = fullStat(draft.perms, c.features);
-                  const key = `${m.id}/${c.id}`;
-                  return (
-                    <Acc key={c.id} level={2} open={!!draftOpen[key]} onToggle={() => setDraftOpen((o) => ({ ...o, [key]: !o[key] }))} title={c.label} meta={`${cs.n}/${c.features.length}`}>
-                      <label className="perm-item" style={{ marginBottom: 6, background: 'var(--bg)' }}>
-                        <Check checked={cfl.all} some={cfl.some} onChange={() => draftFull(c.features)} />
-                        <div className="nm">Full access to all in {c.label}</div>
-                      </label>
-                      <div className="perm-grid" style={{ gridTemplateColumns: '1fr' }}>
-                        {c.features.map((f) => (
-                          <div key={f.id} className="perm-item perm-acts">
-                            <div className="nm">{f.label}</div>
-                            <Acts f={f} perms={draft.perms} who={draft.name || 'Role'} onToggle={(a) => draftAct(f, a)} />
-                          </div>
-                        ))}
-                      </div>
-                    </Acc>
-                  );
-                })}
-              </Acc>
-            );
-          })}
-        </div>
+        <RoleEditor catalog={catalog} perms={draft.perms} onChange={(perms) => setDraft((d) => ({ ...d, perms }))} open={draftOpen} onOpen={(key) => setDraftOpen((p) => ({ ...p, [key]: !p[key] }))} />
       </Drawer>
 
       <Drawer
