@@ -1,3 +1,4 @@
+import { keralaPtMonthly } from '@/lib/payroll';
 import { useSyncExternalStore } from 'react';
 import { logAudit } from '@/lib/employeeStore';
 import { ENTITY_NAME, legalEntityFor } from '@/lib/org';
@@ -237,14 +238,6 @@ const longDate = (iso: string) => new Date(`${iso.slice(0, 10)}T00:00:00`).toLoc
 const shortDate = (iso: string) => new Date(`${iso.slice(0, 10)}T00:00:00`).toLocaleDateString('en-GB', { day: '2-digit', month: '2-digit', year: 'numeric' });
 const money = (n: number) => n.toLocaleString('en-US');
 const inr = (n: number) => n.toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
-
-/** Kerala professional tax for a half-year of gross salary, spread over six months. */
-function keralaPtMonthly(monthlyGross: number): number {
-  const half = monthlyGross * 6;
-  const slabs: [number, number][] = [[125000, 1250], [100000, 1000], [75000, 750], [60000, 600], [45000, 450], [30000, 300], [18000, 180], [12000, 120]];
-  const tax = slabs.find(([from]) => half >= from)?.[1] ?? 0;
-  return tax / 6;
-}
 
 /** The India salary breakup. The offer lines are the yearly gross components; the rest is worked out from them:
     EPF at 12% of Basic up to the statutory wage ceiling (INR 1,800 a month), Kerala professional tax by half-yearly

@@ -8,6 +8,8 @@ import { Avatar } from '@/components/ui/Avatar';
 import { ArrowLeftIcon, PeopleIcon, XIcon } from '@/components/icons';
 import { Banner, Hero, OfferBadge, RejectDialog, StageBadge, TEXTAREA_STYLE, empName, fmtDate, fmtDateTime, money, payUnit, useActor } from '@/components/hiring/HiringBits';
 import { InterviewDrawer, OfferDrawer } from '@/components/hiring/HiringForms';
+import { DocsChip, DocsPanel } from '@/components/hiring/DocCollection';
+import { docRequestFor, docsCleared, useDocRequests } from '@/lib/hiringDocs';
 import { ComposeDrawer, MailList, useStageMail } from '@/components/hiring/Mail';
 import { RuleKey, messagesFor, useHiringMail } from '@/lib/hiringMail';
 import { useScoped } from '@/components/hiring/useScoped';
@@ -59,6 +61,7 @@ export default function CandidateProfilePage() {
   const notify = (text: string, tone: 'info' | 'warn' = 'info') => setMsg({ text, tone });
   const mailer = useStageMail(notify, (id) => setScheduleFor(appById(getHiring(), id) ?? null));
   const mail = useHiringMail();
+  const docReqs = useDocRequests();
   const [composing, setComposing] = useState(false);
 
   const c = candById(s, id);
@@ -264,6 +267,11 @@ export default function CandidateProfilePage() {
                         Offer {offer.code} <OfferBadge status={offer.status} /> · {money(offer.total, offer.currency)} {payUnit(offer.currency)}
                       </div>
                     )}
+                    {!a.exit && !offer && ['HR Interview', 'Offer'].includes(a.stage) && (
+                      <div className="hm-card-note">
+                        <DocsChip applicationId={a.id} />
+                      </div>
+                    )}
                     {mine && a.stage !== 'Hired' && (
                       <div className="hm-card-act" style={{ marginTop: 10 }}>
                         <select
@@ -291,7 +299,7 @@ export default function CandidateProfilePage() {
                           </button>
                         )}
                         {!a.exit && a.stage === 'Offer' && !offer && (
-                          <button type="button" className="hm-mini" onClick={() => setOfferFor(a)}>
+                          <button type="button" className="hm-mini" onClick={() => setOfferFor(a)} disabled={!docsCleared(docReqs, a.id)} title={docsCleared(docReqs, a.id) ? undefined : 'Collect and verify the documents first (see Pre-offer documents below)'}>
                             Create offer
                           </button>
                         )}
@@ -325,6 +333,12 @@ export default function CandidateProfilePage() {
               </div>
             )}
           </Card>
+
+          {apps
+            .filter((a) => !a.exit && a.stage !== 'Hired' && (['HR Interview', 'Offer'].includes(a.stage) || docRequestFor(docReqs, a.id)))
+            .map((a) => (
+              <DocsPanel key={a.id} application={a} candidate={c} canAct={manages(a)} notify={notify} />
+            ))}
 
           <Card>
             <CardHeader title="Emails" sub={`${messagesFor(mail, c.id).length} sent`} action={canAct ? <button type="button" className="lnk" onClick={() => setComposing(true)}>Write email →</button> : undefined} />

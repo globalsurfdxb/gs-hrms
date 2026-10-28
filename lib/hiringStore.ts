@@ -1,3 +1,4 @@
+import { docsCleared, getDocRequests } from '@/lib/hiringDocs';
 import { useSyncExternalStore } from 'react';
 import { addDays, daysBetween, todayISO } from '@/lib/dates';
 import { Role } from '@/lib/types';
@@ -618,6 +619,7 @@ export function createOffer(appId: string, input: OfferInput, actor: Actor): Res
   if (!a || !j) return fail('Application not found.');
   if (a.stage !== 'Offer' || a.exit) return fail('Move the candidate to the Offer stage first.');
   if (offerForApp(state, appId)) return fail('This candidate already has an offer.');
+  if (!docsCleared(getDocRequests(), appId)) return fail('Collect and verify the candidate’s documents first. Open their profile → Pre-offer documents (or skip the check there, with a reason).');
   const total = input.lines.reduce((n, l) => n + (Number.isFinite(l.amount) ? l.amount : 0), 0);
   if (total <= 0) return fail('Enter the salary breakdown.');
   const stamp = nowIso();

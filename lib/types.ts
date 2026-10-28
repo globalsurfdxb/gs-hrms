@@ -29,6 +29,13 @@ export interface EmployeeDocument {
 }
 
 export interface EmployeeProfile {
+  /** India records also keep the name split into parts (the full name stays as per passport). */
+  /** India: the name exactly as it is printed on the passport and on the Aadhaar card. */
+  passportName?: string;
+  aadhaarName?: string;
+  firstName?: string;
+  middleName?: string;
+  lastName?: string;
   gender: string;
   maritalStatus: string;
   bloodGroup: string;
@@ -45,15 +52,24 @@ export interface EmployeeProfile {
   labourCardExpiry?: string;
   aadhaar?: string;
   pan?: string;
+  /** Name exactly as printed on the PAN card. */
+  panName?: string;
   uan?: string;
+  /** India PF: already enrolled (Yes/No), the mobile linked to the UAN, an earlier PF member ID, EPS eligibility. */
+  pfEnrolled?: string;
+  uanMobile?: string;
+  pfMemberId?: string;
+  epsEligibility?: string;
   paymentMode: string;
   emergency: { group: string; name: string; relationship: string; mobile: string }[];
   totalExperience: string;
-  experience: { company: string; location: string; from: string; to: string; title: string; mode: string }[];
-  education: { qualification: string; institution: string; course: string; field: string; startYear: string; endYear: string }[];
-  family: { name: string; relationship: string; occupation: string }[];
+  experience: { company: string; location: string; from: string; to: string; title: string; mode: string; document?: string }[];
+  education: { qualification: string; institution: string; course: string; field: string; startYear: string; endYear: string; document?: string }[];
+  family: { name: string; relationship: string; occupation: string; dob?: string }[];
   salary: { currency: string; earnings: { label: string; amount: number }[]; deductions: { label: string; amount: number }[]; total: number; net: number };
   uploadedDocs: string[];
+  /** Text entered with a document: the passport or Aadhaar details, the certificate's qualification and institution. */
+  documentDetails?: { name: string; details: string }[];
 }
 
 export interface BankDetails {
@@ -61,6 +77,8 @@ export interface BankDetails {
   accountNumber: string;
   bankName: string;
   branchCode: string; // IFSC for Kochi, IBAN/routing for Dubai
+  /** India: the bank branch. */
+  branchName?: string;
   currency: 'AED' | 'INR';
 }
 

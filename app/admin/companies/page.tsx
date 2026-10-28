@@ -1,5 +1,6 @@
 'use client';
 
+import { COMPANY_COLOR, companyColor } from '@/lib/brandAssets';
 import { useMemo, useState } from 'react';
 import Link from 'next/link';
 import { EMPLOYEES } from '@/lib/data';
@@ -214,7 +215,7 @@ export default function AdminCompaniesPage() {
       ) : (
         <div className="co-grid">
           {shown.map((c, i) => {
-            const col = PALETTE[companies.findIndex((x) => x.id === c.id) % PALETTE.length];
+            const col = COMPANY_COLOR[c.shortCode.toUpperCase()] ? { bg: `${companyColor(c.shortCode)}1f`, fg: companyColor(c.shortCode) } : PALETTE[companies.findIndex((x) => x.id === c.id) % PALETTE.length];
             const heads = headcountByCompany(c.name, EMPLOYEES, statusOf).total;
             const share = totalHeadcount.total ? Math.round((heads / totalHeadcount.total) * 100) : 0;
             const inactive = c.status !== 'Active';

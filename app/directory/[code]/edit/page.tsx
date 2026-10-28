@@ -248,7 +248,7 @@ function validate(f: EmployeeForm, india: boolean, sensitive: boolean): Errs {
   if (!v.department) e.department = 'Choose a department.';
   if (!v.designation) e.designation = 'Choose a designation.';
   if (v.phone.trim() && !phoneOk(v.phone)) e.phone = 'Enter a valid work phone number (7 to 15 digits).';
-  if (!v.passportNumber.trim()) e.passportNumber = 'Passport number is required.';
+  if (!india && !v.passportNumber.trim()) e.passportNumber = 'Passport number is required.';
   if (india) {
     if (v.aadhaar.trim() && !/^\d{12}$/.test(v.aadhaar.replace(/\s/g, ''))) e.aadhaar = 'Aadhaar is 12 digits.';
     if (v.pan.trim() && !/^[A-Z]{5}[0-9]{4}[A-Z]$/.test(v.pan.trim().toUpperCase())) e.pan = 'PAN looks like ABCDE1234F.';
@@ -299,7 +299,7 @@ function validate(f: EmployeeForm, india: boolean, sensitive: boolean): Errs {
 /* What belongs to one country only. Moving someone between locations drops the other country's details
    (they come back if the move is undone) and switches the lists that depend on the country. */
 const UAE_ONLY = ['emiratesId', 'visaExpiry', 'emiratesIdExpiry', 'labourCardIssue', 'labourCardExpiry'];
-const INDIA_ONLY = ['aadhaar', 'pan', 'uan'];
+const INDIA_ONLY = ['branchName', 'aadhaar', 'pan', 'panName', 'uan', 'passportName', 'aadhaarName', 'pfEnrolled', 'uanMobile', 'pfMemberId', 'epsEligibility'];
 const UAE_DOCS = ['Residence Visa', 'Emirates ID', 'Labour Card'];
 const TO_INDIA: Record<string, string> = { 'Local Emergency Contact (UAE)': 'Primary Emergency Contact', 'Home Country Emergency Contact': 'Alternate Emergency Contact' };
 const TO_UAE: Record<string, string> = { 'Primary Emergency Contact': 'Local Emergency Contact (UAE)', 'Alternate Emergency Contact': 'Home Country Emergency Contact' };
@@ -611,6 +611,13 @@ function Editor({ e }: { e: Employee }) {
                 <Fg label="Full name (as per passport)" required error={err('name')}>
                   {input('name')}
                 </Fg>
+                {isIndia && (
+                  <>
+                    <Fg label="First name">{input('firstName')}</Fg>
+                    <Fg label="Middle name">{input('middleName')}</Fg>
+                    <Fg label="Last name">{input('lastName')}</Fg>
+                  </>
+                )}
                 <Fg label="Date of birth" error={err('dob')}>
                   {input('dob', { type: 'date' })}
                 </Fg>
@@ -743,7 +750,8 @@ function Editor({ e }: { e: Employee }) {
             <div>
               <Sub first>Passport</Sub>
               <div className="form-grid">
-                <Fg label="Passport number" required error={err('passportNumber')}>
+                {isIndia && <Fg label="Name as per passport">{input('passportName')}</Fg>}
+                <Fg label="Passport number" required={!isIndia} error={err('passportNumber')}>
                   {input('passportNumber')}
                 </Fg>
                 <Fg label="Passport expiry">{input('passportExpiry', { type: 'date' })}</Fg>
@@ -752,9 +760,11 @@ function Editor({ e }: { e: Employee }) {
                 <>
                   <Sub>Statutory identity (India)</Sub>
                   <div className="form-grid">
+                    <Fg label="Name as per Aadhaar">{input('aadhaarName')}</Fg>
                     <Fg label="Aadhaar number" error={err('aadhaar')}>
                       {input('aadhaar', { placeholder: '12-digit Aadhaar', inputMode: 'numeric' })}
                     </Fg>
+                    <Fg label="Name as per PAN">{input('panName')}</Fg>
                     <Fg label="PAN number" error={err('pan')}>
                       {input('pan', { placeholder: 'ABCDE1234F' })}
                     </Fg>
@@ -892,7 +902,7 @@ function Editor({ e }: { e: Employee }) {
             <RowList<FamilyRow>
               rows={form.family}
               onChange={(r) => setList('family', r)}
-              blank={() => ({ name: '', relationship: '', occupation: '' })}
+              blank={() => ({ name: '', relationship: '', occupation: '', dob: '' })}
               title="Family member"
               addLabel="Add family member"
               empty="No family members on file."
@@ -903,6 +913,9 @@ function Editor({ e }: { e: Employee }) {
                   </Fg>
                   <Fg label="Relationship">
                     <input value={r.relationship} onChange={(ev) => up({ relationship: ev.target.value })} />
+                  </Fg>
+                  <Fg label="Date of birth">
+                    <DateField value={r.dob ?? ''} max={todayISO()} onChange={(ev) => up({ dob: ev.target.value })} />
                   </Fg>
                   <Fg label="Occupation">
                     <input value={r.occupation} onChange={(ev) => up({ occupation: ev.target.value })} />
@@ -934,6 +947,7 @@ function Editor({ e }: { e: Employee }) {
                 <Fg label={isIndia ? 'IFSC' : 'Routing / bank code'} required={isIndia} error={err('branchCode')}>
                   {input('branchCode')}
                 </Fg>
+                {isIndia && <Fg label="Branch name">{input('branchName')}</Fg>}
                 <Fg label="Currency" hint="Set by the work location.">
                   <input value={v.currency} readOnly style={{ background: 'var(--bg)' }} />
                 </Fg>
@@ -942,9 +956,21 @@ function Editor({ e }: { e: Employee }) {
                 <>
                   <Sub>PF details (India)</Sub>
                   <div className="form-grid">
-                    <Fg label="UAN" error={err('uan')}>
-                      {input('uan', { placeholder: '12-digit UAN', inputMode: 'numeric' })}
-                    </Fg>
+                    <Fg label="Already enrolled in PF?">{select('pfEnrolled', ['Yes', 'No'])}</Fg>
+                    {v.pfEnrolled === 'Yes' && (
+                      <>
+                        <Fg label="UAN Number" error={err('uan')}>
+                          {input('uan', { placeholder: '12-digit UAN', inputMode: 'numeric' })}
+                        </Fg>
+                        <Fg label="Registered mobile number linked to UAN">{input('uanMobile', { type: 'tel' })}</Fg>
+                        <Fg label="Previous PF Member ID" hint="If available">
+                          {input('pfMemberId')}
+                        </Fg>
+                        <Fg label="EPS eligibility" hint="If applicable">
+                          {select('epsEligibility', ['Eligible', 'Not eligible', 'Not sure'])}
+                        </Fg>
+                      </>
+                    )}
                   </div>
                 </>
               )}

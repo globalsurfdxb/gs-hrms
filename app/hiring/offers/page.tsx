@@ -8,6 +8,8 @@ import { Drawer } from '@/components/ui/Drawer';
 import { CheckIcon, ClockIcon, FileTextIcon, JoinIcon, PlusIcon, WarnIcon } from '@/components/icons';
 import { Banner, HiringHeader, OfferBadge, fmtDate, money, payUnit, useActor } from '@/components/hiring/HiringBits';
 import { OfferDrawer } from '@/components/hiring/HiringForms';
+import { DocsChip } from '@/components/hiring/DocCollection';
+import { docsCleared, useDocRequests } from '@/lib/hiringDocs';
 import { OfferLetterDrawer } from '@/components/hiring/OfferLetterDrawer';
 import { WithdrawOfferDialog } from '@/components/hiring/WithdrawOfferDialog';
 import { useStageMail } from '@/components/hiring/Mail';
@@ -25,6 +27,7 @@ export default function OffersPage() {
   const [letterId, setLetterId] = useState<string | null>(null);
   const [withdrawing, setWithdrawing] = useState<string | null>(null);
   const today = todayISO();
+  const docReqs = useDocRequests();
   const mailer = useStageMail((text, tone = 'info') => setNotice({ text, tone }));
 
   const ready = applications.filter((a) => a.stage === 'Offer' && !a.exit && !offerForApp(s, a.id));
@@ -199,6 +202,16 @@ export default function OffersPage() {
         ) : (
           <div className="hm-pick">
             {ready.map((a) => (
+              !docsCleared(docReqs, a.id) ? (
+                <Link key={a.id} href={`/hiring/candidates/${a.candidateId}`} className="hm-pick-row" onClick={() => setPicker(false)}>
+                  <span>
+                    <b>{candById(s, a.candidateId)?.name}</b>
+                    <small>{jobById(s, a.jobId)?.title}</small>
+                    <DocsChip applicationId={a.id} />
+                  </span>
+                  <span className="lnk">Collect documents →</span>
+                </Link>
+              ) : (
               <button
                 key={a.id}
                 type="button"
@@ -214,6 +227,7 @@ export default function OffersPage() {
                 </span>
                 <span className="lnk">Create →</span>
               </button>
+              )
             ))}
           </div>
         )}

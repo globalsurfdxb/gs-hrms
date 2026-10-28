@@ -1,7 +1,7 @@
 import { useSyncExternalStore } from 'react';
 import { logTask } from '@/lib/activity';
 import { pushNotice } from '@/lib/notifications';
-import type { EducationRow, EmergencyRow, ExperienceRow } from '@/lib/employeeStore';
+import type { EducationRow, EmergencyRow, ExperienceRow, FamilyRow } from '@/lib/employeeStore';
 
 /* The joining form. Once an offer is accepted, HR sends the new joiner a link by email. They open it without signing
    in, fill in their own details (personal, identity, bank, emergency contacts, education, experience, documents) and
@@ -17,6 +17,8 @@ export interface JoiningForm {
   emB: EmergencyRow[];
   edu: EducationRow[];
   exp: ExperienceRow[];
+  /** Family members (added with the later version of the form; older saves do not have it). */
+  fam?: FamilyRow[];
   passportExpiry: string;
   /** Document name → file name chosen. */
   docs: Record<string, string>;
@@ -51,6 +53,8 @@ export interface OnboardingInvite {
   joiningDate: string;
   dueDate: string;
   status: 'Sent' | 'Opened' | 'Submitted';
+  /** False when HR created the link without emailing it (to share it by another way). */
+  emailed?: boolean;
   sentAt: string;
   sentBy: string;
   openedAt?: string;
@@ -76,6 +80,16 @@ function load() {
   } catch {
     state = [];
   }
+  // The joiner fills the form in another tab or window. Pick up what they save and submit, so HR sees it without reloading.
+  window.addEventListener('storage', (e) => {
+    if (e.key !== KEY) return;
+    try {
+      state = e.newValue ? (JSON.parse(e.newValue) as OnboardingInvite[]) : [];
+    } catch {
+      return;
+    }
+    listeners.forEach((l) => l());
+  });
 }
 
 function commit(next: OnboardingInvite[]) {
@@ -125,6 +139,8 @@ export interface InviteInput {
   dueDate: string;
   /** The link's token, when it was already shown in the email preview. */
   token?: string;
+  /** False to create the link without emailing it. */
+  emailed?: boolean;
 }
 
 /** Creates the joining form for an accepted offer, or sends it again (same link, same saved answers). */
@@ -136,7 +152,8 @@ export function sendInvite(input: InviteInput, by: string): OnboardingInvite {
     ? { ...existing, ...input, token: existing.token, sentAt: at, sentBy: by }
     : { id: `obf-${Date.now().toString(36)}`, ...input, token: input.token ?? newToken(), status: 'Sent', sentAt: at, sentBy: by };
   commit(existing ? state.map((i) => (i.id === existing.id ? invite : i)) : [invite, ...state]);
-  logTask('Onboarding', existing ? 'Joining form sent again' : 'Joining form sent', input.name, `To ${input.toWork}${input.toPersonal ? ` (copy to ${input.toPersonal})` : ''}`, { by });
+  if (input.emailed === false) logTask('Onboarding', 'Joining form link created (not emailed)', input.name, 'HR will share the link another way', { by });
+  else logTask('Onboarding', existing ? 'Joining form sent again' : 'Joining form sent', input.name, `To ${input.toWork || input.toPersonal}${input.toWork && input.toPersonal ? ` (copy to ${input.toPersonal})` : ''}`, { by });
   return invite;
 }
 
@@ -166,7 +183,7 @@ export function submitForm(token: string, data: JoiningForm): FormResult {
   if (i.status === 'Submitted') return { ok: false, error: 'This form was already submitted.' };
   commit(state.map((x) => (x.id === i.id ? { ...x, data, status: 'Submitted', submittedAt: stamp() } : x)));
   logTask('Onboarding', 'Joining form submitted', i.name, 'The joiner submitted their details', { by: i.name });
-  pushNotice({ kind: 'hiring', tone: 'active', title: `${i.name} submitted their joining form`, sub: 'Review the details and start onboarding', href: `/onboarding?hire=${i.offerId}`, toRoles: ['HR', 'Office Admin', 'Super Admin'], by: 'joiner' });
+  pushNotice({ kind: 'hiring', tone: 'active', title: `${i.name} submitted their joining form`, sub: 'Review the details and start onboarding', href: i.offerId.startsWith('man-') ? '/onboarding' : `/onboarding?hire=${i.offerId}`, toRoles: ['HR', 'Office Admin', 'Super Admin'], by: 'joiner' });
   return { ok: true };
 }
 

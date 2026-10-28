@@ -243,6 +243,13 @@ export default function EmployeeProfilePage() {
                 <div>
                   <Sub first>Identity</Sub>
                   <Field k="Full name (as per passport)" v={e.name} />
+                  {isIndia && !!(p.firstName || p.lastName) && (
+                    <>
+                      <Field k="First name" v={p.firstName} />
+                      <Field k="Middle name" v={p.middleName} />
+                      <Field k="Last name" v={p.lastName} />
+                    </>
+                  )}
                   <Field k="Date of birth" v={e.dob} />
                   <Field k="Age" v={ageOn(e.dob, REFERENCE_TODAY)} />
                   <Field k="Nationality" v={e.nationality} />
@@ -315,12 +322,15 @@ export default function EmployeeProfilePage() {
                 <div className="g2">
                   <div>
                     <Sub first>Passport</Sub>
+                    <Field k="Name as per passport" v={p.passportName ?? '—'} />
                     <Field k="Passport number" v={p.passportNumber} />
                     <Field k="Passport expiry" v={p.passportExpiry} />
                   </div>
                   <div>
                     <Sub first>Statutory identity (India)</Sub>
+                    <Field k="Name as per Aadhaar" v={p.aadhaarName ?? '—'} />
                     <Field k="Aadhaar number" v={p.aadhaar ?? '—'} />
+                    <Field k="Name as per PAN" v={p.panName ?? '—'} />
                     <Field k="PAN number" v={p.pan ?? '—'} />
                   </div>
                 </div>
@@ -396,6 +406,7 @@ export default function EmployeeProfilePage() {
                     <div className="mt">
                       {x.from} → {x.to} · {x.location} · {x.mode}
                     </div>
+                    {x.document && <div className="mt">Document: {x.document}</div>}
                   </div>
                 </div>
               ))}
@@ -412,6 +423,7 @@ export default function EmployeeProfilePage() {
                     <div className="mt">
                       {x.institution} · {x.field} · {x.startYear}–{x.endYear}
                     </div>
+                    {x.document && <div className="mt">Certificate: {x.document}</div>}
                   </div>
                 </div>
               ))}
@@ -427,6 +439,7 @@ export default function EmployeeProfilePage() {
                     <tr>
                       <th>Name</th>
                       <th>Relationship</th>
+                      <th>Date of birth</th>
                       <th>Occupation</th>
                     </tr>
                   </thead>
@@ -435,6 +448,7 @@ export default function EmployeeProfilePage() {
                       <tr key={`${f.name}-${f.relationship}`}>
                         <td style={{ fontWeight: 600 }}>{f.name}</td>
                         <td>{f.relationship}</td>
+                        <td>{f.dob || '—'}</td>
                         <td>{f.occupation}</td>
                       </tr>
                     ))}
@@ -462,6 +476,7 @@ export default function EmployeeProfilePage() {
                     <>
                       <Field k="Account number" v={e.bankDetails.accountNumber} />
                       <Field k="IFSC" v={e.bankDetails.branchCode} />
+                      <Field k="Branch name" v={e.bankDetails.branchName ?? '—'} />
                     </>
                   ) : (
                     <>
@@ -473,7 +488,21 @@ export default function EmployeeProfilePage() {
                 </div>
                 <div>
                   <Sub first>{isIndia ? 'PF details (India)' : 'Statutory (UAE)'}</Sub>
-                  {isIndia ? <Field k="UAN" v={p.uan ?? '—'} /> : <Field k="WPS registered" v="Yes" />}
+                  {isIndia ? (
+                    <>
+                      <Field k="Already enrolled in PF" v={p.pfEnrolled ?? '—'} />
+                      <Field k="UAN" v={p.uan ?? '—'} />
+                      {p.pfEnrolled === 'Yes' && (
+                        <>
+                          <Field k="Mobile linked to UAN" v={p.uanMobile ?? '—'} />
+                          <Field k="Previous PF member ID" v={p.pfMemberId ?? '—'} />
+                          <Field k="EPS eligibility" v={p.epsEligibility ?? '—'} />
+                        </>
+                      )}
+                    </>
+                  ) : (
+                    <Field k="WPS registered" v="Yes" />
+                  )}
                 </div>
               </div>
             </div>
@@ -537,6 +566,7 @@ export default function EmployeeProfilePage() {
                     </div>
                     <div>
                       <div className="nm">{d}</div>
+                      {p.documentDetails?.find((x) => x.name === d) && <div className="mt">{p.documentDetails.find((x) => x.name === d)?.details}</div>}
                     </div>
                     <div className="rt">
                       {lapsed ? <Badge tone="expired">Expired</Badge> : <Badge tone={done ? 'active' : 'pending'}>{done ? 'Uploaded' : 'Pending'}</Badge>}

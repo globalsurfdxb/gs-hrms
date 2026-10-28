@@ -1,6 +1,7 @@
 import { HiringState, EmploymentKind } from '@/lib/hiringTypes';
 import { appById, candById, jobById, offerById } from '@/lib/hiringStore';
 import { JoiningForm, getInvites } from '@/lib/onboardingForms';
+import { Referral, docRequestFor, getDocRequests } from '@/lib/hiringDocs';
 
 /* The handoff from an accepted offer to the onboarding wizard. */
 
@@ -33,6 +34,9 @@ export interface OnboardingPrefill {
   /** What the joiner entered on their joining form, when they have submitted it. */
   form?: JoiningForm;
   formSubmittedAt?: string;
+  /** What HR collected and verified before the offer letter, and the background-verification referral. */
+  preDocs?: { label: string; files: string[]; verified: boolean }[];
+  referral?: Referral;
 }
 
 const UAE_MAP: Record<string, string> = { Basic: 'Basic Salary', Housing: 'Accommodation Allowance', Transport: 'Transportation Allowance' };
@@ -58,7 +62,11 @@ export function onboardingPrefill(s: HiringState, offerId: string): OnboardingPr
     else if (l.amount > 0) unmapped.push({ label: l.label, amount: l.amount });
   });
   const invite = getInvites().find((i) => i.offerId === o.id && i.status === 'Submitted');
+  const dreq = docRequestFor(getDocRequests(), o.applicationId);
+  const preDocs = dreq?.items.filter((i) => i.files.length).map((i) => ({ label: i.label, files: i.files.map((f) => f.name), verified: i.status === 'Verified' }));
   return {
+    preDocs: preDocs?.length ? preDocs : undefined,
+    referral: dreq && dreq.bgv.name ? dreq.bgv : undefined,
     form: invite?.data,
     formSubmittedAt: invite?.submittedAt,
     offerId: o.id,

@@ -1,5 +1,6 @@
 'use client';
 
+import { GsLogo } from '@/components/brand/GsLogo';
 import { useEffect, useState } from 'react';
 import Link from 'next/link';
 import { usePathname } from 'next/navigation';
@@ -110,7 +111,9 @@ export function Rail({ open, onClose }: { open: boolean; onClose: () => void }) 
       {open && <div className="zrail-ov show" onClick={onClose} />}
       <aside className={`zrail ${open ? 'open' : ''}`}>
         <div className="zrail-logo">
-          <div>GS</div>
+          <span className="zrail-mark">
+            <GsLogo tone="light" height={20} />
+          </span>
         </div>
         <div className="zrail-scroll">
           {la

@@ -1,4 +1,5 @@
 import { useSyncExternalStore } from 'react';
+import { pushNotice } from '@/lib/notifications';
 import { AUDIT_LOG, EMPLOYEES, ONBOARDING_REQUESTS, REFERENCE_TODAY, employeeById, nextEmployeeCode } from '@/lib/data';
 import { AuditEntry, BankDetails, Employee, EmployeeDocument, ExpiryState, OnboardingRequest, Role } from '@/lib/types';
 
@@ -18,6 +19,9 @@ const fd = (key: string, label: string, where: Where = 'e', optional = false): F
 
 export const FIELDS: FieldDef[] = [
   fd('name', 'Full name'),
+  fd('firstName', 'First name', 'profile', true),
+  fd('middleName', 'Middle name', 'profile', true),
+  fd('lastName', 'Last name', 'profile', true),
   fd('dob', 'Date of birth'),
   fd('nationality', 'Nationality'),
   fd('gender', 'Gender', 'profile'),
@@ -45,22 +49,30 @@ export const FIELDS: FieldDef[] = [
   fd('emiratesIdExpiry', 'Emirates ID expiry', 'profile', true),
   fd('labourCardIssue', 'Labour card issue date', 'profile', true),
   fd('labourCardExpiry', 'Labour card expiry date', 'profile', true),
+  fd('passportName', 'Name as per passport', 'profile', true),
+  fd('aadhaarName', 'Name as per Aadhaar', 'profile', true),
   fd('aadhaar', 'Aadhaar number', 'profile', true),
+  fd('panName', 'Name as per PAN', 'profile', true),
   fd('pan', 'PAN number', 'profile', true),
   fd('uan', 'UAN', 'profile', true),
+  fd('pfEnrolled', 'Already enrolled in PF', 'profile', true),
+  fd('uanMobile', 'Mobile number linked to UAN', 'profile', true),
+  fd('pfMemberId', 'Previous PF member ID', 'profile', true),
+  fd('epsEligibility', 'EPS eligibility', 'profile', true),
   fd('paymentMode', 'Payment mode', 'profile'),
   fd('bankName', 'Bank name', 'bank'),
   fd('accountName', 'Account holder name', 'bank'),
   fd('accountNumber', 'Account / IBAN number', 'bank'),
   fd('branchCode', 'IFSC / routing code', 'bank'),
+  fd('branchName', 'Branch name', 'bank', true),
   fd('currency', 'Currency', 'bank'),
   fd('totalExperience', 'Total experience', 'profile'),
 ];
 
 export interface EmergencyRow { group: string; name: string; relationship: string; mobile: string }
-export interface ExperienceRow { company: string; location: string; from: string; to: string; title: string; mode: string }
-export interface EducationRow { qualification: string; institution: string; course: string; field: string; startYear: string; endYear: string }
-export interface FamilyRow { name: string; relationship: string; occupation: string }
+export interface ExperienceRow { company: string; location: string; from: string; to: string; title: string; mode: string; document?: string }
+export interface EducationRow { qualification: string; institution: string; course: string; field: string; startYear: string; endYear: string; document?: string }
+export interface FamilyRow { name: string; relationship: string; occupation: string; dob?: string }
 export interface MoneyRow { label: string; amount: string }
 export interface DocRow { id: string; type: string; expiryDate: string }
 
@@ -249,8 +261,26 @@ function hydrateHires() {
   }
 }
 
+/* HR's decision on each onboarding request that was waiting for approval, kept so it survives a reload. */
+const DECISIONS_KEY = 'gsit.onboardingDecisions.v1';
+let decisions: Record<string, OnboardingRequest['status']> = {};
+
+function hydrateDecisions() {
+  try {
+    const raw = localStorage.getItem(DECISIONS_KEY);
+    if (!raw) return;
+    decisions = JSON.parse(raw) as typeof decisions;
+    ONBOARDING_REQUESTS.forEach((r) => {
+      if (decisions[r.id]) r.status = decisions[r.id];
+    });
+  } catch {
+    /* ignore a corrupt save */
+  }
+}
+
 function hydrate() {
   hydrateHires();
+  hydrateDecisions();
   try {
     const raw = localStorage.getItem(KEY);
     if (!raw) return;
@@ -349,6 +379,8 @@ export interface NewEmployeeInput {
   deductions?: MoneyRow[];
   documents?: DocRow[];
   uploadedDocs?: string[];
+  /** Text entered next to a document (passport, Aadhaar, education certificate). */
+  documentDetails?: { name: string; details: string }[];
   /** Work email the person signs in with. */
   email: string;
   /** System role the account carries. */
@@ -431,6 +463,7 @@ export function addEmployee(input: NewEmployeeInput): Employee | null {
     uploadedDocs: input.uploadedDocs ?? [],
   };
   applyForm(e, form);
+  if (input.documentDetails?.length) e.profile.documentDetails = input.documentDetails.map((d) => ({ ...d }));
   e.employmentStatus = 'Onboarding';
   if (input.hiredFrom) e.hiredFrom = input.hiredFrom;
   if (e.profile.uan) e.pfUan = e.profile.uan;
@@ -468,6 +501,75 @@ export function addEmployee(input: NewEmployeeInput): Employee | null {
   persist();
   notify();
   return e;
+}
+
+/** The person an onboarding request is about: a joiner created in the wizard, or a seeded one found by name. */
+export function employeeOfRequest(requestId: string): Employee | undefined {
+  const h = hires.find((x) => x.request.id === requestId);
+  if (h) return EMPLOYEES.find((e) => e.id === h.employee.id);
+  const r = ONBOARDING_REQUESTS.find((x) => x.id === requestId);
+  return r ? EMPLOYEES.find((e) => e.name === r.candidateName && e.employmentStatus === 'Onboarding') : undefined;
+}
+
+/** HR's decision on an onboarding that is waiting for approval: approve it (payroll and the manager are told), or
+    send it back to the person who started it with a note on what to fix. */
+export function decideOnboarding(requestId: string, decision: 'approve' | 'send-back', by: string, note = ''): boolean {
+  const req = ONBOARDING_REQUESTS.find((r) => r.id === requestId);
+  if (!req || req.status !== 'Pending Approval') return false;
+  const next: OnboardingRequest['status'] = decision === 'approve' ? 'Approved' : 'In Progress';
+  req.status = next;
+  const h = hires.find((x) => x.request.id === requestId);
+  if (h) h.request.status = next;
+  decisions[requestId] = next;
+  try {
+    localStorage.setItem(DECISIONS_KEY, JSON.stringify(decisions));
+  } catch {
+    /* storage unavailable: the decision still applies for this visit */
+  }
+  const emp = employeeOfRequest(requestId);
+  logAudit({
+    employeeId: emp?.id ?? `onboarding:${requestId}`,
+    field: 'Onboarding approval',
+    from: 'Pending Approval',
+    to: decision === 'approve' ? `Approved${note.trim() ? `: ${note.trim()}` : ''}` : `Sent back for changes: ${note.trim()}`,
+    changedBy: by,
+    module: 'Onboarding',
+  });
+  pushNotice({
+    kind: 'request',
+    tone: decision === 'approve' ? 'active' : 'pending',
+    title: decision === 'approve' ? `Onboarding approved: ${req.candidateName}` : `Onboarding sent back: ${req.candidateName}`,
+    sub: decision === 'approve' ? `Starts ${req.startDate}. Payroll can now set up their salary.` : note.trim(),
+    href: '/onboarding',
+    toRoles: ['HR', 'Office Admin', 'Super Admin'],
+    by,
+  });
+  persist();
+  notify();
+  return true;
+}
+
+
+/** Whether HR sent this request back for changes (so it can be put forward again). */
+export const wasSentBack = (requestId: string) => decisions[requestId] === 'In Progress';
+
+/** A request HR sent back is fixed and put in front of approvers again. */
+export function resubmitOnboarding(requestId: string, by: string): boolean {
+  const req = ONBOARDING_REQUESTS.find((r) => r.id === requestId);
+  if (!req || req.status !== 'In Progress' || decisions[requestId] !== 'In Progress') return false;
+  req.status = 'Pending Approval';
+  const h = hires.find((x) => x.request.id === requestId);
+  if (h) h.request.status = 'Pending Approval';
+  delete decisions[requestId];
+  try {
+    localStorage.setItem(DECISIONS_KEY, JSON.stringify(decisions));
+  } catch {
+    /* storage unavailable */
+  }
+  logAudit({ employeeId: employeeOfRequest(requestId)?.id ?? 'onboarding:' + requestId, field: 'Onboarding approval', from: 'Sent back for changes', to: 'Sent for approval again', changedBy: by, module: 'Onboarding' });
+  persist();
+  notify();
+  return true;
 }
 
 /** Re-render when any employee record is edited. Returns a counter to use in memo dependencies. */

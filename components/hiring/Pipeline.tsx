@@ -6,6 +6,8 @@ import { SearchIcon } from '@/components/icons';
 import { Button } from '@/components/ui/Card';
 import { StageBadge, RejectDialog, fmtDate, useActor } from '@/components/hiring/HiringBits';
 import { InterviewDrawer, OfferDrawer } from '@/components/hiring/HiringForms';
+import { DocsChip } from '@/components/hiring/DocCollection';
+import { docsCleared, useDocRequests } from '@/lib/hiringDocs';
 import { Application, EXITS, Exit, Job, SOURCES, STAGES, Stage } from '@/lib/hiringTypes';
 import { RuleKey } from '@/lib/hiringMail';
 import { useStageMail } from '@/components/hiring/Mail';
@@ -71,6 +73,7 @@ export function Pipeline({ job, apps, notify }: { job: Job; apps: Application[];
   const [rejecting, setRejecting] = useState<string[] | null>(null);
   const [interviewFor, setInterviewFor] = useState<Application | null>(null);
   const [offerFor, setOfferFor] = useState<Application | null>(null);
+  const docReqs = useDocRequests();
   const [tagText, setTagText] = useState('');
   const mailer = useStageMail(notify, (id) => setInterviewFor(appById(getHiring(), id) ?? null));
 
@@ -319,6 +322,11 @@ export function Pipeline({ job, apps, notify }: { job: Job; apps: Application[];
           </div>
         )}
         {offer && <div className="hm-card-note">Offer {offer.code} · {offer.status}</div>}
+        {!offer && !a.exit && ['HR Interview', 'Offer'].includes(a.stage) && (
+          <div className="hm-card-note">
+            <DocsChip applicationId={a.id} />
+          </div>
+        )}
         <div className="hm-card-act">
           {moveMenu(a)}
           {!a.exit && a.stage !== 'Hired' && a.stage !== 'Offer' && (
@@ -327,7 +335,7 @@ export function Pipeline({ job, apps, notify }: { job: Job; apps: Application[];
             </button>
           )}
           {a.stage === 'Offer' && !a.exit && !offer && (
-            <button type="button" className="hm-mini" onClick={() => setOfferFor(a)} disabled={closed}>
+            <button type="button" className="hm-mini" onClick={() => setOfferFor(a)} disabled={closed || !docsCleared(docReqs, a.id)} title={docsCleared(docReqs, a.id) ? undefined : 'Collect and verify the documents on the candidate profile first'}>
               Create offer
             </button>
           )}

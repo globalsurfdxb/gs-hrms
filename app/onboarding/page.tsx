@@ -5,21 +5,25 @@ import { Suspense, useEffect, useId, useMemo, useRef, useState, useSyncExternalS
 import Link from 'next/link';
 import { useRouter, useSearchParams } from 'next/navigation';
 import { useApp, useCurrentEmployee } from '@/context/AppContext';
+import { REQUIRED_DOCS } from '@/lib/profiles';
 import { EMPLOYEES, ONBOARDING_REQUESTS, REFERENCE_TODAY, ROLE_SCOPE, nextEmployeeCode } from '@/lib/data';
 import { SYSTEM_ROLES } from '@/lib/access';
 import { useOrg } from '@/context/OrgContext';
 import { SearchSelect } from '@/components/ui/SearchSelect';
-import { Location, LocationDef, Role } from '@/lib/types';
+import { Location, LocationDef, OnboardingRequest, Role } from '@/lib/types';
 import { PageHeader } from '@/components/ui/PageHeader';
 import { Card, CardHeader, Button, EmptyState } from '@/components/ui/Card';
 import { StatusBadge } from '@/components/ui/Badge';
 import { WithdrawOfferDialog } from '@/components/hiring/WithdrawOfferDialog';
-import { JoiningFormActions, FormChip } from '@/components/onboarding/JoiningFormActions';
+import { JoiningFormActions, FormChip, ManualShareCard } from '@/components/onboarding/JoiningFormActions';
 import { formLink, getInvites, inviteForOffer, markImported, useInvites } from '@/lib/onboardingForms';
 import { Avatar } from '@/components/ui/Avatar';
+import { Drawer } from '@/components/ui/Drawer';
+import { TEXTAREA_STYLE } from '@/components/hiring/HiringBits';
 import { StatStrip } from '@/components/ui/StatStrip';
 import { daysBetween, todayISO } from '@/lib/dates';
-import { EducationRow, EmergencyRow, ExperienceRow, FamilyRow, MoneyRow, DocRow, addEmployee, useEmployeeVersion } from '@/lib/employeeStore';
+import { PF_WAGE_CEILING, ESI_WAGE_LIMIT, indiaPayroll, uaePayroll } from '@/lib/payroll';
+import { EducationRow, EmergencyRow, ExperienceRow, FamilyRow, MoneyRow, DocRow, addEmployee, canEditEmployees, decideOnboarding, employeeOfRequest, resubmitOnboarding, useEmployeeVersion, wasSentBack } from '@/lib/employeeStore';
 import { BLOOD_GROUPS, EMAIL_RE, EMPLOYMENT_TYPES, GENDERS, MARITAL_STATUSES, NATIONALITIES, WORK_MODES, ibanError, ifscError, indiaAccountError, phoneOk } from '@/lib/options';
 import { chainSteps } from '@/lib/workflow';
 import { completeHire, getHiring, useHiring } from '@/lib/hiringStore';
@@ -51,7 +55,8 @@ const VISA_OUTPUTS = [
 ];
 
 const INDIA_EARN = ['Basic', 'House Rent Allowance', 'Fixed Allowance', 'Other Allowance'];
-const INDIA_DED = ['Advance Amount', 'EPF Contribution', 'Other Deductions'];
+/** Deductions HR types in. EPF, ESI and professional tax are worked out by the law, not typed. */
+const INDIA_DED = ['Advance Amount', 'Other Deductions'];
 const UAE_EARN = ['Basic Salary', 'Transportation Allowance', 'Accommodation Allowance'];
 
 /** A labelled field. With an error, the message shows under it and the control inside is marked aria-invalid and
@@ -141,6 +146,14 @@ const ADDRESS: Record<LocationDef['template'], string> = {
   india: 'House / Flat Number:\nBuilding / House Name:\nStreet / Locality:\nDistrict / City:\nState:\nPIN Code:',
 };
 
+/** Documents that can carry typed details next to the upload: the name and number printed on the paper. */
+const DOC_TEXT: Record<string, { label: string; placeholder: string }> = {
+  'Passport Copy': { label: 'Passport details', placeholder: 'Passport number and the name as printed' },
+  'Aadhaar Card': { label: 'Aadhaar details', placeholder: 'Aadhaar number and the name as printed' },
+  'Highest Educational Certificate': { label: 'Certificate details', placeholder: 'Qualification, institution and year' },
+  'Attested Educational Certificate': { label: 'Certificate details', placeholder: 'Qualification, institution and year' },
+};
+
 const EXPIRING_DOCS = ['Passport Copy', 'Residence Visa', 'Emirates ID', 'Labour Card', 'UAE Driving Licence', 'Medical Insurance E-Card', 'Insurance Document'];
 const REMINDER_DAYS = ['90', '60', '30', '7'];
 const REMINDER_TO = ['Employee', 'HR', 'Reporting manager'];
@@ -159,15 +172,56 @@ function expiryNote(date: string): { text: string; color: string } | null {
   return { text: `Expires in ${n} days`, color: 'var(--muted)' };
 }
 
-function UploadBox({ label, expiry }: { label: string; expiry?: { value: string; onChange: (v: string) => void } }) {
+/** Picks a document. Files are recorded by name only until file storage is connected. */
+function UploadPick({ file, onFile }: { file: string; onFile: (name: string) => void }) {
+  const [problem, setProblem] = useState('');
+  return (
+    <>
+      <label className="uploader" style={{ padding: 14, cursor: 'pointer', display: 'block' }}>
+        <input
+          type="file"
+          accept=".pdf,.jpg,.jpeg,.png"
+          style={{ display: 'none' }}
+          onChange={(e) => {
+            const f = e.target.files?.[0];
+            e.target.value = '';
+            if (!f) return;
+            if (!/\.(pdf|jpe?g|png)$/i.test(f.name)) return setProblem('Use a PDF, JPG or PNG file.');
+            if (f.size > 10 * 1024 * 1024) return setProblem('The file is larger than 10 MB.');
+            setProblem('');
+            onFile(f.name);
+          }}
+        />
+        <UploadIcon style={{ margin: '0 auto 8px' }} />
+        {file ? <b style={{ color: '#15803d' }}>✓ {file}</b> : 'Drop file or click to upload'}
+      </label>
+      {file && (
+        <button type="button" className="lnk" style={{ textAlign: 'left', marginTop: 4 }} onClick={() => onFile('')}>
+          Remove
+        </button>
+      )}
+      {problem && <span className="hint" style={{ color: 'var(--danger)' }}>{problem}</span>}
+    </>
+  );
+}
+
+function UploadBox({ label, expiry, details, file, onFile, tag }: { tag?: 'Required' | 'Optional'; label: string; expiry?: { value: string; onChange: (v: string) => void }; details?: { value: string; onChange: (v: string) => void; label: string; placeholder: string }; file: string; onFile: (name: string) => void }) {
   const note = expiry ? expiryNote(expiry.value) : null;
   return (
-    <div className="fg">
-      <label>{label}</label>
-      <div className="uploader" style={{ padding: 14 }}>
-        <UploadIcon style={{ margin: '0 auto 8px' }} />
-        Drop file or click to upload
-      </div>
+    <div className={`fg ds-card ${file ? 'up' : ''}`}>
+      <label>
+        {label}
+        {tag && <span className={`ds-tag ${tag === 'Required' ? 'req' : ''}`}>{tag}</span>}
+      </label>
+      <UploadPick file={file} onFile={onFile} />
+      {details && (
+        <div style={{ marginTop: 8 }}>
+          <label style={{ fontSize: 12, fontWeight: 600, color: 'var(--text-2)' }}>
+            {details.label} <span style={{ fontWeight: 400, color: 'var(--faint)' }}>· optional</span>
+          </label>
+          <input value={details.value} onChange={(e) => details.onChange(e.target.value)} placeholder={details.placeholder} autoComplete="off" style={{ width: '100%', marginTop: 4 }} />
+        </div>
+      )}
       {expiry && (
         <div style={{ marginTop: 8 }}>
           <label style={{ fontSize: 12, fontWeight: 600, color: 'var(--text-2)' }}>
@@ -212,17 +266,18 @@ function AddNew({ label, onClick }: { label: string; onClick: () => void }) {
 
 /** A list of repeatable entries whose values live in the page, so they are saved with the record. */
 function Repeatable<T extends object>({ label, title, rows, onChange, blank, render }: { label: string; title: string; rows: T[]; onChange: (rows: T[]) => void; blank: () => T; render: (row: T, patch: (p: Partial<T>) => void, i: number) => React.ReactNode }) {
+  const many = rows.length > 1;
   return (
     <>
       {rows.map((row, i) => (
         <div key={i} style={i > 0 ? { marginTop: 14, paddingTop: 12, borderTop: '1px dashed var(--border)' } : undefined}>
-          {i > 0 && (
+          {many && (
             <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 8 }}>
               <span style={{ fontSize: 12.5, fontWeight: 700, color: 'var(--muted)' }}>
                 {title} #{i + 1}
               </span>
-              <button type="button" className="icon-act" title={`Remove ${title.toLowerCase()} #${i + 1}`} aria-label={`Remove ${title.toLowerCase()} #${i + 1}`} onClick={() => onChange(rows.filter((_, j) => j !== i))}>
-                <XIcon />
+              <button type="button" className="rep-del" title={`Delete ${title.toLowerCase()} #${i + 1}`} aria-label={`Delete ${title.toLowerCase()} #${i + 1}`} onClick={() => onChange(rows.filter((_, j) => j !== i))}>
+                <XIcon /> Delete
               </button>
             </div>
           )}
@@ -246,7 +301,7 @@ const initialsOf = (name: string) =>
 const blankContact = (): EmergencyRow => ({ group: '', name: '', relationship: '', mobile: '' });
 const blankExperience = (): ExperienceRow => ({ company: '', location: '', from: '', to: '', title: '', mode: 'Onsite' });
 const blankEducation = (): EducationRow => ({ qualification: '', institution: '', course: '', field: '', startYear: '', endYear: '' });
-const blankFamily = (): FamilyRow => ({ name: '', relationship: '', occupation: '' });
+const blankFamily = (): FamilyRow => ({ name: '', relationship: '', occupation: '', dob: '' });
 const anyFilled = (r: object, ignore: string[] = []) => Object.entries(r).some(([k, x]) => !ignore.includes(k) && String(x).trim() !== '');
 
 /* An unfinished onboarding is saved in this browser as the form is filled in, so a closed tab, a refresh or a
@@ -276,6 +331,8 @@ interface Draft {
   exp: ExperienceRow[];
   edu: EducationRow[];
   fam: FamilyRow[];
+  /** For an onboarding started by hand: the key its joining form is kept under. */
+  inviteKey?: string;
   savedAt: string;
 }
 const draftKey = (personId: string, offerId?: string) => `gsit.onboarding.draft.v1:${personId}:${offerId ?? 'new'}`;
@@ -296,10 +353,24 @@ const clearDraft = (key: string) => {
 };
 /** What the list shows about an unfinished onboarding. */
 interface DraftInfo {
+  /** The key of the joining form of an onboarding started by hand. */
+  key?: string;
   step: number;
   name: string;
   joining: string;
   at: string;
+}
+const isManualDraft = (id: string) => id === 'new' || id.startsWith('new:');
+/** The ids of the onboardings this person started by hand ('new:<id>', one each; 'new' is the older single draft). */
+function manualDraftIds(personId: string): string[] {
+  const prefix = `gsit.onboarding.draft.v1:${personId}:`;
+  try {
+    return Object.keys(localStorage)
+      .filter((k) => k.startsWith(`${prefix}new:`))
+      .map((k) => k.slice(prefix.length));
+  } catch {
+    return [];
+  }
 }
 /** The unfinished onboardings of this person ('new' for one started by hand, or an accepted offer's id), read from
     storage on the client only. */
@@ -308,9 +379,9 @@ function useDrafts(personId: string, ids: string[]): Record<string, DraftInfo> {
     () => () => {},
     () =>
       JSON.stringify(
-        ids.flatMap((id) => {
+        [...ids, ...manualDraftIds(personId)].flatMap((id) => {
           const d = loadDraft(draftKey(personId, id));
-          return d ? [[id, { step: d.step, name: d.fullName, joining: d.joiningDate, at: d.savedAt }]] : [];
+          return d ? [[id, { key: d.inviteKey, step: d.step, name: d.fullName, joining: d.joiningDate, at: d.savedAt }]] : [];
         }),
       ),
     () => '[]',
@@ -350,7 +421,18 @@ function OnboardingHome({ hireId }: { hireId: string | null }) {
   const [showWizard, setShowWizard] = useState(!!prefill0);
   const [unavailable, setUnavailable] = useState(!!hireId && !prefill0);
   const [problem] = useState(() => (hireId && !prefill0 ? prefillProblem(getHiring(), hireId) : null));
+  /** Which hand-started draft the wizard works on: a fresh one for "New onboarding", or the one picked to continue. */
+  const [manualId, setManualId] = useState<string | null>(null);
+  const startNew = () => {
+    setManualId(`new:${Date.now().toString(36)}${Math.random().toString(36).slice(2, 5)}`);
+    setShowWizard(true);
+  };
+  const continueDraft = (id: string) => {
+    setManualId(id);
+    setShowWizard(true);
+  };
   const closeWizard = () => {
+    setManualId(null);
     setShowWizard(false);
     setWizardPrefill(null);
     if (hireId) router.replace('/onboarding');
@@ -360,6 +442,7 @@ function OnboardingHome({ hireId }: { hireId: string | null }) {
   const [, setTick] = useState(0);
   const [withdrawing, setWithdrawing] = useState<string | null>(null);
   const [removedNote, setRemovedNote] = useState('');
+  const [reviewing, setReviewing] = useState<OnboardingRequest | null>(null);
   const waiting = hiringLevel(viewerRole) === 'full' ? hiring.offers.filter((o) => o.status === 'Accepted' && !o.employeeId) : [];
   const drafts = useDrafts(viewer.id, ['new', ...waiting.map((o) => o.id)]);
   const invites = useInvites();
@@ -370,6 +453,8 @@ function OnboardingHome({ hireId }: { hireId: string | null }) {
   if (showWizard)
     return (
       <Wizard
+        key={manualId ?? 'offer'}
+        draftId={manualId ?? undefined}
         prefill={wizardPrefill ?? undefined}
         onClose={() => {
           setTick((n) => n + 1);
@@ -387,7 +472,7 @@ function OnboardingHome({ hireId }: { hireId: string | null }) {
   const avgProgress = pipeline.length ? Math.round((pipeline.reduce((n, r) => n + r.step, 0) / pipeline.length / STEPS.length) * 100) : 0;
   // Onboardings that have been started but not finished: they move here from the accepted offers as soon as the wizard is opened.
   const draftRows = Object.entries(drafts)
-    .filter(([id]) => id === 'new' || waiting.some((o) => o.id === id))
+    .filter(([id]) => isManualDraft(id) || waiting.some((o) => o.id === id))
     .map(([id, d]) => {
       const offer = hiring.offers.find((o) => o.id === id);
       const app = offer && hiring.applications.find((x) => x.id === offer.applicationId);
@@ -400,7 +485,8 @@ function OnboardingHome({ hireId }: { hireId: string | null }) {
         joining: d.joining || offer?.joiningDate || '',
         step: d.step + 1,
         at: d.at,
-        offerId: id === 'new' ? null : id,
+        offerId: isManualDraft(id) ? null : id,
+        formKey: isManualDraft(id) ? d.key : id,
       };
     })
     .sort((x, y) => y.at.localeCompare(x.at));
@@ -420,7 +506,7 @@ function OnboardingHome({ hireId }: { hireId: string | null }) {
         title="Onboarding"
         description="A guided 10-step wizard capturing the full employee record. Creates the employee as Onboarding and sends the request through the approval chain."
         actions={
-          <Button variant="primary" onClick={() => setShowWizard(true)}>
+          <Button variant="primary" onClick={startNew}>
             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2}>
               <path d="M12 5v14M5 12h14" />
             </svg>
@@ -496,6 +582,7 @@ function OnboardingHome({ hireId }: { hireId: string | null }) {
         </Card>
       )}
 
+      {reviewing && <ApprovalDrawer request={reviewing} onClose={() => setReviewing(null)} onDone={setRemovedNote} />}
       <WithdrawOfferDialog
         offerId={withdrawing}
         onClose={() => setWithdrawing(null)}
@@ -547,7 +634,7 @@ function OnboardingHome({ hireId }: { hireId: string | null }) {
             />
             {!pipeline.length && !draftRows.length && (
               <div style={{ padding: '0 0 20px', textAlign: 'center' }}>
-                <Button variant="primary" onClick={() => setShowWizard(true)}>
+                <Button variant="primary" onClick={startNew}>
                   New onboarding
                 </Button>
               </div>
@@ -577,14 +664,14 @@ function OnboardingHome({ hireId }: { hireId: string | null }) {
                   <span className="hm-chip on" style={{ background: '#fdf3df', color: '#B45309' }}>
                     Not submitted
                   </span>
-                  {r.offerId && <FormChip invite={inviteForOffer(invites, r.offerId)} />}
-                  {r.offerId && inviteForOffer(invites, r.offerId) && (
+                  {r.formKey && (r.offerId || inviteForOffer(invites, r.formKey)) && <FormChip invite={inviteForOffer(invites, r.formKey)} />}
+                  {r.formKey && inviteForOffer(invites, r.formKey) && (
                     <Button
                       size="sm"
                       variant="ghost"
                       title="Copy the link of this joiner's joining form"
                       onClick={() => {
-                        const inv = inviteForOffer(invites, r.offerId!);
+                        const inv = inviteForOffer(invites, r.formKey!);
                         if (!inv) return;
                         void navigator.clipboard?.writeText(formLink(inv.token));
                         setRemovedNote('Joining form link copied.');
@@ -598,7 +685,7 @@ function OnboardingHome({ hireId }: { hireId: string | null }) {
                       Continue
                     </Link>
                   ) : (
-                    <Button size="sm" variant="primary" onClick={() => setShowWizard(true)}>
+                    <Button size="sm" variant="primary" onClick={() => continueDraft(r.id)}>
                       Continue
                     </Button>
                   )}
@@ -606,7 +693,7 @@ function OnboardingHome({ hireId }: { hireId: string | null }) {
                     size="sm"
                     variant="ghost"
                     onClick={() => {
-                      clearDraft(draftKey(viewer.id, r.offerId ?? undefined));
+                      clearDraft(draftKey(viewer.id, r.id));
                       setTick((n) => n + 1);
                     }}
                   >
@@ -642,6 +729,33 @@ function OnboardingHome({ hireId }: { hireId: string | null }) {
                     </span>
                   </div>
                   <StatusBadge status={r.status} />
+                  {r.status === 'Pending Approval' &&
+                    (canEditEmployees(viewerRole) ? (
+                      <Button size="sm" variant="primary" title="Look over this joiner and approve the onboarding, or send it back" onClick={() => setReviewing(r)}>
+                        Review &amp; approve
+                      </Button>
+                    ) : (
+                      <span className="faint" style={{ fontSize: 12 }}>
+                        Waiting for HR approval
+                      </span>
+                    ))}
+                  {r.status === 'In Progress' && wasSentBack(r.id) && canEditEmployees(viewerRole) && (
+                    <>
+                      <span className="hm-chip" style={{ background: '#fdf3df', color: '#B45309' }}>
+                        Sent back
+                      </span>
+                      <Button
+                        size="sm"
+                        variant="ghost"
+                        title="Put this onboarding in front of the approver again"
+                        onClick={() => {
+                          if (resubmitOnboarding(r.id, viewer.name)) setRemovedNote(`${r.candidateName} was sent for approval again.`);
+                        }}
+                      >
+                        Send for approval again
+                      </Button>
+                    </>
+                  )}
                 </div>
               </div>
             ))}
@@ -661,11 +775,175 @@ function OnboardingHome({ hireId }: { hireId: string | null }) {
   );
 }
 
-/** In the wizard: tells HR the details came from the joiner's own form, or offers to bring in a form submitted after
-    this onboarding was started. */
-function JoinedNote({ prefill, fromDraft, onImport }: { prefill: OnboardingPrefill; fromDraft: boolean; onImport: () => void }) {
+/** In the wizard: send the joiner their form to collect the rest of the details (personal, identity, bank with the
+    account number typed twice, emergency contacts, education, experience), or see where that form stands. */
+/** HR's decision on an onboarding that is waiting for approval: look over who is joining, then approve it or send it
+    back with a note on what to fix. */
+function ApprovalDrawer({ request, onClose, onDone }: { request: OnboardingRequest; onClose: () => void; onDone: (text: string) => void }) {
+  const me = useCurrentEmployee();
+  const emp = employeeOfRequest(request.id);
+  const [note, setNote] = useState('');
+  const [error, setError] = useState('');
+  const chain = chainSteps('onboarding');
+  const gate = chain.findIndex((c) => /approval/i.test(c));
+  const rows: [string, string][] = [
+    ['Employee code', emp?.employeeCode ?? '—'],
+    ['Role', request.role],
+    ['Position', `${request.designation} · ${request.department}`],
+    ['Work location', request.location],
+    ['Joining date', request.startDate],
+    ['Work email', emp?.email ?? '—'],
+    ['Wizard progress', `Step ${request.step} of ${STEPS.length}`],
+  ];
+
+  const approve = () => {
+    if (decideOnboarding(request.id, 'approve', me.name, note)) onDone(`${request.candidateName} is approved. Payroll and HR have been told.`);
+    onClose();
+  };
+  const sendBack = () => {
+    if (!note.trim()) return setError('Say what needs to change, so the person who prepared it knows what to fix.');
+    if (decideOnboarding(request.id, 'send-back', me.name, note)) onDone(`${request.candidateName} was sent back for changes.`);
+    onClose();
+  };
+
+  return (
+    <Drawer
+      open
+      onClose={onClose}
+      title="Review onboarding"
+      description={`${request.candidateName} · ${request.designation}`}
+      footer={
+        <>
+          <Button variant="ghost" onClick={onClose}>
+            Cancel
+          </Button>
+          <Button variant="ghost" onClick={sendBack}>
+            Send back
+          </Button>
+          <Button variant="primary" onClick={approve}>
+            Approve
+          </Button>
+        </>
+      }
+    >
+      <div className="subhd">Who is joining</div>
+      <div className="ap-facts">
+        {rows.map(([k, v]) => (
+          <div key={k}>
+            <span>{k}</span>
+            <b>{v}</b>
+          </div>
+        ))}
+      </div>
+      {emp && (
+        <div style={{ marginTop: 8 }}>
+          <Link href={`/directory/${emp.employeeCode}`} className="btn sm ghost">
+            Open the full employee record
+          </Link>
+        </div>
+      )}
+
+      <div className="subhd" style={{ marginTop: 18 }}>
+        Approval chain
+      </div>
+      <ol className="hm-chain" style={{ padding: '4px 0 8px' }}>
+        {chain.map((c, i) => {
+          const state = i < gate ? 'approved' : i === gate ? 'pending' : '';
+          return (
+            <li key={c} className={state}>
+              <span className="hm-chain-dot">{state === 'approved' ? <CheckIcon /> : null}</span>
+              <div>
+                <b>{c}</b>
+                <small>{state === 'approved' ? 'Prepared' : state === 'pending' ? 'Waiting for your decision' : 'Not reached yet'}</small>
+              </div>
+            </li>
+          );
+        })}
+      </ol>
+
+      <div className="fg full" style={{ marginTop: 6 }}>
+        <label>Note {error ? '' : '(needed only when sending back)'}</label>
+        <textarea
+          rows={4}
+          value={note}
+          onChange={(e) => {
+            setNote(e.target.value);
+            setError('');
+          }}
+          placeholder="For example: the bank branch is missing, or the passport expiry looks wrong."
+          style={TEXTAREA_STYLE}
+        />
+        {error && <span className="tx-err">{error}</span>}
+      </div>
+    </Drawer>
+  );
+}
+
+function JoiningFormSend({ prefill }: { prefill: OnboardingPrefill }) {
+  const s = useHiring();
   const invites = useInvites();
   const inv = inviteForOffer(invites, prefill.offerId);
+  const [note, setNote] = useState('');
+  const offer = s.offers.find((o) => o.id === prefill.offerId);
+  const candidate = s.candidates.find((c) => c.id === prefill.candidateId);
+  const job = s.jobs.find((j) => j.id === prefill.jobId);
+  if (inv?.status === 'Submitted' || !offer || !candidate) return null;
+  return (
+    <div className="note-box" style={{ marginBottom: 14, alignItems: 'flex-start' }}>
+      <JoinIcon />
+      <div style={{ flex: 1 }}>
+        <b>{inv ? 'Waiting for their joining form' : 'Collect the rest of their details'}</b>
+        <div style={{ fontSize: 12.5, color: 'var(--muted)', marginTop: 2 }}>
+          {inv
+            ? 'The form link is ready. When they submit it you can fill these steps from it. You can email it again or copy the link.'
+            : 'Email the joiner a private form (or create the link and share it yourself) for their personal, identity, bank (account number typed twice to be sure), emergency, education and experience details. Then fill these steps from it instead of typing them.'}
+        </div>
+        <div className="jf-acts">
+          <JoiningFormActions offer={offer} candidate={candidate} job={job} onNotice={setNote} />
+        </div>
+        {note && (
+          <div role="status" style={{ marginTop: 8, fontSize: 12.5, color: '#15803d', fontWeight: 600 }}>
+            {note}
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+
+/** In the wizard: what HR collected and verified before the offer letter, so nobody asks for it again. */
+function PreOfferNote({ prefill }: { prefill: OnboardingPrefill }) {
+  if (!prefill.preDocs?.length && !prefill.referral) return null;
+  return (
+    <div className="note-box" style={{ marginBottom: 14, background: '#effaf3', borderColor: '#bfe8cf' }} role="status">
+      <JoinIcon />
+      <div style={{ flex: 1 }}>
+        <b>Collected before the offer letter</b>
+        {!!prefill.preDocs?.length && (
+          <ul style={{ margin: '6px 0 0', paddingLeft: 18, fontSize: 12.5 }}>
+            {prefill.preDocs.map((d) => (
+              <li key={d.label}>
+                {d.label}: {d.files.join(', ')} {d.verified ? '✓ verified' : '(not verified)'}
+              </li>
+            ))}
+          </ul>
+        )}
+        {prefill.referral && (
+          <div style={{ marginTop: 6, fontSize: 12.5 }}>
+            Background verification referral: {prefill.referral.name} · {prefill.referral.designation} · {prefill.referral.phone}
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+
+/** In the wizard: tells HR the details came from the joiner's own form, or offers to bring in a form submitted after
+    this onboarding was started. */
+function JoinedNote({ inviteKey, fromDraft, onImport }: { inviteKey: string; fromDraft: boolean; onImport: () => void }) {
+  const invites = useInvites();
+  const inv = inviteForOffer(invites, inviteKey);
+  const [filled, setFilled] = useState(false);
   if (!inv || inv.status !== 'Submitted') return null;
   const when = inv.submittedAt ? new Date(inv.submittedAt).toLocaleDateString('en-GB', { day: 'numeric', month: 'short' }) : '';
   return (
@@ -678,19 +956,32 @@ function JoinedNote({ prefill, fromDraft, onImport }: { prefill: OnboardingPrefi
         </div>
       </div>
       {fromDraft && (
-        <Button size="sm" variant="primary" onClick={onImport}>
-          Fill from their form
+        <Button
+          size="sm"
+          variant={filled ? 'ghost' : 'primary'}
+          onClick={() => {
+            onImport();
+            setFilled(true);
+          }}
+        >
+          {filled ? '✓ Filled in. Check each step' : 'Fill from their form'}
         </Button>
       )}
     </div>
   );
 }
 
-function Wizard({ onClose, prefill }: { onClose: () => void; prefill?: OnboardingPrefill }) {
+/** First, middle and last name from a full name: first word, last word, anything between. */
+const splitName = (full: string) => {
+  const w = full.trim().split(/\s+/).filter(Boolean);
+  return { firstName: w[0] ?? '', lastName: w.length > 1 ? w[w.length - 1] : '', middleName: w.length > 2 ? w.slice(1, -1).join(' ') : '' };
+};
+
+function Wizard({ onClose, prefill, draftId }: { onClose: () => void; prefill?: OnboardingPrefill; draftId?: string }) {
   const { location, role: myRole } = useApp();
   const orgNow = useOrg();
   const me = useCurrentEmployee();
-  const dKey = draftKey(me.id, prefill?.offerId);
+  const dKey = draftKey(me.id, prefill?.offerId ?? draftId);
   const [draft] = useState(() => loadDraft(dKey));
   const [savedAt, setSavedAt] = useState<string | null>(draft?.savedAt ?? null);
   const [step, setStep] = useState(draft?.step ?? 0);
@@ -700,7 +991,12 @@ function Wizard({ onClose, prefill }: { onClose: () => void; prefill?: Onboardin
   /** Steps the user has tried to leave (or submit) with problems; their errors are shown. */
   const [attempted, setAttempted] = useState<number[]>([]);
 
-  const [fullName, setFullName] = useState(draft?.fullName ?? prefill?.name ?? '');
+  const [fullName, setFullName] = useState(() => {
+    if (draft) return draft.fullName;
+    const p = prefill?.form?.fv;
+    const joined = p?.firstName !== undefined ? [p.firstName, p.middleName, p.lastName].map((t) => (t ?? '').trim()).filter(Boolean).join(' ') : '';
+    return joined || prefill?.name || '';
+  });
   const [dob, setDob] = useState(draft?.dob ?? prefill?.form?.dob ?? '');
   const [joiningDate, setJoiningDate] = useState(draft?.joiningDate ?? prefill?.joiningDate ?? '');
   const [organizationId, setOrganizationId] = useState(draft?.organizationId ?? prefill?.companyId ?? '');
@@ -737,23 +1033,28 @@ function Wizard({ onClose, prefill }: { onClose: () => void; prefill?: Onboardin
   const [emB, setEmB] = useState<EmergencyRow[]>(draft?.emB ?? (prefill?.form?.emB?.some((r) => r.name) ? prefill.form.emB : [blankContact()]));
   const [exp, setExp] = useState<ExperienceRow[]>(draft?.exp ?? (prefill?.form?.exp?.length ? prefill.form.exp : [blankExperience()]));
   const [edu, setEdu] = useState<EducationRow[]>(draft?.edu ?? (prefill?.form?.edu?.some((r) => r.qualification || r.institution) ? prefill.form.edu : [blankEducation()]));
-  const [fam, setFam] = useState<FamilyRow[]>(draft?.fam ?? [blankFamily()]);
+  const [fam, setFam] = useState<FamilyRow[]>(draft?.fam ?? (prefill?.form?.fam?.some((r) => r.name.trim()) ? prefill.form.fam : [blankFamily()]));
+  /** Where the joining form is kept: the accepted offer's id, or a key of its own for an onboarding started by hand. */
+  const [manualKey] = useState(() => draft?.inviteKey ?? `man-${Date.now().toString(36)}${Math.random().toString(36).slice(2, 6)}`);
+  const inviteKey = prefill?.offerId ?? manualKey;
 
   /** Fill the form from what the joiner submitted (used when the draft was started before they sent it). */
   const importForm = () => {
-    const form = (prefill && inviteForOffer(getInvites(), prefill.offerId)?.data) ?? prefill?.form;
+    const form = inviteForOffer(getInvites(), inviteKey)?.data ?? prefill?.form;
     if (!form) return;
     setDob(form.dob);
-    setFv((p) => ({ ...p, ...form.fv }));
+    setFv((p) => ({ ...p, ...Object.fromEntries(Object.entries(form.fv).filter(([k]) => k !== 'accountNumberConfirm')) }));
     if (form.emA.some((r) => r.name)) setEmA(form.emA);
     if (form.emB.some((r) => r.name)) setEmB(form.emB);
     if (form.edu.some((r) => r.qualification || r.institution)) setEdu(form.edu);
     if (form.exp.length) setExp(form.exp);
+    if (form.fam?.some((r) => r.name.trim())) setFam(form.fam);
+    if (form.fv.firstName !== undefined) setFullName([form.fv.firstName, form.fv.middleName, form.fv.lastName].map((t) => (t ?? '').trim()).filter(Boolean).join(' '));
     if (form.passportExpiry) setExpiries((p) => ({ ...p, 'Passport Copy': form.passportExpiry }));
   };
 
   // Save the form a moment after each change. A form that is still empty is not worth keeping.
-  const snapshot = JSON.stringify({ step, office, fullName, dob, joiningDate, organizationId, departmentId, designationId, managerId, role, workEmail, visaStep, assetFlags: [...assetFlags], notifyDocs, expiries, reminderDays: [...reminderDays], reminderTo: [...reminderTo], fv, sal, emA, emB, exp, edu, fam });
+  const snapshot = JSON.stringify({ step, office, fullName, dob, joiningDate, organizationId, departmentId, designationId, managerId, role, workEmail, visaStep, assetFlags: [...assetFlags], notifyDocs, expiries, reminderDays: [...reminderDays], reminderTo: [...reminderTo], fv, sal, emA, emB, exp, edu, fam, inviteKey: prefill ? undefined : manualKey });
 
   useEffect(() => {
     if (done) {
@@ -778,9 +1079,27 @@ function Wizard({ onClose, prefill }: { onClose: () => void; prefill?: Onboardin
   const { companies, departments, designations, locations, locationsLabel, locationDef } = useOrg();
   const def = locationDef(office) ?? locations[0];
   const isIndia = def.template === 'india';
+  // India records also keep first, middle and last name. They start as a split of the full name and can be edited.
+  const autoName = splitName(fullName);
+  // The account holder starts as the employee's name and can be changed (a joint or differently spelled account).
+  const holder = fv.accountName !== undefined ? fv.accountName : fullName;
+  const pfYes = f('pfEnrolled') === 'Yes';
+  const nm = (k: 'firstName' | 'middleName' | 'lastName') => (fv[k] !== undefined ? fv[k] : autoName[k]);
+  // In India the three parts are what is typed; the full name is built from them.
+  /** Name as per passport / Aadhaar / PAN: suggested from the name entered in step 1 until it is edited. */
+  const idName = (k: 'passportName' | 'aadhaarName' | 'panName') => (fv[k] !== undefined ? fv[k] : fullName);
+  const setPart = (k: 'firstName' | 'middleName' | 'lastName', x: string) => {
+    const parts = { firstName: nm('firstName'), middleName: nm('middleName'), lastName: nm('lastName'), [k]: x };
+    setFv((p) => ({ ...p, ...parts }));
+    setFullName([parts.firstName, parts.middleName, parts.lastName].map((t) => t.trim()).filter(Boolean).join(' '));
+  };
   const country = def.name;
   const steps = STEPS.map((s, i) => (i === 2 && isIndia ? 'Passport / Aadhaar / PAN' : s));
   const selectedCompany = companies.find((c) => c.id === organizationId);
+  // Only companies that operate at this work location can be chosen (a Dubai-only company has no India departments).
+  const operatesHere = (c: { location: string }) => c.location === 'Both' || c.location === office;
+  const orgOptions = companies.filter((c) => operatesHere(c) || c.id === organizationId);
+  const orgElsewhere = !!selectedCompany && !operatesHere(selectedCompany);
   const companyDepts = selectedCompany ? departments.filter((d) => d.companyId === selectedCompany.id && d.locations.includes(office)) : [];
   const selectedDept = companyDepts.find((d) => d.id === departmentId);
   const deptDesigs = selectedDept ? designations.filter((x) => x.departmentId === selectedDept.id) : [];
@@ -792,6 +1111,39 @@ function Wizard({ onClose, prefill }: { onClose: () => void; prefill?: Onboardin
   const docList = isIndia
     ? ['Passport Copy', 'Signed Company Offer Letter', 'Highest Educational Certificate', 'PAN Card', 'Aadhaar Card', 'Passbook / Bank Statement', 'Signed NDA', 'Signed Employment Contract', 'Insurance Document', 'KPI', 'Passport Size Photo', 'Casual Photo']
     : ['Passport Copy', 'Signed Company Offer Letter', 'Attested Educational Certificate', 'Labour Card', 'Residence Visa', 'Emirates ID', 'Signed NDA', 'UAE Driving Licence', 'Medical Insurance E-Card', 'KPI', 'Passport Size Photo', 'Casual Photo'];
+  const requiredList: string[] = isIndia ? REQUIRED_DOCS.india : REQUIRED_DOCS.uae;
+  const twoSided = (d: string) => d === 'Aadhaar Card' || d === 'Passport Copy';
+  // A certificate attached to an education entry also counts as the education certificate.
+  const isUp = (d: string) => (d.includes('Educational Certificate') && edu.some((r) => (r.document ?? '').trim() !== '')) || (f(`docFile.${d}`).trim() !== '' && (!twoSided(d) || f(`docFile.${d} (Back)`).trim() !== ''));
+  const reqUploaded = requiredList.filter(isUp).length;
+  /** Documents that have their own upload in an earlier step: this step shows them, it does not ask again. */
+  const dedicated: Record<string, { step: number; where: string }> = isIndia
+    ? {
+        'Passport Copy': { step: 2, where: 'Passport / Aadhaar / PAN' },
+        'Aadhaar Card': { step: 2, where: 'Passport / Aadhaar / PAN' },
+        'PAN Card': { step: 2, where: 'Passport / Aadhaar / PAN' },
+        'Highest Educational Certificate': { step: 4, where: 'Experience & Education' },
+      }
+    : { 'Attested Educational Certificate': { step: 4, where: 'Experience & Education' } };
+  const earlier = docList.filter((d) => dedicated[d] && !isUp(d));
+  /** Every file uploaded anywhere in the wizard, with where it came from. */
+  const uploaded: { key: string; label: string; file: string; from: string; remove: () => void }[] = [
+    ...Object.entries(fv)
+      .filter(([k, x]) => k.startsWith('docFile.') && (x ?? '').trim() !== '')
+      .map(([k, x]) => {
+        const name = k.slice('docFile.'.length);
+        const label = name.endsWith(' (Back)') ? `${name.replace(' (Back)', '')}: back` : twoSided(name) ? `${name}: front` : name;
+        return { key: k, label, file: x as string, from: '', remove: () => setF(k, '') };
+      }),
+    ...exp
+      .map((r, i) => ({ r, i }))
+      .filter(({ r }) => (r.document ?? '').trim() !== '')
+      .map(({ r, i }) => ({ key: `exp.${i}`, label: `Experience letter: ${r.company.trim() || `entry #${i + 1}`}`, file: r.document as string, from: 'Experience & Education', remove: () => setExp((p) => p.map((x, j) => (j === i ? { ...x, document: '' } : x))) })),
+    ...edu
+      .map((r, i) => ({ r, i }))
+      .filter(({ r }) => (r.document ?? '').trim() !== '')
+      .map(({ r, i }) => ({ key: `edu.${i}`, label: `Education certificate: ${r.qualification.trim() || r.institution.trim() || `entry #${i + 1}`}`, file: r.document as string, from: 'Experience & Education', remove: () => setEdu((p) => p.map((x, j) => (j === i ? { ...x, document: '' } : x))) })),
+  ];
   const expiringDocs = docList.filter((d) => EXPIRING_DOCS.includes(d));
   const dated = expiringDocs.filter((d) => expiries[d]);
   const nearest = dated.length ? dated.reduce((a, b) => (expiries[a] <= expiries[b] ? a : b)) : null;
@@ -805,7 +1157,15 @@ function Wizard({ onClose, prefill }: { onClose: () => void; prefill?: Onboardin
   const dedLabels = isIndia ? INDIA_DED : [];
   const amt = (l: string) => (Number.isFinite(Number(sal[l])) ? Number(sal[l] || 0) : 0);
   const totalEarn = earnLabels.reduce((n, l) => n + amt(l), 0);
-  const totalDed = dedLabels.reduce((n, l) => n + amt(l), 0);
+  // Statutory figures, worked out by the rules for the work location (see lib/payroll.ts).
+  const ind = isIndia
+    ? indiaPayroll({ basic: amt('Basic'), hra: amt('House Rent Allowance'), fixed: amt('Fixed Allowance'), other: amt('Other Allowance'), pfOnFullWage: f('pfFullWage') === 'Yes' })
+    : null;
+  const uae = !isIndia ? uaePayroll({ basic: amt('Basic Salary'), total: totalEarn, national: f('nationality') === 'UAE' }) : null;
+  const typedDed = dedLabels.reduce((n, l) => n + amt(l), 0);
+  const totalDed = (ind ? ind.employeeStatutory : uae?.pensionEmployee ?? 0) + typedDed;
+  const netPay = totalEarn - totalDed;
+  const cur2 = (n: number) => `${isIndia ? '₹' : 'AED '}${n.toLocaleString(isIndia ? 'en-IN' : 'en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
   /** The approval line comes from Administration → Workflow Settings. */
   const approvalLine = chainSteps('onboarding');
 
@@ -836,6 +1196,13 @@ function Wizard({ onClose, prefill }: { onClose: () => void; prefill?: Onboardin
     if (id === office) return;
     setOffice(id);
     setFv((p) => ({ maritalStatus: p.maritalStatus, employmentType: p.employmentType, gender: p.gender, bloodGroup: p.bloodGroup, nationality: p.nationality, nationalityOther: p.nationalityOther, personalEmail: p.personalEmail, currentAddress: p.currentAddress, permanentAddress: p.permanentAddress, extension: p.extension, passportNumber: p.passportNumber, totalExperience: p.totalExperience, bankName: p.bankName }));
+    // An organization that does not operate at the new location cannot stay chosen.
+    const keep = companies.find((c) => c.id === organizationId);
+    if (keep && !(keep.location === 'Both' || keep.location === id)) {
+      setOrganizationId('');
+      setDepartmentId('');
+      setDesignationId('');
+    }
     setSal({});
     setExpiries({});
     setEmA((r) => r.map((x) => ({ ...x, mobile: '' })));
@@ -847,7 +1214,10 @@ function Wizard({ onClose, prefill }: { onClose: () => void; prefill?: Onboardin
   const problems: Problem[] = [];
   const add = (key: string, s: number, msg: string) => problems.push({ key, step: s, msg });
   const digitsMsg = `Enter all ${def.phoneDigits} digits of the number.`;
-  if (!fullName.trim()) add('name', 0, 'Full name is required.');
+  if (isIndia) {
+    if (!nm('firstName').trim()) add('firstName', 0, 'First name is required.');
+    if (!nm('lastName').trim()) add('lastName', 0, 'Last name is required.');
+  } else if (!fullName.trim()) add('name', 0, 'Full name is required.');
   if (!f('personalMobile')) add('personalMobile', 0, 'Personal mobile number is required.');
   else if (f('personalMobile').length !== def.phoneDigits) add('personalMobile', 0, digitsMsg);
   if (!f('personalEmail').trim()) add('personalEmail', 0, 'Personal email is required.');
@@ -858,6 +1228,7 @@ function Wizard({ onClose, prefill }: { onClose: () => void; prefill?: Onboardin
   else if (f('nationality') === 'Other' && !f('nationalityOther').trim()) add('nationalityOther', 0, 'Enter the nationality.');
 
   if (!organizationId) add('organization', 1, 'Choose an organization.');
+  else if (orgElsewhere && selectedCompany) add('organization', 1, `${selectedCompany.name} does not operate in ${country}. Choose another organization.`);
   if (!departmentId) add('department', 1, 'Choose a department.');
   if (!designationId) add('designation', 1, 'Choose a designation.');
   if (!managerId) add('manager', 1, 'Choose a reporting manager.');
@@ -868,8 +1239,10 @@ function Wizard({ onClose, prefill }: { onClose: () => void; prefill?: Onboardin
   else if (emailTaken) add('workEmail', 1, `${signInEmail} already belongs to another employee. Enter a different work email.`);
   if (f('phone') && f('phone').length !== def.phoneDigits) add('phone', 1, digitsMsg);
 
-  if (!f('passportNumber').trim()) add('passportNumber', 2, 'Passport number is required.');
+  if (!isIndia && !f('passportNumber').trim()) add('passportNumber', 2, 'Passport number is required.');
   if (isIndia) {
+    if (!idName('aadhaarName').trim()) add('aadhaarName', 2, 'Name as per Aadhaar is required.');
+    if (!idName('panName').trim()) add('panName', 2, 'Name as per PAN is required.');
     if (!f('aadhaar').trim()) add('aadhaar', 2, 'Aadhaar number is required.');
     else if (!/^\d{12}$/.test(f('aadhaar').replace(/\s/g, ''))) add('aadhaar', 2, 'Aadhaar is 12 digits.');
     if (!f('pan').trim()) add('pan', 2, 'PAN number is required.');
@@ -902,12 +1275,22 @@ function Wizard({ onClose, prefill }: { onClose: () => void; prefill?: Onboardin
   });
 
   if (!f('bankName').trim()) add('bankName', 6, 'Bank name is required.');
+  if (!holder.trim()) add('accountName', 6, 'Account holder name is required.');
   if (isIndia) {
     const a = indiaAccountError(f('accountNumber'));
     if (a) add('accountNumber', 6, a);
+    if (!f('accountNumberConfirm').trim()) add('accountNumberConfirm', 6, 'Type the account number again to confirm it.');
+    else if (f('accountNumberConfirm').replace(/\s/g, '') !== f('accountNumber').replace(/\s/g, '')) add('accountNumberConfirm', 6, 'The two account numbers do not match.');
     const c = ifscError(f('branchCode'));
     if (c) add('branchCode', 6, c);
-    if (f('uan').trim() && !/^\d{12}$/.test(f('uan').replace(/\s/g, ''))) add('uan', 6, 'UAN is 12 digits.');
+    if (!f('branchName').trim()) add('branchName', 6, 'Branch name is required.');
+    if (!f('pfEnrolled')) add('pfEnrolled', 6, 'Choose Yes or No.');
+    if (pfYes) {
+      if (!f('uan').trim()) add('uan', 6, 'UAN is required when already enrolled in PF.');
+      else if (!/^\d{12}$/.test(f('uan').replace(/\s/g, ''))) add('uan', 6, 'UAN is 12 digits.');
+      if (!f('uanMobile')) add('uanMobile', 6, 'Enter the mobile number linked to the UAN.');
+      else if (f('uanMobile').length !== def.phoneDigits) add('uanMobile', 6, digitsMsg);
+    }
   } else {
     const a = ibanError(f('accountNumber'));
     if (a) add('accountNumber', 6, a);
@@ -934,6 +1317,9 @@ function Wizard({ onClose, prefill }: { onClose: () => void; prefill?: Onboardin
     const contacts = (rows: EmergencyRow[], group: string, local: boolean) => rows.filter((r) => anyFilled(r, ['group'])).map((r) => ({ ...r, group, name: r.name.trim(), mobile: local ? phoneFmt(def, r.mobile) : r.mobile.trim() }));
     const v: Record<string, string> = {
       name: fullName.trim(),
+      firstName: isIndia ? nm('firstName').trim() : '',
+      middleName: isIndia ? nm('middleName').trim() : '',
+      lastName: isIndia ? nm('lastName').trim() : '',
       dob,
       nationality: f('nationality') === 'Other' ? f('nationalityOther').trim() : f('nationality'),
       gender: f('gender'),
@@ -955,6 +1341,9 @@ function Wizard({ onClose, prefill }: { onClose: () => void; prefill?: Onboardin
       phone: phoneFmt(def, f('phone')),
       extension: f('extension'),
       passportNumber: f('passportNumber').trim(),
+      passportName: isIndia && (f('passportNumber').trim() || fv.passportName !== undefined) ? idName('passportName').trim() : '',
+      aadhaarName: isIndia ? idName('aadhaarName').trim() : '',
+      panName: isIndia ? idName('panName').trim() : '',
       passportExpiry: expiries['Passport Copy'] ?? '',
       emiratesId: isIndia ? '' : f('emiratesId'),
       visaExpiry: isIndia ? '' : (expiries['Residence Visa'] ?? ''),
@@ -963,12 +1352,17 @@ function Wizard({ onClose, prefill }: { onClose: () => void; prefill?: Onboardin
       labourCardExpiry: isIndia ? '' : (expiries['Labour Card'] ?? ''),
       aadhaar: isIndia ? f('aadhaar').replace(/\s/g, '') : '',
       pan: isIndia ? f('pan').trim().toUpperCase() : '',
-      uan: isIndia ? f('uan').replace(/\s/g, '') : '',
+      uan: isIndia && pfYes ? f('uan').replace(/\s/g, '') : '',
+      pfEnrolled: isIndia ? f('pfEnrolled') : '',
+      uanMobile: isIndia && pfYes ? phoneFmt(def, f('uanMobile')) : '',
+      pfMemberId: isIndia && pfYes ? f('pfMemberId').trim().toUpperCase() : '',
+      epsEligibility: isIndia && pfYes ? f('epsEligibility') : '',
       paymentMode: payMode,
       bankName: f('bankName').trim(),
-      accountName: fullName.trim(),
+      accountName: holder.trim(),
       accountNumber: isIndia ? f('accountNumber').replace(/\s/g, '') : f('accountNumber').replace(/\s/g, '').toUpperCase(),
       branchCode: isIndia ? f('branchCode').trim().toUpperCase() : f('branchCode').trim(),
+      branchName: isIndia ? f('branchName').trim() : '',
       currency: def.currency,
       totalExperience: f('totalExperience'),
     };
@@ -983,8 +1377,20 @@ function Wizard({ onClose, prefill }: { onClose: () => void; prefill?: Onboardin
       education: edu.filter((r) => anyFilled(r)),
       family: fam.filter((r) => anyFilled(r)),
       earnings: money(earnLabels),
-      deductions: money(dedLabels),
+      deductions: [
+        ...(ind
+          ? [
+              { label: 'EPF Contribution', amount: String(ind.epfEmployee) },
+              { label: 'ESI Contribution', amount: String(ind.esiEmployee) },
+              { label: 'Professional Tax', amount: String(ind.professionalTax) },
+            ].filter((r) => Number(r.amount) > 0)
+          : []),
+        ...(uae && uae.pensionEmployee > 0 ? [{ label: 'Pension (employee 11%)', amount: String(uae.pensionEmployee) }] : []),
+        ...money(dedLabels),
+      ],
       documents: dateRows,
+      uploadedDocs: docList.filter(isUp),
+      documentDetails: docList.filter((d) => DOC_TEXT[d] && f(`docText.${d}`).trim()).map((d) => ({ name: d, details: f(`docText.${d}`).trim() })),
       email: signInEmail,
       role,
       by: me.name,
@@ -1003,6 +1409,7 @@ function Wizard({ onClose, prefill }: { onClose: () => void; prefill?: Onboardin
       // The welcome / pre-joining email for the Hired rule (logged in sandbox mode).
       if (off) sendRuleMail('Hired', off.applicationId, me.name, { includeAsk: true, offer: off });
     }
+    if (!prefill) markImported(inviteKey);
     setCreated({ code: hire.employeeCode, name: hire.name, email: hire.email, role, country, assets: assetFlags.size ? Array.from(assetFlags).join(', ') : 'none selected' });
   };
 
@@ -1033,12 +1440,27 @@ function Wizard({ onClose, prefill }: { onClose: () => void; prefill?: Onboardin
     <div>
       <PageHeader
         eyebrow="New onboarding"
-        title={fullName || 'New candidate'}
+        title={
+          <>
+            {fullName || 'New candidate'}
+            <span className="wz-country">{country}</span>
+          </>
+        }
         description="A guided 10-step wizard capturing the full employee record. Creates the employee as Onboarding and sends the request through the approval chain."
       />
 
       {prefill && (
-        <JoinedNote prefill={prefill} fromDraft={!!draft} onImport={() => importForm()} />
+        <>
+          <JoiningFormSend prefill={prefill} />
+          <PreOfferNote prefill={prefill} />
+          <JoinedNote inviteKey={prefill.offerId} fromDraft={!!draft} onImport={() => importForm()} />
+        </>
+      )}
+      {!prefill && !done && (
+        <>
+          <ManualShareCard inviteKey={manualKey} name={fullName} personalEmail={f('personalEmail')} location={office} jobTitle={designations.find((d) => d.id === designationId)?.title ?? ''} joiningDate={joiningDate} />
+          <JoinedNote inviteKey={manualKey} fromDraft onImport={() => importForm()} />
+        </>
       )}
 
       <Card className="lc-wiz">
@@ -1126,9 +1548,24 @@ function Wizard({ onClose, prefill }: { onClose: () => void; prefill?: Onboardin
               </div>
             </div>
             <div className="form-grid">
-              <Fg label="Full Name (as per passport)" required error={shownErr('name')}>
-                <Input placeholder="e.g. Zayd Rahman" value={fullName} onChange={setFullName} />
-              </Fg>
+              {!isIndia && (
+                <Fg label="Full Name (as per passport)" required error={shownErr('name')}>
+                  <Input placeholder="e.g. Zayd Rahman" value={fullName} onChange={setFullName} />
+                </Fg>
+              )}
+              {isIndia && (
+                <>
+                  <Fg label="First Name" required error={shownErr('firstName')}>
+                    <Input value={nm('firstName')} onChange={(x) => setPart('firstName', x)} />
+                  </Fg>
+                  <Fg label="Middle Name">
+                    <Input value={nm('middleName')} onChange={(x) => setPart('middleName', x)} />
+                  </Fg>
+                  <Fg label="Last Name" required error={shownErr('lastName')}>
+                    <Input value={nm('lastName')} onChange={(x) => setPart('lastName', x)} />
+                  </Fg>
+                </>
+              )}
               <Fg label="Personal Mobile Number" required error={shownErr('personalMobile')}>
                 <Phone def={def} value={f('personalMobile')} onChange={(x) => setF('personalMobile', x)} />
               </Fg>
@@ -1173,7 +1610,7 @@ function Wizard({ onClose, prefill }: { onClose: () => void; prefill?: Onboardin
               </Fg>
               <Fg label="Organization" required error={shownErr('organization')}>
                 <SearchSelect
-                  options={companies.map((c) => ({ value: c.id, label: c.name, meta: c.status === 'Inactive' ? `${c.shortCode} · Inactive` : c.shortCode }))}
+                  options={orgOptions.map((c) => ({ value: c.id, label: c.name, meta: !operatesHere(c) ? `Not in ${country}` : c.status === 'Inactive' ? `${c.shortCode} · Inactive` : c.shortCode }))}
                   value={organizationId}
                   onChange={(v) => {
                     setOrganizationId(v);
@@ -1183,6 +1620,8 @@ function Wizard({ onClose, prefill }: { onClose: () => void; prefill?: Onboardin
                   emptyText="No companies found"
                 />
                 {!companies.length && <span className="hint">No companies yet. Add one under Administration → Companies.</span>}
+                {orgElsewhere && selectedCompany && <span className="hint" style={{ color: 'var(--danger)' }}>{selectedCompany.name} does not operate in {country}, so it has no departments here. Choose another organization.</span>}
+                {!orgElsewhere && <span className="hint">Showing companies that operate in {country}.</span>}
               </Fg>
               <Fg label="Department" required error={shownErr('department')}>
                 <SearchSelect
@@ -1256,25 +1695,62 @@ function Wizard({ onClose, prefill }: { onClose: () => void; prefill?: Onboardin
             <div style={step === 2 ? undefined : { display: 'none' }}>
               <h3>Passport / Aadhaar / PAN details</h3>
               <p className="desc">Statutory identity documents for India. Aadhaar and PAN are used for payroll, PF and tax filing.</p>
-              <div className="form-grid">
-                <Fg label="Passport Number" required error={shownErr('passportNumber')}>
-                  <Input placeholder="e.g. K1234567" value={f('passportNumber')} onChange={(x) => setF('passportNumber', x)} />
-                </Fg>
-                <Fg label="Passport Expiry Date">
-                  <Input type="date" value={expiries['Passport Copy'] ?? ''} onChange={(v) => setExpiry('Passport Copy', v)} />
-                </Fg>
-                <Fg label="Aadhaar Number" required error={shownErr('aadhaar')}>
-                  <Input placeholder="12-digit Aadhaar" value={f('aadhaar')} onChange={(x) => setF('aadhaar', x)} />
-                </Fg>
-                <Fg label="PAN Number" required error={shownErr('pan')}>
-                  <Input placeholder="e.g. ABCDE1234F" value={f('pan')} onChange={(x) => setF('pan', x.toUpperCase())} />
-                </Fg>
-              </div>
-              <div className="note-box" style={{ marginTop: 10 }}>
-                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.8}>
-                  <path d="M12 16v-4M12 8h.01M22 12a10 10 0 1 1-20 0 10 10 0 0 1 20 0Z" />
-                </svg>
-                <div>Visa, Emirates ID and Labour Card apply to UAE employees only, so they are not collected for India.</div>
+              <div className="id-cols">
+                <div className="id-col">
+                  <div className="id-h">Passport</div>
+                  <Fg label="Name as per Passport" error={shownErr('passportName')}>
+                    <Input placeholder="Exactly as printed on the passport" value={idName('passportName')} onChange={(x) => setF('passportName', x)} />
+                  </Fg>
+                  <Fg label="Passport Number" error={shownErr('passportNumber')}>
+                    <Input placeholder="e.g. K1234567 (if the employee has a passport)" value={f('passportNumber')} onChange={(x) => setF('passportNumber', x)} />
+                  </Fg>
+                  <Fg label="Passport Expiry Date">
+                    <Input type="date" value={expiries['Passport Copy'] ?? ''} onChange={(v) => setExpiry('Passport Copy', v)} />
+                  </Fg>
+                  <Fg label="Passport Copy: Front page">
+                    <UploadPick file={f('docFile.Passport Copy')} onFile={(n) => setF('docFile.Passport Copy', n)} />
+                  </Fg>
+                  <Fg label="Passport Copy: Back page">
+                    <UploadPick file={f('docFile.Passport Copy (Back)')} onFile={(n) => setF('docFile.Passport Copy (Back)', n)} />
+                    {(f('docFile.Passport Copy') !== '') !== (f('docFile.Passport Copy (Back)') !== '') && (
+                      <span className="hint" style={{ color: '#b45309' }}>
+                        Upload both sides of the passport.
+                      </span>
+                    )}
+                  </Fg>
+                </div>
+                <div className="id-col">
+                  <div className="id-h">Aadhaar</div>
+                  <Fg label="Name as per Aadhaar" required error={shownErr('aadhaarName')}>
+                    <Input placeholder="Exactly as printed on the Aadhaar card" value={idName('aadhaarName')} onChange={(x) => setF('aadhaarName', x)} />
+                  </Fg>
+                  <Fg label="Aadhaar Number" required error={shownErr('aadhaar')}>
+                    <Input placeholder="12-digit Aadhaar" value={f('aadhaar')} onChange={(x) => setF('aadhaar', x)} />
+                  </Fg>
+                  <Fg label="Aadhaar Card: Front side">
+                    <UploadPick file={f('docFile.Aadhaar Card')} onFile={(n) => setF('docFile.Aadhaar Card', n)} />
+                  </Fg>
+                  <Fg label="Aadhaar Card: Back side">
+                    <UploadPick file={f('docFile.Aadhaar Card (Back)')} onFile={(n) => setF('docFile.Aadhaar Card (Back)', n)} />
+                    {(f('docFile.Aadhaar Card') !== '') !== (f('docFile.Aadhaar Card (Back)') !== '') && (
+                      <span className="hint" style={{ color: '#b45309' }}>
+                        Upload both sides of the Aadhaar card.
+                      </span>
+                    )}
+                  </Fg>
+                </div>
+                <div className="id-col id-pan">
+                  <div className="id-h">PAN</div>
+                  <Fg label="Name as per PAN" required error={shownErr('panName')}>
+                    <Input placeholder="Exactly as printed on the PAN card" value={idName('panName')} onChange={(x) => setF('panName', x)} />
+                  </Fg>
+                  <Fg label="PAN Number" required error={shownErr('pan')}>
+                    <Input placeholder="e.g. ABCDE1234F" value={f('pan')} onChange={(x) => setF('pan', x.toUpperCase())} />
+                  </Fg>
+                  <Fg label="PAN Card">
+                    <UploadPick file={f('docFile.PAN Card')} onFile={(n) => setF('docFile.PAN Card', n)} />
+                  </Fg>
+                </div>
               </div>
             </div>
           )}
@@ -1492,6 +1968,9 @@ function Wizard({ onClose, prefill }: { onClose: () => void; prefill?: Onboardin
                   <Fg label="Mode of work">
                     <Select options={WORK_MODES} value={r.mode} onChange={(x) => up({ mode: x })} />
                   </Fg>
+                  <Fg label="Experience / Relieving Letter">
+                    <UploadPick file={r.document ?? ''} onFile={(n) => up({ document: n })} />
+                  </Fg>
                 </div>
               )}
             />
@@ -1524,6 +2003,9 @@ function Wizard({ onClose, prefill }: { onClose: () => void; prefill?: Onboardin
                   <Fg label="Ending Year" error={shownErr(`edu.${i}.endYear`)}>
                     <Input value={r.endYear} onChange={(x) => up({ endYear: x })} />
                   </Fg>
+                  <Fg label="Education Certificate">
+                    <UploadPick file={r.document ?? ''} onFile={(n) => up({ document: n })} />
+                  </Fg>
                 </div>
               )}
             />
@@ -1546,6 +2028,9 @@ function Wizard({ onClose, prefill }: { onClose: () => void; prefill?: Onboardin
                   <Fg label="Relationship">
                     <Input value={r.relationship} onChange={(x) => up({ relationship: x })} />
                   </Fg>
+                  <Fg label="Date of Birth">
+                    <DateField value={r.dob ?? ''} max={todayISO()} onChange={(e) => up({ dob: e.target.value })} />
+                  </Fg>
                   <Fg label="Occupation">
                     <Input value={r.occupation} onChange={(x) => up({ occupation: x })} />
                   </Fg>
@@ -1557,9 +2042,6 @@ function Wizard({ onClose, prefill }: { onClose: () => void; prefill?: Onboardin
           <div style={step === 6 ? undefined : { display: 'none' }}>
             <h3>Bank &amp; PF details</h3>
             <p className="desc">Salary account. This data is shared with Payroll once the onboarding is approved.</p>
-            <div className="hint" style={{ marginBottom: 14 }}>
-              Showing fields for <b>{country}</b>. Change the work location in step 1.
-            </div>
             <div className="form-grid">
               <Fg label="Payment Mode" required>
                 <Select options={payModes} value={payMode} onChange={(x) => setF('paymentMode', x)} />
@@ -1567,16 +2049,34 @@ function Wizard({ onClose, prefill }: { onClose: () => void; prefill?: Onboardin
               <Fg label="Bank Name" required error={shownErr('bankName')}>
                 <Input value={f('bankName')} onChange={(x) => setF('bankName', x)} />
               </Fg>
-              <Fg label="Account Holder Name" required>
-                <Input value={fullName} readOnly />
+              <Fg label="Account Holder Name" required error={shownErr('accountName')}>
+                <Input value={holder} onChange={(x) => setF('accountName', x)} placeholder="As on the bank account" />
               </Fg>
               {isIndia ? (
                 <>
-                  <Fg label="Account Number" required error={shownErr('accountNumber')}>
+                  <Fg label="Bank Account Number" required error={shownErr('accountNumber')}>
                     <Input value={f('accountNumber')} onChange={(x) => setF('accountNumber', x)} placeholder="9 to 18 digits" />
                   </Fg>
-                  <Fg label="IFSC" required error={shownErr('branchCode')}>
+                  <Fg
+                    label="Confirm Bank Account Number"
+                    required
+                    error={shownErr('accountNumberConfirm') ?? (f('accountNumberConfirm').trim() && f('accountNumberConfirm').replace(/\s/g, '') !== f('accountNumber').replace(/\s/g, '') ? 'The two account numbers do not match.' : undefined)}
+                  >
+                    <input
+                      value={f('accountNumberConfirm')}
+                      onChange={(e) => setF('accountNumberConfirm', e.target.value)}
+                      onPaste={(e) => e.preventDefault()}
+                      onDrop={(e) => e.preventDefault()}
+                      placeholder="Type the account number again"
+                      autoComplete="off"
+                    />
+                    {f('accountNumberConfirm').trim() !== '' && f('accountNumberConfirm').replace(/\s/g, '') === f('accountNumber').replace(/\s/g, '') && <span className="hint">✓ Both entries match. Pasting is turned off, so type it again.</span>}
+                  </Fg>
+                  <Fg label="IFSC Code" required error={shownErr('branchCode')}>
                     <Input value={f('branchCode')} onChange={(x) => setF('branchCode', x.toUpperCase())} placeholder="e.g. HDFC0001234" />
+                  </Fg>
+                  <Fg label="Branch Name" required error={shownErr('branchName')}>
+                    <Input value={f('branchName')} onChange={(x) => setF('branchName', x)} placeholder="e.g. Kakkanad, Kochi" />
                   </Fg>
                 </>
               ) : (
@@ -1597,52 +2097,79 @@ function Wizard({ onClose, prefill }: { onClose: () => void; prefill?: Onboardin
                   PF Details (India)
                 </div>
                 <div className="form-grid">
-                  <Fg label="UAN" error={shownErr('uan')}>
-                    <Input placeholder="12-digit UAN" value={f('uan')} onChange={(x) => setF('uan', x)} />
+                  <Fg label="Already enrolled in PF?" required error={shownErr('pfEnrolled')}>
+                    <Select options={['Yes', 'No']} placeholder="Select…" value={f('pfEnrolled')} onChange={(x) => setF('pfEnrolled', x)} />
                   </Fg>
+                  {pfYes && (
+                    <>
+                      <Fg label="UAN Number" required error={shownErr('uan')}>
+                        <Input placeholder="12-digit UAN" value={f('uan')} onChange={(x) => setF('uan', x)} />
+                      </Fg>
+                      <Fg label="Registered mobile number linked to UAN" required error={shownErr('uanMobile')}>
+                        <Phone def={def} value={f('uanMobile')} onChange={(x) => setF('uanMobile', x)} />
+                      </Fg>
+                      <Fg label="Previous PF Member ID (if available)">
+                        <Input placeholder="e.g. KRKOC00123450000012345" value={f('pfMemberId')} onChange={(x) => setF('pfMemberId', x.toUpperCase())} />
+                      </Fg>
+                      <Fg label="EPS eligibility (if applicable)">
+                        <Select options={['Eligible', 'Not eligible', 'Not sure']} placeholder="Select…" value={f('epsEligibility')} onChange={(x) => setF('epsEligibility', x)} />
+                      </Fg>
+                    </>
+                  )}
                 </div>
+                {f('pfEnrolled') === 'No' && <div className="hint" style={{ marginTop: 8 }}>No existing PF account. Payroll will create a UAN for the employee after joining.</div>}
               </>
             )}
           </div>
 
           <div style={step === 7 ? undefined : { display: 'none' }}>
             <h3>Salary</h3>
-            <p className="desc">Salary structure for the selected location.</p>
-            <div className="hint" style={{ marginBottom: 14 }}>
-              Showing fields for <b>{country}</b>. Change the work location in step 1.
-            </div>
-            {isIndia ? (
+            <p className="desc">Monthly salary structure. The statutory deductions and employer contributions are worked out for {country}.</p>
+            {isIndia && ind ? (
               <>
-                <div className="subhd">Earnings</div>
+                <div className="subhd">Earnings (monthly)</div>
                 <div className="form-grid">
                   {INDIA_EARN.map((l, i) => (
                     <Fg key={l} label={l} required={i === 0} error={shownErr(`sal.${l}`)}>
                       <Input type="number" value={sal[l] ?? ''} onChange={(x) => setSal((p) => ({ ...p, [l]: x }))} />
                     </Fg>
                   ))}
-                  <Fg label="Total Earnings">
-                    <Input readOnly value={String(totalEarn)} />
+                  <Fg label="Total Earnings (Gross)">
+                    <Input readOnly value={cur2(totalEarn)} />
                   </Fg>
                 </div>
                 <div className="subhd" style={{ marginTop: 14 }}>
-                  Deductions
+                  Deductions (monthly)
                 </div>
                 <div className="form-grid">
+                  <Fg label="EPF Contribution (employee, 12%)">
+                    <Input readOnly value={cur2(ind.epfEmployee)} />
+                  </Fg>
+                  <Fg label={ind.esiApplies ? 'ESI Contribution (employee, 0.75%)' : 'ESI Contribution (not applicable)'}>
+                    <Input readOnly value={cur2(ind.esiEmployee)} />
+                  </Fg>
+                  <Fg label="Professional Tax (Kerala)">
+                    <Input readOnly value={cur2(ind.professionalTax)} />
+                  </Fg>
                   {INDIA_DED.map((l) => (
                     <Fg key={l} label={l} error={shownErr(`sal.${l}`)}>
                       <Input type="number" value={sal[l] ?? ''} onChange={(x) => setSal((p) => ({ ...p, [l]: x }))} />
                     </Fg>
                   ))}
                   <Fg label="Total Deductions">
-                    <Input readOnly value={String(totalDed)} />
+                    <Input readOnly value={cur2(totalDed)} />
                   </Fg>
                 </div>
+                <label className="notify-check" style={{ margin: '12px 0 0', cursor: 'pointer' }}>
+                  <input type="checkbox" checked={f('pfFullWage') === 'Yes'} onChange={(e) => setF('pfFullWage', e.target.checked ? 'Yes' : '')} className="chk" style={{ width: 15, height: 15 }} />
+                  Contribute to PF on the full wage, above the {'₹'}{PF_WAGE_CEILING.toLocaleString('en-IN')} ceiling (voluntary higher contribution)
+                </label>
                 <div className="subhd" style={{ marginTop: 14 }}>
                   Take Home Salary
                 </div>
                 <div className="form-grid">
-                  <Fg label="Take Home Salary Amount (Net Pay)">
-                    <Input readOnly value={String(totalEarn - totalDed)} />
+                  <Fg label="Take Home Salary Amount (Net Pay, before income tax)">
+                    <Input readOnly value={cur2(netPay)} />
                   </Fg>
                 </div>
                 <div className="subhd" style={{ marginTop: 16 }}>
@@ -1658,50 +2185,141 @@ function Wizard({ onClose, prefill }: { onClose: () => void; prefill?: Onboardin
                   </thead>
                   <tbody>
                     {[
-                      ['EPF Contribution', '₹1,800.00', '₹550.00'],
-                      ['EPS Contribution', '₹0.00', '₹1,250.00'],
-                      ['Employer EDLI Contribution', '₹0.00', '₹75.00'],
-                      ['Employer EPF Admin Charges', '₹0.00', '₹75.00'],
-                      ['Total Contribution', '₹1,800.00', '₹1,950.00'],
+                      ['EPF Contribution', ind.epfEmployee, ind.epfEmployer],
+                      ['EPS Contribution (pension)', 0, ind.eps],
+                      ['ESI Contribution', ind.esiEmployee, ind.esiEmployer],
+                      ['Employer EDLI Contribution', 0, ind.edli],
+                      ['Employer EPF Admin Charges', 0, ind.admin],
+                      ['Professional Tax', ind.professionalTax, 0],
+                      ['Total Contribution', ind.employeeStatutory, ind.employerContributions],
+                      ['Gratuity provision (not paid out monthly)', 0, ind.gratuity],
                     ].map((r, i) => (
-                      <tr key={r[0]} style={i === 4 ? { fontWeight: 700, background: 'var(--bg)' } : undefined}>
+                      <tr key={String(r[0])} style={i === 6 ? { fontWeight: 700, background: 'var(--bg)' } : undefined}>
                         <td>{r[0]}</td>
-                        <td className="mono">{r[1]}</td>
-                        <td className="mono">{r[2]}</td>
+                        <td className="mono">{cur2(Number(r[1]))}</td>
+                        <td className="mono">{cur2(Number(r[2]))}</td>
                       </tr>
                     ))}
                   </tbody>
                 </table>
-              </>
-            ) : (
-              <>
-                <div className="subhd">Earnings ({country})</div>
-                <div className="form-grid">
-                  {UAE_EARN.map((l, i) => (
-                    <Fg key={l} label={l} required={i === 0} error={shownErr(`sal.${l}`)}>
-                      <Input type="number" placeholder={def.currency} value={sal[l] ?? ''} onChange={(x) => setSal((p) => ({ ...p, [l]: x }))} />
-                    </Fg>
-                  ))}
-                  <Fg label="Total Salary">
-                    <Input readOnly value={`${def.currency} ${totalEarn.toLocaleString('en-US')}`} />
-                  </Fg>
-                </div>
                 <div className="note-box" style={{ marginTop: 12 }}>
                   <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.8}>
                     <path d="M12 16v-4M12 8h.01M22 12a10 10 0 1 1-20 0 10 10 0 0 1 20 0Z" />
                   </svg>
-                  <div>Total Salary auto-sums the components and flows into the WPS payroll file.</div>
+                  <div style={{ fontSize: 12.5, lineHeight: 1.55 }}>
+                    <b>Monthly cost to company: {cur2(ind.monthlyCtc)}</b> ({cur2(ind.monthlyCtc * 12)} a year) = gross + employer contributions + gratuity provision.
+                    <ul style={{ margin: '6px 0 0', paddingLeft: 18 }}>
+                      <li>
+                        <b>Wages</b> for PF, ESI and gratuity are the Basic, and never less than half of gross pay (Code on Wages): {cur2(ind.wages)} here.
+                      </li>
+                      <li>
+                        <b>EPF</b> 12% of wages up to the {'₹'}{PF_WAGE_CEILING.toLocaleString('en-IN')} ceiling. The employer&apos;s 12% is split 8.33% to the pension scheme (EPS, at most {'₹'}1,250) and the rest to the provident fund. EDLI is 0.5%, and the EPFO admin charge 0.5%, of PF wages.
+                      </li>
+                      <li>
+                        <b>ESI</b> applies only when gross is {'₹'}{ESI_WAGE_LIMIT.toLocaleString('en-IN')} a month or less: employee 0.75%, employer 3.25%. {ind.esiApplies ? 'It applies here.' : 'It does not apply here.'}
+                      </li>
+                      <li>
+                        <b>Professional tax</b> follows the Kerala half-yearly slab (revised 1 October 2024), spread over six months. The local body (corporation, municipality or panchayat) sets the final amount.
+                      </li>
+                      <li>
+                        <b>Income tax (TDS)</b> is not included: it depends on the employee&apos;s tax regime and declarations, so Payroll works it out each month.
+                      </li>
+                      <li>
+                        <b>Gratuity</b> is 15/26 of a month&apos;s wages for each year of service, set aside here and payable after five years.
+                      </li>
+                    </ul>
+                  </div>
                 </div>
               </>
+            ) : (
+              uae && (
+                <>
+                  <div className="subhd">Earnings ({country})</div>
+                  <div className="form-grid">
+                    {UAE_EARN.map((l, i) => (
+                      <Fg key={l} label={l} required={i === 0} error={shownErr(`sal.${l}`)}>
+                        <Input type="number" placeholder={def.currency} value={sal[l] ?? ''} onChange={(x) => setSal((p) => ({ ...p, [l]: x }))} />
+                      </Fg>
+                    ))}
+                    <Fg label="Total Salary">
+                      <Input readOnly value={cur2(totalEarn)} />
+                    </Fg>
+                  </div>
+                  <div className="subhd" style={{ marginTop: 16 }}>
+                    Statutory items and benefits (monthly)
+                  </div>
+                  <table style={{ border: '1px solid var(--border)', borderRadius: 'var(--r-sm)' }}>
+                    <thead>
+                      <tr>
+                        <th>Item</th>
+                        <th>Employee</th>
+                        <th>Employer</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      <tr>
+                        <td>Income tax</td>
+                        <td className="mono">Nil</td>
+                        <td className="mono">—</td>
+                      </tr>
+                      <tr>
+                        <td>Pension (GPSSA){uae.pensionApplies ? '' : ': UAE nationals only'}</td>
+                        <td className="mono">{uae.pensionApplies ? cur2(uae.pensionEmployee) : 'Not applicable'}</td>
+                        <td className="mono">{uae.pensionApplies ? cur2(uae.pensionEmployer) : 'Not applicable'}</td>
+                      </tr>
+                      <tr>
+                        <td>Unemployment insurance (ILOE)</td>
+                        <td className="mono">{cur2(uae.iloe)}</td>
+                        <td className="mono">—</td>
+                      </tr>
+                      <tr>
+                        <td>End-of-service gratuity provision (years 1 to 5)</td>
+                        <td className="mono">—</td>
+                        <td className="mono">{cur2(uae.gratuityFirstFive)}</td>
+                      </tr>
+                      <tr>
+                        <td>End-of-service gratuity provision (from year 6)</td>
+                        <td className="mono">—</td>
+                        <td className="mono">{cur2(uae.gratuityAfterFive)}</td>
+                      </tr>
+                      <tr style={{ fontWeight: 700, background: 'var(--bg)' }}>
+                        <td>Net monthly pay (WPS)</td>
+                        <td className="mono" colSpan={2}>
+                          {cur2(uae.netPay)}
+                        </td>
+                      </tr>
+                    </tbody>
+                  </table>
+                  <div className="note-box" style={{ marginTop: 12 }}>
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.8}>
+                      <path d="M12 16v-4M12 8h.01M22 12a10 10 0 1 1-20 0 10 10 0 0 1 20 0Z" />
+                    </svg>
+                    <div style={{ fontSize: 12.5, lineHeight: 1.55 }}>
+                      The net pay flows into the WPS payroll file.
+                      <ul style={{ margin: '6px 0 0', paddingLeft: 18 }}>
+                        <li>
+                          <b>Income tax:</b> the UAE has no personal income tax, and expatriates have no social-security deduction.
+                        </li>
+                        <li>
+                          <b>Pension (GPSSA)</b> is for UAE nationals only: the employee pays 11% of the contribution salary (up to AED 70,000) and the employer 15%, of which the government covers 2.5% when the salary is under AED 20,000. Rates for Emiratis who joined before 31 October 2023, and for Abu Dhabi (ADPF) members, differ.
+                        </li>
+                        <li>
+                          <b>Unemployment insurance (ILOE)</b> is AED 5 a month if Basic is AED 16,000 or less, otherwise AED 10. It is paid by the employee (monthly, quarterly, half-yearly or yearly), so it is not taken off the net pay here.
+                        </li>
+                        <li>
+                          <b>End-of-service gratuity</b> (Federal Decree-Law 33 of 2021) is 21 days&apos; Basic for each of the first five years and 30 days for each year after, after at least one year of service. It is the employer&apos;s liability, set aside here and paid on exit.
+                        </li>
+                      </ul>
+                    </div>
+                  </div>
+                </>
+              )
             )}
           </div>
 
           <div style={step === 8 ? undefined : { display: 'none' }}>
             <h3>Documents</h3>
             <p className="desc">Upload the required documents for the selected location. Documents that expire need an expiry date so reminders can be sent.</p>
-            <div className="hint" style={{ marginBottom: 14 }}>
-              Showing fields for <b>{country}</b>. Change the work location in step 1.
-            </div>
             <label className="notify-check" style={{ margin: '0 0 12px', cursor: 'pointer' }}>
               <input type="checkbox" checked={notifyDocs} onChange={(e) => setNotifyDocs(e.target.checked)} className="chk" style={{ width: 15, height: 15 }} />
               Notify employee when documents are uploaded
@@ -1730,11 +2348,81 @@ function Wizard({ onClose, prefill }: { onClose: () => void; prefill?: Onboardin
                   : 'Select at least one reminder interval and one recipient to enable reminders.'}
               </div>
             </div>
-            <div className="subhd">Documents</div>
-            <div className="form-grid">
-              {docList.map((d) => (
-                <UploadBox key={d} label={d} expiry={EXPIRING_DOCS.includes(d) ? { value: expiries[d] ?? '', onChange: (v) => setExpiry(d, v) } : undefined} />
-              ))}
+            <div className="ds-sum">
+              <div>
+                <b>{reqUploaded}</b> of {requiredList.length} required documents uploaded
+                <small>{isIndia ? 'Passport is optional for India. Aadhaar needs both sides.' : 'Passport needs both pages.'}</small>
+              </div>
+              <div className="ds-bar" role="progressbar" aria-valuenow={Math.round((reqUploaded / Math.max(1, requiredList.length)) * 100)} aria-valuemin={0} aria-valuemax={100}>
+                <i style={{ width: `${Math.round((reqUploaded / Math.max(1, requiredList.length)) * 100)}%` }} />
+              </div>
+            </div>
+            <div className="subhd">Uploaded documents ({uploaded.length})</div>
+            {uploaded.length ? (
+              <ul className="ds-list">
+                {uploaded.map((u) => (
+                  <li key={u.key}>
+                    <span className="ds-ok">✓</span>
+                    <span className="ds-ln">
+                      <b>{u.label}</b>
+                      <small>
+                        {u.file}
+                        {u.from ? ` · added in ${u.from}` : ''}
+                      </small>
+                    </span>
+                    <button type="button" className="rep-del" onClick={u.remove} aria-label={`Remove ${u.label}`}>
+                      <XIcon /> Remove
+                    </button>
+                  </li>
+                ))}
+              </ul>
+            ) : (
+              <div className="ds-none">Nothing is uploaded yet. Documents added in the earlier steps (identity, experience, education) appear here too.</div>
+            )}
+            {earlier.length > 0 && (
+              <>
+                <div className="subhd" style={{ marginTop: 16 }}>
+                  Still to add (these have their own step)
+                </div>
+                <ul className="ds-list ds-earlier">
+                  {earlier.map((d) => {
+                    const up = isUp(d);
+                    const optional = !requiredList.includes(d);
+                    return (
+                      <li key={d} className={up ? '' : 'pend'}>
+                        <span className={up ? 'ds-ok' : 'ds-wait'}>{up ? '✓' : '–'}</span>
+                        <span className="ds-ln">
+                          <b>{d}</b>
+                          <small>{up ? `Uploaded in step ${dedicated[d].step + 1}, ${dedicated[d].where}` : `${optional ? 'Optional. ' : ''}Add it in step ${dedicated[d].step + 1}, ${dedicated[d].where}`}</small>
+                        </span>
+                        {!up && (
+                          <button type="button" className="rep-del ds-go" onClick={() => setStep(dedicated[d].step)}>
+                            Go to step {dedicated[d].step + 1}
+                          </button>
+                        )}
+                      </li>
+                    );
+                  })}
+                </ul>
+              </>
+            )}
+            <div className="subhd" style={{ marginTop: 16 }}>
+              Upload documents
+            </div>
+            <div className="ds-grid">
+              {docList.filter((d) => !dedicated[d]).flatMap((d) => [
+                <UploadBox
+                  key={d}
+                  label={d === 'Aadhaar Card' ? 'Aadhaar Card: Front side' : d === 'Passport Copy' ? 'Passport Copy: Front page' : d}
+                  tag={requiredList.includes(d) ? 'Required' : 'Optional'}
+                  file={f(`docFile.${d}`)}
+                  onFile={(n) => setF(`docFile.${d}`, n)}
+                  expiry={EXPIRING_DOCS.includes(d) ? { value: expiries[d] ?? '', onChange: (v) => setExpiry(d, v) } : undefined}
+                  details={DOC_TEXT[d] ? { value: f(`docText.${d}`), onChange: (v) => setF(`docText.${d}`, v), label: DOC_TEXT[d].label, placeholder: DOC_TEXT[d].placeholder } : undefined}
+                />,
+                ...(d === 'Aadhaar Card' ? [<UploadBox key="Aadhaar Card (Back)" tag="Required" label="Aadhaar Card: Back side" file={f('docFile.Aadhaar Card (Back)')} onFile={(n) => setF('docFile.Aadhaar Card (Back)', n)} />] : []),
+                ...(d === 'Passport Copy' ? [<UploadBox key="Passport Copy (Back)" tag={requiredList.includes('Passport Copy') ? 'Required' : 'Optional'} label="Passport Copy: Back page" file={f('docFile.Passport Copy (Back)')} onFile={(n) => setF('docFile.Passport Copy (Back)', n)} />] : []),
+              ])}
             </div>
             {!isIndia && (
               <>
@@ -1743,7 +2431,7 @@ function Wizard({ onClose, prefill }: { onClose: () => void; prefill?: Onboardin
                 </div>
                 <div className="form-grid">
                   {['Self Approval Document Signed', 'Target Incentive Agreement'].map((d) => (
-                    <UploadBox key={d} label={d} />
+                    <UploadBox key={d} tag="Optional" label={d} file={f(`docFile.${d}`)} onFile={(n) => setF(`docFile.${d}`, n)} />
                   ))}
                 </div>
               </>

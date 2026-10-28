@@ -1,5 +1,6 @@
 'use client';
 
+import { GsLogo } from '@/components/brand/GsLogo';
 import { ReactNode, useEffect, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import { EMPLOYEES, PERSONAS } from '@/lib/data';
@@ -165,14 +166,8 @@ export default function LoginPage() {
       <div className="sg-wrap">
         <div className="sg-card">
           <section className="sg-left">
-            <div className="sg-logo" aria-label="GS">
-              <span>GS</span>
-              <i>
-                <b style={{ background: '#2b4a9b' }} />
-                <b style={{ background: '#e5434e' }} />
-                <b style={{ background: '#8bc53f' }} />
-                <b style={{ background: '#1fa5a0' }} />
-              </i>
+            <div className="sg-logo">
+              <GsLogo height={36} />
             </div>
             <h1>Sign in</h1>
             <p className="sg-sub">to access GS HRMS</p>

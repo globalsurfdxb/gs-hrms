@@ -1,5 +1,6 @@
 'use client';
 
+import { companyColor } from '@/lib/brandAssets';
 import Link from 'next/link';
 import { EMPLOYEES } from '@/lib/data';
 import { useEmployeeVersion } from '@/lib/employeeStore';
@@ -109,7 +110,7 @@ export default function OrganizationOverviewPage() {
                 <tr key={c.id}>
                   <td>
                     <div className="person">
-                      <div className="av" style={{ background: 'var(--primary-100)', color: 'var(--primary)', width: 32, height: 32, fontSize: 11 }}>
+                      <div className="av" style={{ background: `${companyColor(c.shortCode)}1f`, color: companyColor(c.shortCode), width: 32, height: 32, fontSize: 11 }}>
                         {c.shortCode.slice(0, 2).toUpperCase()}
                       </div>
                       <div>
