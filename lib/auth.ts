@@ -1,14 +1,40 @@
 import { useSyncExternalStore } from 'react';
 import { EMPLOYEES, PERSONAS } from '@/lib/data';
 import { Employee, Role } from '@/lib/types';
-import { chosenRole } from '@/lib/employeeStore';
-import { SYSTEM_ROLES } from '@/lib/access';
-import { api, ApiError, onUnauthorized } from '@/lib/api';
+import { chosenRole, logAudit } from '@/lib/employeeStore';
+import { SYSTEM_ROLES, buildCatalog, defaultGrants } from '@/lib/access';
+import { API_ENABLED, api, ApiError, onUnauthorized } from '@/lib/api';
 
 /* The signed-in person comes from the backend session (httpOnly cookie): GET /api/auth/me on load, POST
    /api/auth/dev/password-login to sign in (development: the seeded demo accounts only), POST /api/auth/logout to sign
    out. The browser never stores the session itself. Sign-in, sign-out and failed attempts are audited by the server.
-   Microsoft sign-in (/api/auth/login) replaces the password form once the Entra app registration exists. */
+   Microsoft sign-in (/api/auth/login) replaces the password form once the Entra app registration exists.
+
+   A build with no backend (API_ENABLED false, e.g. a hosted preview) keeps the old demo session instead: the signed-in
+   work email in localStorage, any password accepted, the person and role taken from the demo data. */
+
+const DEMO_KEY = 'gsit.auth';
+
+const readDemo = (): string | null => {
+  try {
+    return localStorage.getItem(DEMO_KEY);
+  } catch {
+    return null;
+  }
+};
+
+/** The demo-data session for an email, shaped like GET /api/auth/me. */
+function demoUser(email: string | null): SessionUser | null {
+  const acc = accountFor(email);
+  if (!acc) return null;
+  const e = acc.employee;
+  return { employeeId: e.id, employeeCode: e.employeeCode, fullName: e.name, email: e.email, role: acc.role, locationId: e.location, companyId: e.company, permissions: defaultGrants(acc.role, buildCatalog()) };
+}
+
+const demoState = (): AuthState => {
+  const user = demoUser(readDemo());
+  return user ? { status: 'in', email: user.email, user } : OUT;
+};
 
 /** GET /api/auth/me */
 export interface SessionUser {
@@ -43,7 +69,11 @@ let loading: Promise<void> | null = null;
 
 /** Re-read the session from the server. Anything but a valid session counts as signed out. */
 export function refreshSession(): Promise<void> {
-  loading ??= api<SessionUser>('GET', '/auth/me')
+  if (!API_ENABLED) {
+    set(demoState());
+    return Promise.resolve();
+  }
+  loading ??=api<SessionUser>('GET', '/auth/me')
     .then((user) => set({ status: 'in', email: user.email, user }))
     .catch(() => set(OUT))
     .finally(() => {
@@ -68,6 +98,7 @@ export const useAuth = (): AuthState => useSyncExternalStore(subscribe, () => st
 /** Signs in with the email + password form. Rejects with an ApiError: 401 auth.invalid_credentials, 403 no access,
     404 when the backend's dev sign-in is off. */
 export async function signIn(email: string, password: string): Promise<void> {
+  if (!API_ENABLED) return demoSignIn(email.trim().toLowerCase());
   await api('POST', '/auth/dev/password-login', { email: await backendEmail(email.trim()), password });
   await refreshSession();
 }
@@ -82,7 +113,35 @@ async function backendEmail(email: string): Promise<string> {
   return demo?.email ?? email;
 }
 
+/** No backend: any demo-data employee gets in with any password; unknown or deactivated accounts are refused. */
+function demoSignIn(email: string) {
+  const acc = accountFor(email);
+  const fail = (status: number, reason: string, message: string) => {
+    logAudit({ employeeId: `security:${email}`, field: 'Sign-in failed', to: reason, changedBy: email || 'Unknown', module: 'Security' });
+    throw new ApiError(status, 'auth.demo_refused', message);
+  };
+  if (!acc) return fail(401, 'No account with this email', 'Email or password is incorrect');
+  if (acc.employee.employmentStatus === 'Inactive') return fail(403, 'Deactivated account', 'This account has been deactivated');
+  try {
+    localStorage.setItem(DEMO_KEY, email);
+  } catch {
+    /* storage unavailable — the session just won't persist */
+  }
+  logAudit({ employeeId: acc.employee.id, field: 'Signed in', to: 'Demo session', changedBy: acc.employee.name, module: 'Security' });
+  set(demoState());
+}
+
 export async function signOut(): Promise<void> {
+  if (!API_ENABLED) {
+    const acc = accountOf(state.user);
+    if (acc) logAudit({ employeeId: acc.employee.id, field: 'Signed out', to: 'Session ended', changedBy: acc.employee.name, module: 'Security' });
+    try {
+      localStorage.removeItem(DEMO_KEY);
+    } catch {
+      /* ignore */
+    }
+    return set(OUT);
+  }
   try {
     await api('POST', '/auth/logout');
   } catch (e) {
@@ -94,6 +153,7 @@ export async function signOut(): Promise<void> {
 
 /** Demo accounts for the sign-in page (development only; 404 → none). */
 export async function demoAccounts(): Promise<{ employeeCode: string; fullName: string; email: string; role: string }[]> {
+  if (!API_ENABLED) return [];
   try {
     return await api('GET', '/auth/dev/personas');
   } catch {

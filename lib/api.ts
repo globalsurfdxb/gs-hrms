@@ -2,6 +2,9 @@
    httpOnly session cookie is sent automatically and the browser adds the Origin header the backend checks on writes.
    The contract is docs/api/openapi.json in the backend repo. */
 
+/** false in a build with no backend (next.config.ts): the app then runs on the built-in demo data. */
+export const API_ENABLED = process.env.NEXT_PUBLIC_HRMS_API === 'on';
+
 /** The backend's error body: switch on `code`, show `message`, quote `requestId` when reporting a problem. */
 export class ApiError extends Error {
   constructor(

@@ -5,7 +5,7 @@ import { ReactNode, useEffect, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import { EMPLOYEES, PERSONAS } from '@/lib/data';
 import { Role } from '@/lib/types';
-import { ApiError, errorMessage } from '@/lib/api';
+import { API_ENABLED, ApiError, errorMessage } from '@/lib/api';
 import { safeNext, signIn, useAuth } from '@/lib/auth';
 import { ENTITY_NAME } from '@/lib/org';
 
@@ -266,7 +266,7 @@ export default function LoginPage() {
             </form>
 
             <p className="sg-demo-note">
-              Development build — only the demo accounts can sign in.{' '}
+              {API_ENABLED ? 'Development build — only the demo accounts can sign in.' : 'Demo build — no password is checked until the sign-in service is connected.'}{' '}
               <button type="button" className="sg-link" onClick={() => setDemo((v) => !v)} aria-expanded={demo}>
                 {demo ? 'Hide demo accounts' : 'Use a demo account'}
               </button>
