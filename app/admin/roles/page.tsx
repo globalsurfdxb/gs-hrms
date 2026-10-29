@@ -60,39 +60,14 @@ const sameKeys = (a: string[], b: string[]) => a.length === b.length && a.every(
 const catFeatures = (c: AccessCategory) => c.features;
 const modFeatures = (m: AccessModule) => m.categories.flatMap(catFeatures);
 
-function Check({ checked, some, onChange, title }: { checked: boolean; some?: boolean; onChange: () => void; title?: string }) {
-  return (
-    <input
-      type="checkbox"
-      title={title}
-      checked={checked}
-      ref={(el) => {
-        if (el) el.indeterminate = !!some && !checked;
-      }}
-      onChange={onChange}
-      style={{ width: 15, height: 15, accentColor: 'var(--primary)', cursor: 'pointer' }}
-    />
-  );
-}
-
 /** Every permission key a feature can have: View plus whichever of Add/Edit/Delete apply. */
 const fullKeys = (f: AccessFeature) => [f.id, ...(f.actions ?? []).map((a) => permKey(f.id, a))];
-const fullStat = (perms: string[], list: AccessFeature[]) => {
-  const keys = list.flatMap(fullKeys);
-  const n = keys.filter((k) => perms.includes(k)).length;
-  return { n, all: n === keys.length && keys.length > 0, some: n > 0 };
-};
 /** Add/Edit/Delete need View, so ticking one ticks View and clearing View clears them all. */
 const flipAction = (perms: string[], f: AccessFeature, a: AccessAction): string[] => {
   if (a === 'view') return perms.includes(f.id) ? perms.filter((p) => p !== f.id && !p.startsWith(`${f.id}#`)) : [...perms, f.id];
   const k = permKey(f.id, a);
   return perms.includes(k) ? perms.filter((p) => p !== k) : [...new Set([...perms, f.id, k])];
 };
-const flipFull = (perms: string[], list: AccessFeature[]): string[] => {
-  const keys = list.flatMap(fullKeys);
-  return keys.every((k) => perms.includes(k)) ? perms.filter((p) => !keys.includes(p)) : [...new Set([...perms, ...keys])];
-};
-const countAction = (perms: string[], list: AccessFeature[], a: ExtraAction) => list.filter((f) => perms.includes(permKey(f.id, a))).length;
 
 /** How many of the features that support an action have it ticked (View applies to every feature). */
 const groupStat = (perms: string[], list: AccessFeature[], a: AccessAction) => {
@@ -142,17 +117,198 @@ function Acts({ f, perms, who, onToggle }: { f: AccessFeature; perms: string[]; 
   );
 }
 
-function Acc({ open, onToggle, level, title, meta, icon, badge, children }: { open: boolean; onToggle: () => void; level: 1 | 2; title: string; meta?: string; icon?: React.ReactNode; badge?: string; children: React.ReactNode }) {
+/* ---------- role editor ---------- */
+type Level = 'none' | 'view' | 'edit' | 'full';
+const LEVELS: { key: Level; label: string; hint: string }[] = [
+  { key: 'none', label: 'No access', hint: 'Cannot open these screens' },
+  { key: 'view', label: 'View only', hint: 'Can open and read, nothing else' },
+  { key: 'edit', label: 'View & edit', hint: 'Can view, add and edit, but not delete' },
+  { key: 'full', label: 'Full access', hint: 'Can view, add, edit and delete' },
+];
+const keysAt = (f: AccessFeature, level: Level): string[] => {
+  if (level === 'none') return [];
+  if (level === 'view') return [f.id];
+  if (level === 'full') return fullKeys(f);
+  return [f.id, ...(f.actions ?? []).filter((a) => a !== 'delete').map((a) => permKey(f.id, a))];
+};
+/** Which preset a set of features matches, or 'custom' when it is a mix. */
+const levelOf = (perms: string[], list: AccessFeature[]): Level | 'custom' => {
+  if (!list.length) return 'none';
+  const have = new Set(list.flatMap(fullKeys).filter((k) => perms.includes(k)));
+  for (const lv of ['none', 'view', 'edit', 'full'] as const) {
+    const want = new Set(list.flatMap((f) => keysAt(f, lv)));
+    if (want.size === have.size && [...want].every((k) => have.has(k))) return lv;
+  }
+  return 'custom';
+};
+const applyLevel = (perms: string[], list: AccessFeature[], level: Level): string[] => {
+  const all = new Set(list.flatMap(fullKeys));
+  return [...perms.filter((p) => !all.has(p)), ...list.flatMap((f) => keysAt(f, level))];
+};
+/** What a role can do with one feature, in plain words. */
+const describeFeature = (perms: string[], f: AccessFeature): string => {
+  if (!perms.includes(f.id)) return 'No access';
+  const extra = (f.actions ?? []).filter((a) => perms.includes(permKey(f.id, a)));
+  if (!extra.length) return f.actions?.length ? 'Can view only' : 'Can view';
+  if (extra.length === (f.actions ?? []).length) return 'Full access';
+  return `Can view, ${extra.join(', ')}`;
+};
+
+function LevelSelect({ value, onChange, label }: { value: Level | 'custom'; onChange: (l: Level) => void; label: string }) {
   return (
-    <div className={`acc acc-l${level} ${open ? 'open' : ''}`}>
-      <button type="button" className="acc-h" onClick={onToggle} aria-expanded={open}>
-        <span className="acc-chev">{open ? <ChevronDownIcon /> : <ChevronRightIcon />}</span>
-        {icon && <span className="acc-ic">{icon}</span>}
-        <span className="acc-t">{title}</span>
-        {badge && <span className="chip" style={{ padding: '2px 8px', fontSize: 11 }}>{badge}</span>}
-        {meta && <span className="acc-m">{meta}</span>}
-      </button>
-      {open && <div className="acc-b">{children}</div>}
+    <select className={`re-level lv-${value}`} value={value} onChange={(e) => onChange(e.target.value as Level)} aria-label={label} title={LEVELS.find((l) => l.key === value)?.hint ?? 'A mix of access levels'}>
+      {value === 'custom' && (
+        <option value="custom" disabled>
+          Custom mix
+        </option>
+      )}
+      {LEVELS.map((l) => (
+        <option key={l.key} value={l.key}>
+          {l.label}
+        </option>
+      ))}
+    </select>
+  );
+}
+
+/** Edit what a role can do: start from a preset, then adjust a module, a section or a single feature. */
+function RoleEditor({
+  catalog,
+  perms,
+  onChange,
+  open,
+  onOpen,
+  stepStart = 1,
+  showSummary = true,
+  startExtra,
+}: {
+  catalog: AccessModule[];
+  perms: string[];
+  onChange: (p: string[]) => void;
+  open: Record<string, boolean>;
+  onOpen: (key: string) => void;
+  /** The number shown on the first step, when something above it (such as naming the role) comes first. */
+  stepStart?: number;
+  showSummary?: boolean;
+  /** Extra ways to start, shown under the presets. */
+  startExtra?: React.ReactNode;
+}) {
+  const [q, setQ] = useState('');
+  const needle = q.trim().toLowerCase();
+  const searching = needle.length > 0;
+  const everything = catalog.flatMap(modFeatures);
+  const total = everything.length;
+  const allLevel = levelOf(perms, everything);
+  const countOf = (a: AccessAction) => everything.filter((f) => perms.includes(permKey(f.id, a))).length;
+
+  return (
+    <div className="re">
+      {showSummary && (
+      <div className="re-sum">
+        <div className="re-sum-t">
+          <b>{countOf('view')}</b> of {total} features can be opened
+        </div>
+        <div className="re-meter">
+          <i style={{ width: `${total ? (countOf('view') / total) * 100 : 0}%` }} />
+        </div>
+        <div className="re-sum-s">
+          <span><i className="act-key act-add">+</i> {countOf('add')} can add</span>
+          <span><i className="act-key act-edit">✎</i> {countOf('edit')} can edit</span>
+          <span><i className="act-key act-delete">×</i> {countOf('delete')} can delete</span>
+        </div>
+      </div>
+      )}
+
+      <div className="re-step">
+        <span className="re-n">{stepStart}</span>
+        <div>
+          <b>Pick a starting point</b>
+          <small>Applies to every module. You can fine-tune below.</small>
+        </div>
+      </div>
+      <div className="re-presets" role="group" aria-label="Starting point">
+        {LEVELS.map((l) => (
+          <button key={l.key} type="button" className={`re-preset ${allLevel === l.key ? 'on' : ''}`} aria-pressed={allLevel === l.key} onClick={() => onChange(applyLevel(perms, everything, l.key))}>
+            <b>{l.label}</b>
+            <small>{l.hint}</small>
+          </button>
+        ))}
+      </div>
+      {startExtra}
+
+      <div className="re-step">
+        <span className="re-n">{stepStart + 1}</span>
+        <div>
+          <b>Adjust by module</b>
+          <small>Open a module to set a section or one feature. The buttons are View, Add, Edit and Delete.</small>
+        </div>
+      </div>
+      <div className="re-find">
+        <SearchIcon />
+        <input value={q} onChange={(e) => setQ(e.target.value)} placeholder="Find a feature…" aria-label="Find a feature" />
+      </div>
+
+      {catalog.map((m) => {
+        const cats = m.categories
+          .map((c) => ({ ...c, features: searching ? c.features.filter((f) => `${f.label} ${c.label} ${m.name}`.toLowerCase().includes(needle)) : c.features }))
+          .filter((c) => c.features.length);
+        if (searching && !cats.length) return null;
+        const mf = modFeatures(m);
+        const granted = mf.filter((f) => perms.includes(f.id)).length;
+        const isOpen = searching || !!open[m.id];
+        const Icon = MODULE_ICON[m.id] ?? KeyIcon;
+        return (
+          <section key={m.id} className={`re-mod ${isOpen ? 'open' : ''}`}>
+            <div className="re-mh">
+              <button type="button" className="re-toggle" onClick={() => onOpen(m.id)} aria-expanded={isOpen}>
+                <span className="re-chev">{isOpen ? <ChevronDownIcon /> : <ChevronRightIcon />}</span>
+                <span className="re-ic">
+                  <Icon />
+                </span>
+                <span className="re-mt">
+                  <b>{m.name}</b>
+                  <small>
+                    {granted} of {mf.length} features open{m.common ? ' · shared by every module' : ''}
+                  </small>
+                </span>
+              </button>
+              <LevelSelect value={levelOf(perms, mf)} onChange={(l) => onChange(applyLevel(perms, mf, l))} label={`Access to all of ${m.name}`} />
+            </div>
+            {isOpen && (
+              <div className="re-mb">
+                {cats.map((c) => (
+                  <div key={c.id} className="re-cat">
+                    <div className="re-ch">
+                      <span>{c.label}</span>
+                      <LevelSelect value={levelOf(perms, c.features)} onChange={(l) => onChange(applyLevel(perms, c.features, l))} label={`Access to all of ${c.label}`} />
+                    </div>
+                    {c.features.map((f) => (
+                      <div key={f.id} className={`re-feat ${perms.includes(f.id) ? 'on' : ''}`}>
+                        <div className="re-ft">
+                          <b>{f.label}</b>
+                          <small>{describeFeature(perms, f)}</small>
+                        </div>
+                        <div className="re-chips">
+                          {ACTIONS.filter((a) => a.key === 'view' || (f.actions ?? []).includes(a.key as ExtraAction)).map((a) => {
+                            const on = perms.includes(permKey(f.id, a.key));
+                            return (
+                              <button key={a.key} type="button" className={`re-chip act-${a.key} ${on ? 'on' : ''}`} aria-pressed={on} title={a.hint} onClick={() => onChange(flipAction(perms, f, a.key))}>
+                                {on ? '✓ ' : ''}
+                                {a.label}
+                              </button>
+                            );
+                          })}
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                ))}
+              </div>
+            )}
+          </section>
+        );
+      })}
+      {searching && !catalog.some((m) => m.categories.some((c) => c.features.some((f) => `${f.label} ${c.label} ${m.name}`.toLowerCase().includes(needle)))) && <div className="re-none">No feature matches “{q.trim()}”.</div>}
     </div>
   );
 }
@@ -167,11 +323,19 @@ export default function AdminRolesPage() {
   const [open, setOpen] = useState<Record<string, boolean>>({ administration: false, employee: true });
   const [q, setQ] = useState('');
 
+  // Roles are chosen from a list on the left; the chosen role's access is edited on the right. Comparing roles side by side is a separate view.
+  const [selectedId, setSelectedId] = useState<string>(SYSTEM_ROLES[0]);
+  const [roleQ, setRoleQ] = useState('');
+  const [tab, setTab] = useState<'role' | 'compare'>('role');
+  const [cmp, setCmp] = useState<string[]>(['Super Admin', 'HR']);
+  const [detailOpen, setDetailOpen] = useState<Record<string, boolean>>({ employee: true });
+
   const [roleDrawer, setRoleDrawer] = useState(false);
   const [mode, setMode] = useState<'add' | 'edit'>('add');
   const [draft, setDraft] = useState<RoleDef>(blankRole());
   const [draftOpen, setDraftOpen] = useState<Record<string, boolean>>({});
   const [roleError, setRoleError] = useState('');
+  const [copyFrom, setCopyFrom] = useState('');
 
   const [featDrawer, setFeatDrawer] = useState(false);
   const [featLabel, setFeatLabel] = useState('');
@@ -198,6 +362,10 @@ export default function AdminRolesPage() {
         if (cancelled) return;
         setCatalog(cat);
         setRoles(list.map(toRole));
+        // Local roles are keyed by name, server roles by id: keep the same selection.
+        const idOf = (k: string) => list.find((r) => r.id === k || r.name === k)?.id;
+        setSelectedId((k) => idOf(k) ?? list[0]?.id ?? k);
+        setCmp((ks) => ks.map(idOf).filter((id): id is string => !!id));
         setConnected(true);
       })
       .catch((e) => console.warn('[roles] using local roles — the backend could not be read:', e));
@@ -217,6 +385,13 @@ export default function AdminRolesPage() {
     [catalog, q]
   );
 
+  const role = roles.find((r) => r.id === selectedId) ?? roles[0];
+  const roleColor = ROLE_COLORS[Math.max(0, roles.indexOf(role)) % ROLE_COLORS.length];
+  const roleNeedle = roleQ.trim().toLowerCase();
+  const draftFeatures = catalog.flatMap(modFeatures);
+  const draftTotal = draftFeatures.length;
+  const draftCount = (a: AccessAction) => draftFeatures.filter((f) => draft.perms.includes(permKey(f.id, a))).length;
+  const cmpRoles = roles.filter((r) => cmp.includes(r.id));
   const totalFeatures = catalog.reduce((n, m) => n + modFeatures(m).length, 0);
   const grantedOf = (r: RoleDef) => catalog.reduce((n, m) => n + modFeatures(m).filter((f) => r.perms.includes(f.id)).length, 0);
   const isOpen = (key: string, dflt = false) => (searching ? true : open[key] ?? dflt);
@@ -268,6 +443,7 @@ export default function AdminRolesPage() {
 
   /* ---------- role drawer ---------- */
   const openAdd = () => {
+    setCopyFrom('');
     setDraft(blankRole());
     setDraftOpen({});
     setMode('add');
@@ -281,8 +457,35 @@ export default function AdminRolesPage() {
     setRoleError('');
     setRoleDrawer(true);
   };
-  const draftFull = (list: AccessFeature[]) => setDraft((d) => ({ ...d, perms: flipFull(d.perms, list) }));
-  const draftAct = (f: AccessFeature, a: AccessAction) => setDraft((d) => ({ ...d, perms: flipAction(d.perms, f, a) }));
+
+  const openDuplicate = (r: RoleDef) => {
+    setCopyFrom('');
+    setDraft({ ...blankRole(), name: `${r.name} copy`, description: r.description, perms: [...r.perms] });
+    setDraftOpen({});
+    setMode('add');
+    setRoleError('');
+    setRoleDrawer(true);
+  };
+  const deleteRole = async (r: RoleDef) => {
+    if (r.system || !window.confirm(`Delete the role "${r.name}"? People who have it lose its access.`)) return;
+    if (connected) {
+      // Refused while someone still has the role (role.in_use).
+      try {
+        await rolesApi.remove(r.id);
+        setNotice('');
+        setCmp((p) => p.filter((x) => x !== r.id));
+        if (selectedId === r.id) setSelectedId(roles.find((x) => x.id !== r.id)?.id ?? '');
+      } catch (e) {
+        setNotice(`${r.name}: ${errorMessage(e)}`);
+      }
+      await reloadRoles().catch(() => undefined);
+      return;
+    }
+    logAudit({ employeeId: `role:${r.name}`, field: 'Role deleted', from: r.name, to: 'Removed', changedBy: me.name, module: 'Access' });
+    setRoles((prev) => prev.filter((x) => x.id !== r.id));
+    setCmp((p) => p.filter((x) => x !== r.id));
+    if (selectedId === r.id) setSelectedId(roles[0].id);
+  };
 
   const saveRole = async () => {
     const name = draft.name.trim();
@@ -292,7 +495,9 @@ export default function AdminRolesPage() {
       setBusy(true);
       try {
         if (mode === 'add') {
-          await rolesApi.create({ name, description: draft.description.trim(), permissions: draft.perms });
+          const created = await rolesApi.create({ name, description: draft.description.trim(), permissions: draft.perms });
+          setSelectedId(created.id);
+          setTab('role');
         } else {
           const before = roles.find((r) => r.id === draft.id);
           if (!before) return;
@@ -313,7 +518,10 @@ export default function AdminRolesPage() {
     }
     if (mode === 'add') {
       logAudit({ employeeId: `role:${name}`, field: 'Role created', to: `${name} · ${draft.perms.length} permissions`, changedBy: me.name, module: 'Access' });
-      setRoles((prev) => [...prev, { ...draft, id: `role-${Date.now()}`, name, system: false }]);
+      const id = `role-${Date.now()}`;
+      setRoles((prev) => [...prev, { ...draft, id, name, system: false }]);
+      setSelectedId(id);
+      setTab('role');
     } else {
       const before = roles.find((r) => r.id === draft.id);
       if (before) {
@@ -381,15 +589,9 @@ export default function AdminRolesPage() {
       <PageHeader
         eyebrow="Administration"
         title="Roles & Permissions"
-        description="One access model for every module. For each feature choose exactly what a role can do: View, Add, Edit or Delete."
+        description="One access model for every module. Pick a role to set what it can do (View, Add, Edit or Delete), or compare roles side by side."
         actions={
           <>
-            <Button variant="ghost" onClick={() => expandAll(true)}>
-              Expand all
-            </Button>
-            <Button variant="ghost" onClick={() => expandAll(false)}>
-              Collapse all
-            </Button>
             <Button variant="ghost" onClick={openFeature} disabled={connected} title={connected ? 'Custom features are not saved on the server yet' : undefined}>
               <PlusIcon /> Add feature
             </Button>
@@ -439,79 +641,85 @@ export default function AdminRolesPage() {
         </div>
       </div>
 
-      <div className="rp-sec">
-        <h3>Roles</h3>
-        <span>{roles.length} on file</span>
-      </div>
-      <div className="role-grid">
-        {roles.map((r, i) => {
-          const g = grantedOf(r);
-          const pct = totalFeatures ? Math.round((g / totalFeatures) * 100) : 0;
-          const c = ROLE_COLORS[i % ROLE_COLORS.length];
-          return (
-            <div key={r.id} className="role-card">
-              <div className="rc-top">
-                <div className="rc-av" style={{ background: `${c}1f`, color: c }}>
-                  {r.name.charAt(0)}
+      <div className="rl">
+        <aside className="rl-side" aria-label="Roles">
+          <div className="rl-search">
+            <SearchIcon />
+            <input value={roleQ} onChange={(e) => setRoleQ(e.target.value)} placeholder="Find a role…" aria-label="Find a role" />
+          </div>
+          <div className="rl-scroll">
+            {(['System roles', 'Custom roles'] as const).map((group) => {
+              const list = roles.filter((r) => (group === 'System roles') === r.system && (!roleNeedle || `${r.name} ${r.description}`.toLowerCase().includes(roleNeedle)));
+              if (!list.length) return null;
+              return (
+                <div key={group}>
+                  <div className="rl-grp">
+                    {group} <span>{list.length}</span>
+                  </div>
+                  {list.map((r) => {
+                    const g = grantedOf(r);
+                    const pct = totalFeatures ? Math.round((g / totalFeatures) * 100) : 0;
+                    const col = ROLE_COLORS[roles.indexOf(r) % ROLE_COLORS.length];
+                    return (
+                      <button key={r.id} type="button" className={`rl-item ${r.id === role?.id ? 'on' : ''}`} aria-current={r.id === role?.id} onClick={() => { setSelectedId(r.id); setTab('role'); }}>
+                        <span className="rl-av sm" style={{ background: `${col}1f`, color: col }}>
+                          {r.name.charAt(0)}
+                        </span>
+                        <span className="rl-it">
+                          <b>{r.name}</b>
+                          <small>
+                            {g} of {totalFeatures} features · {pct}%
+                          </small>
+                        </span>
+                      </button>
+                    );
+                  })}
                 </div>
-                <div style={{ minWidth: 0, flex: 1 }}>
-                  <div className="rc-nm">{r.name}</div>
-                  <div className="rc-sub">{r.system ? 'System role' : 'Custom role'}</div>
-                </div>
-                <button className="icon-act" onClick={() => openEdit(r)} title="Edit role">
-                  <EditIcon />
-                </button>
-                {r.system ? (
-                  <span className="icon-act" title="System roles can't be deleted" style={{ cursor: 'default', color: 'var(--faint)' }}>
-                    <ShieldIcon />
-                  </span>
-                ) : (
-                  <button
-                    className="icon-act"
-                    onClick={async () => {
-                      if (connected) {
-                        if (!window.confirm(`Delete the role ${r.name}?`)) return;
-                        // Refused while someone still has the role (role.in_use).
-                        try {
-                          await rolesApi.remove(r.id);
-                          setNotice('');
-                        } catch (e) {
-                          setNotice(`${r.name}: ${errorMessage(e)}`);
-                        }
-                        await reloadRoles().catch(() => undefined);
-                        return;
-                      }
-                      logAudit({ employeeId: `role:${r.name}`, field: 'Role deleted', from: r.name, to: 'Removed', changedBy: me.name, module: 'Access' });
-                      setRoles((prev) => prev.filter((x) => x.id !== r.id));
-                    }}
-                    title="Delete role"
-                  >
-                    <XIcon />
-                  </button>
-                )}
-              </div>
-              <div className="rc-desc">{r.description || 'No description yet.'}</div>
-              <div className="rc-meter">
-                <i style={{ width: `${pct}%`, background: c }} />
-              </div>
-              <div className="rc-pct">
-                <b>{g}</b> of {totalFeatures} features · {pct}%
-              </div>
-              <div className="rc-acts">
-                <span title={`Features ${r.name} can view`}>
-                  <b>{g}</b>
-                  <em>View</em>
+              );
+            })}
+            {!roles.some((r) => !roleNeedle || `${r.name} ${r.description}`.toLowerCase().includes(roleNeedle)) && <div className="rl-none">No role matches “{roleQ.trim()}”.</div>}
+          </div>
+        </aside>
+
+        <section className="rl-main">
+          <div className="subseg" role="tablist" aria-label="Roles view">
+            <button role="tab" aria-selected={tab === 'role'} className={tab === 'role' ? 'on' : ''} onClick={() => setTab('role')}>
+              Role access
+            </button>
+            <button role="tab" aria-selected={tab === 'compare'} className={tab === 'compare' ? 'on' : ''} onClick={() => setTab('compare')}>
+              Compare roles
+            </button>
+          </div>
+
+          {tab === 'role' && role && (
+            <div className="rl-detail">
+              <div className="rl-head">
+                <span className="rl-av" style={{ background: `${roleColor}1f`, color: roleColor }}>
+                  {role.name.charAt(0)}
                 </span>
-                {EXTRA_ACTIONS.map((a) => (
-                  <span key={a} title={`Features where ${r.name} can ${a}`}>
-                    <b>{catalog.reduce((n, m) => n + countAction(r.perms, modFeatures(m), a), 0)}</b>
-                    <em>{ACTIONS.find((x) => x.key === a)?.label}</em>
-                  </span>
-                ))}
+                <div className="rl-ht">
+                  <h2>
+                    {role.name} <span className="rp-badge">{role.system ? 'System role' : 'Custom role'}</span>
+                  </h2>
+                  <p>{role.description || 'No description yet.'}</p>
+                </div>
+                <div className="rl-ha">
+                  <Button variant="ghost" onClick={() => openEdit(role)}>
+                    <EditIcon /> Edit details
+                  </Button>
+                  <Button variant="ghost" onClick={() => openDuplicate(role)}>
+                    Duplicate
+                  </Button>
+                  {!role.system && (
+                    <Button variant="ghost" onClick={() => deleteRole(role)}>
+                      <XIcon /> Delete
+                    </Button>
+                  )}
+                </div>
               </div>
               <div className="rc-mods">
                 {catalog.map((m) => {
-                  const st = stat(r.perms, modFeatures(m));
+                  const st = stat(role.perms, modFeatures(m));
                   return (
                     <span key={m.id} className={`rc-mod ${st.all ? 'full' : st.some ? 'part' : 'none'}`} title={`${m.name}: ${st.n} of ${modFeatures(m).length}`}>
                       {MODULE_SHORT[m.id] ?? m.name} <b>{st.n}</b>
@@ -519,11 +727,40 @@ export default function AdminRolesPage() {
                   );
                 })}
               </div>
+              <RoleEditor catalog={catalog} perms={role.perms} onChange={(perms) => mutate(role.id, () => perms)} open={detailOpen} onOpen={(key) => setDetailOpen((p) => ({ ...p, [key]: !p[key] }))} />
             </div>
-          );
-        })}
-      </div>
+          )}
 
+          {tab === 'compare' && (
+            <div className="rl-cmp">
+              <div className="rl-cmpbar">
+                <span className="rl-cmpt">Compare up to 4 roles</span>
+                {cmpRoles.map((r) => (
+                  <span key={r.id} className="rl-pick">
+                    {r.name}
+                    <button type="button" aria-label={`Remove ${r.name} from the comparison`} onClick={() => setCmp((p) => p.filter((x) => x !== r.id))}>
+                      <XIcon />
+                    </button>
+                  </span>
+                ))}
+                {cmpRoles.length < 4 && (
+                  <select value="" aria-label="Add a role to compare" onChange={(e) => e.target.value && setCmp((p) => [...p, e.target.value])}>
+                    <option value="">+ Add a role…</option>
+                    {roles.filter((r) => !cmp.includes(r.id)).map((r) => (
+                      <option key={r.id} value={r.id}>
+                        {r.name}
+                      </option>
+                    ))}
+                  </select>
+                )}
+                <span className="sp" />
+                <Button variant="ghost" onClick={() => expandAll(true)}>
+                  Expand all
+                </Button>
+                <Button variant="ghost" onClick={() => expandAll(false)}>
+                  Collapse all
+                </Button>
+              </div>
       <div className="rp-sec" style={{ marginTop: 26 }}>
         <h3>Access matrix</h3>
         <span>Module → category → feature. Add, Edit and Delete include View. The V A E D buttons on a module or category set that action for everything inside it.</span>
@@ -548,7 +785,7 @@ export default function AdminRolesPage() {
           </div>
         </div>
 
-        <div className="rp" style={{ ['--cols' as string]: roles.length } as React.CSSProperties}>
+        <div className="rp" style={{ ['--cols' as string]: cmpRoles.length } as React.CSSProperties}>
           <div className="rp-row rp-head">
             <div className="rp-c1">
               <b>Features</b>
@@ -556,7 +793,7 @@ export default function AdminRolesPage() {
                 {totalFeatures} across {catalog.length} modules
               </span>
             </div>
-            {roles.map((r, i) => {
+            {cmpRoles.map((r, i) => {
               const c = ROLE_COLORS[i % ROLE_COLORS.length];
               const pct = totalFeatures ? Math.round((grantedOf(r) / totalFeatures) * 100) : 0;
               return (
@@ -601,7 +838,7 @@ export default function AdminRolesPage() {
                       </div>
                     </div>
                   </div>
-                  {roles.map((r) => {
+                  {cmpRoles.map((r) => {
                     return (
                       <div key={r.id} className="rp-rc" onClick={(e) => e.stopPropagation()}>
                         <GroupActs list={mf} perms={r.perms} who={`${r.name} · ${m.name}`} onToggle={(a) => mutate(r.id, (p) => flipGroup(p, mf, a))} />
@@ -622,7 +859,7 @@ export default function AdminRolesPage() {
                             <span className="rp-ct">{c.label}</span>
                             <span className="rp-cnt">{c.features.length}</span>
                           </div>
-                          {roles.map((r) => {
+                          {cmpRoles.map((r) => {
                             return (
                               <div key={r.id} className="rp-rc" onClick={(e) => e.stopPropagation()}>
                                 <GroupActs list={c.features} perms={r.perms} who={`${r.name} · ${c.label}`} onToggle={(a) => mutate(r.id, (p) => flipGroup(p, c.features, a))} />
@@ -644,7 +881,7 @@ export default function AdminRolesPage() {
                                   </>
                                 )}
                               </div>
-                              {roles.map((r) => (
+                              {cmpRoles.map((r) => (
                                 <div key={r.id} className="rp-rc">
                                   <Acts f={fe} perms={r.perms} who={r.name} onToggle={(a) => mutate(r.id, (p) => flipAction(p, fe, a))} />
                                 </div>
@@ -677,13 +914,37 @@ export default function AdminRolesPage() {
         </div>
       </div>
 
+              {!cmpRoles.length && <div className="rl-none">Add a role above to compare.</div>}
+            </div>
+          )}
+        </section>
+      </div>
+
       <Drawer
         open={roleDrawer}
+        variant="modal"
+        wide
         onClose={() => setRoleDrawer(false)}
         title={mode === 'add' ? 'Add role' : 'Edit role'}
-        description={mode === 'add' ? 'Create a custom role and choose which features it can use in each module.' : `Editing ${draft.name || 'role'}.`}
+        description={mode === 'add' ? 'Three quick steps: name the role, pick a starting point, then fine-tune what it can do. Nothing is saved until you press Add role.' : `Editing the details of ${draft.name || 'the role'}. Nothing is saved until you press Save changes.`}
         footer={
           <>
+            {mode === 'add' && (
+              <span className="re-foot" aria-live="polite">
+                <span>
+                  <b>{draftCount('view')}</b> of {draftTotal} features
+                </span>
+                <span title="Features this role can add to">
+                  <i className="act-key act-add">+</i> {draftCount('add')}
+                </span>
+                <span title="Features this role can edit">
+                  <i className="act-key act-edit">✎</i> {draftCount('edit')}
+                </span>
+                <span title="Features this role can delete from">
+                  <i className="act-key act-delete">×</i> {draftCount('delete')}
+                </span>
+              </span>
+            )}
             <Button variant="ghost" onClick={() => setRoleDrawer(false)}>
               Cancel
             </Button>
@@ -693,6 +954,15 @@ export default function AdminRolesPage() {
           </>
         }
       >
+        {mode === 'add' && (
+          <div className="re-step first">
+            <span className="re-n">1</span>
+            <div>
+              <b>Name the role</b>
+              <small>Use a name people will recognise, such as the job it is for.</small>
+            </div>
+          </div>
+        )}
         <div className="form-grid">
           <div className="fg full">
             <label>
@@ -701,6 +971,7 @@ export default function AdminRolesPage() {
             <input
               value={draft.name}
               disabled={draft.system}
+              autoFocus={mode === 'add'}
               onChange={(e) => {
                 setDraft({ ...draft, name: e.target.value });
                 if (roleError) setRoleError('');
@@ -708,6 +979,7 @@ export default function AdminRolesPage() {
               placeholder="e.g. Finance Approver"
               style={roleError ? { borderColor: 'var(--danger)' } : undefined}
             />
+            {roleError && <div className="hint" style={{ color: 'var(--danger)' }}>{roleError}</div>}
             {draft.system && <div className="hint">System role names can&apos;t be renamed.</div>}
           </div>
           <div className="fg full">
@@ -715,49 +987,53 @@ export default function AdminRolesPage() {
             <input value={draft.description} onChange={(e) => setDraft({ ...draft, description: e.target.value })} placeholder="What this role is for" />
           </div>
         </div>
-        {roleError && <div style={{ marginTop: 6, fontSize: 12, color: 'var(--danger)' }}>{roleError}</div>}
 
-        <div style={{ marginTop: 18 }}>
-          {catalog.map((m) => {
-            const mf = modFeatures(m);
-            const ms = stat(draft.perms, mf);
-            const mfl = fullStat(draft.perms, mf);
-            const Icon = MODULE_ICON[m.id] ?? KeyIcon;
-            return (
-              <Acc key={m.id} level={1} open={!!draftOpen[m.id]} onToggle={() => setDraftOpen((o) => ({ ...o, [m.id]: !o[m.id] }))} icon={<Icon />} title={m.name} badge={m.common ? 'Common' : undefined} meta={`${ms.n}/${mf.length}`}>
-                <label className="perm-item" style={{ marginBottom: 8, background: 'var(--bg)' }}>
-                  <Check checked={mfl.all} some={mfl.some} onChange={() => draftFull(mf)} />
-                  <div className="nm">Full access to the entire module</div>
-                </label>
-                {m.categories.map((c) => {
-                  const cs = stat(draft.perms, c.features);
-                  const cfl = fullStat(draft.perms, c.features);
-                  const key = `${m.id}/${c.id}`;
-                  return (
-                    <Acc key={c.id} level={2} open={!!draftOpen[key]} onToggle={() => setDraftOpen((o) => ({ ...o, [key]: !o[key] }))} title={c.label} meta={`${cs.n}/${c.features.length}`}>
-                      <label className="perm-item" style={{ marginBottom: 6, background: 'var(--bg)' }}>
-                        <Check checked={cfl.all} some={cfl.some} onChange={() => draftFull(c.features)} />
-                        <div className="nm">Full access to all in {c.label}</div>
-                      </label>
-                      <div className="perm-grid" style={{ gridTemplateColumns: '1fr' }}>
-                        {c.features.map((f) => (
-                          <div key={f.id} className="perm-item perm-acts">
-                            <div className="nm">{f.label}</div>
-                            <Acts f={f} perms={draft.perms} who={draft.name || 'Role'} onToggle={(a) => draftAct(f, a)} />
-                          </div>
-                        ))}
-                      </div>
-                    </Acc>
-                  );
-                })}
-              </Acc>
-            );
-          })}
-        </div>
+        {mode === 'add' ? (
+          <RoleEditor
+            catalog={catalog}
+            perms={draft.perms}
+            onChange={(perms) => {
+              setCopyFrom('');
+              setDraft((d) => ({ ...d, perms }));
+            }}
+            open={draftOpen}
+            onOpen={(key) => setDraftOpen((p) => ({ ...p, [key]: !p[key] }))}
+            stepStart={2}
+            showSummary={false}
+            startExtra={
+              <div className="re-copy">
+                <label htmlFor="re-copy-from">Or copy an existing role</label>
+                <select
+                  id="re-copy-from"
+                  value={copyFrom}
+                  onChange={(e) => {
+                    const src = roles.find((r) => r.id === e.target.value);
+                    setCopyFrom(e.target.value);
+                    if (src) setDraft((d) => ({ ...d, perms: [...src.perms] }));
+                  }}
+                >
+                  <option value="">Choose a role to copy…</option>
+                  {roles.map((r) => (
+                    <option key={r.id} value={r.id}>
+                      {r.name} · {grantedOf(r)} features
+                    </option>
+                  ))}
+                </select>
+                <small>{copyFrom ? 'Copied. Fine-tune it below.' : 'Starts with exactly what that role can do.'}</small>
+              </div>
+            }
+          />
+        ) : (
+          <div className="note-box" style={{ marginTop: 14 }}>
+            <ShieldIcon />
+            <div>This changes the name and description only. Set what the role can do on the role page.</div>
+          </div>
+        )}
       </Drawer>
 
       <Drawer
         open={featDrawer}
+        variant="modal"
         onClose={() => setFeatDrawer(false)}
         title="Add feature"
         description="Register a new page or section under a module and category so its access can be controlled per role."

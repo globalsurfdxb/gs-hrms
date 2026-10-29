@@ -1,5 +1,7 @@
 'use client';
 
+import { useState } from 'react';
+import Link from 'next/link';
 import { Card, CardHeader, EmptyState, Button } from '@/components/ui/Card';
 import { StatStrip } from '@/components/ui/StatStrip';
 import { DownloadIcon, PeopleIcon, ReportsIcon, StarIcon, UserXIcon, ClockIcon } from '@/components/icons';
@@ -7,13 +9,41 @@ import { HiringHeader, empName } from '@/components/hiring/HiringBits';
 import { useScoped } from '@/components/hiring/useScoped';
 import { downloadCsv } from '@/lib/csv';
 import { daysBetween, todayISO } from '@/lib/dates';
-import { candById, isActiveApp } from '@/lib/hiringStore';
+import { candById, isActiveApp, recruiterIdOf } from '@/lib/hiringStore';
 import { SOURCES, STAGES } from '@/lib/hiringTypes';
 
 /** Funnel, sources, rejection reasons and ageing for the chosen location. Phase 1 keeps these to the data the pipeline already records. */
 export default function HiringReportsPage() {
-  const { s, jobs, applications, offers, loc } = useScoped();
+  const { s, jobs: allJobs, applications: allApplications, offers: allOffers, loc } = useScoped();
   const today = todayISO();
+  const [recruiter, setRecruiter] = useState('All');
+
+  // Everything below follows the chosen recruiter, so a recruiter's own funnel, sources and ageing can be read on their own.
+  const recruiters = [...new Set(allJobs.map((j) => recruiterIdOf(j) ?? ''))].filter(Boolean);
+  const picked = recruiters.includes(recruiter) ? recruiter : 'All';
+  const jobs = picked === 'All' ? allJobs : allJobs.filter((j) => recruiterIdOf(j) === picked);
+  const jobIds = new Set(jobs.map((j) => j.id));
+  const applications = allApplications.filter((a) => jobIds.has(a.jobId));
+  const appIds = new Set(applications.map((a) => a.id));
+  const offers = allOffers.filter((o) => appIds.has(o.applicationId));
+
+  const recruiterRows = recruiters.map((id) => {
+    const mine = allJobs.filter((j) => recruiterIdOf(j) === id);
+    const ids = new Set(mine.map((j) => j.id));
+    const apps = allApplications.filter((a) => ids.has(a.jobId));
+    const appSet = new Set(apps.map((a) => a.id));
+    const offs = allOffers.filter((o) => appSet.has(o.applicationId));
+    return {
+      id,
+      jobs: mine,
+      open: mine.filter((j) => j.status === 'Open').length,
+      active: apps.filter(isActiveApp).length,
+      applied: apps.length,
+      interviews: apps.filter((a) => a.history.some((h) => h.to === 'Technical Interview' || h.to === 'HR Interview') || STAGES.indexOf(a.stage) >= 2).length,
+      offers: offs.filter((o) => o.status !== 'Draft' && o.status !== 'Revoked').length,
+      hires: offs.filter((o) => o.status === 'Accepted').length,
+    };
+  });
 
   // A candidate has "reached" a stage if their history ever entered it (or they sit at or beyond it).
   const reached = (stage: (typeof STAGES)[number]) => applications.filter((a) => a.history.some((h) => h.to === stage) || STAGES.indexOf(a.stage) >= STAGES.indexOf(stage)).length;
@@ -53,11 +83,12 @@ export default function HiringReportsPage() {
   });
 
   const exportCsv = () => {
-    downloadCsv(`hiring-funnel-${loc}.csv`, ['Section', 'Item', 'Count', 'Detail'], [
+    downloadCsv(`hiring-funnel-${loc}${picked === 'All' ? '' : `-${empName(picked).toLowerCase().replace(/\s+/g, '-')}`}.csv`, ['Section', 'Item', 'Count', 'Detail'], [
       ...funnel.map((f) => ['Funnel', f.stage, f.count, `${Math.round((f.count / top) * 100)}% of applied`]),
       ...sources.map((r) => ['Source', r.source, r.applied, `${r.interviewed} interviewed, ${r.hires} hired`]),
       ...reasonRows.map(([r, n]) => ['Rejection reason', r, n, '']),
       ...ageing.map((a) => ['Open position ageing', `${a.job.code} ${a.job.title}`, a.days, `${a.active} active candidates`]),
+      ...recruiterRows.map((r) => ['Recruiter', empName(r.id), r.jobs.length, `${r.open} open, ${r.active} active candidates, ${r.interviews} interviewed, ${r.offers} offers, ${r.hires} hired: ${r.jobs.map((j) => j.code).join(' ')}`]),
     ]);
   };
 
@@ -65,9 +96,19 @@ export default function HiringReportsPage() {
     <div className="hm-page">
       <HiringHeader
         title="Reports"
-        description="How the pipeline converts, where candidates come from and why they leave."
+        description={picked === 'All' ? 'How the pipeline converts, where candidates come from and why they leave.' : `Showing only the jobs recruited by ${empName(picked)}.`}
         actions={
           <>
+            {recruiters.length > 0 && (
+              <select className="hm-rsel" value={picked} onChange={(e) => setRecruiter(e.target.value)} aria-label="Recruiter">
+                <option value="All">All recruiters</option>
+                {recruiters.map((id) => (
+                  <option key={id} value={id}>
+                    {empName(id)}
+                  </option>
+                ))}
+              </select>
+            )}
             <Button onClick={exportCsv} disabled={!applications.length}>
               <DownloadIcon /> Export CSV
             </Button>
@@ -84,7 +125,60 @@ export default function HiringReportsPage() {
         ]}
       />
 
-      <div className="hm-grid hm-grid-wide">
+      <Card>
+        <CardHeader title="Recruiters" sub="Each recruiter's jobs and results. Choose one to see the whole report for their jobs only." />
+        {!recruiterRows.length ? (
+          <EmptyState icon={<PeopleIcon />} title="No jobs yet" description="Recruiters appear once a job is created." />
+        ) : (
+          <div className="tx-scroll wide">
+            <table>
+              <thead>
+                <tr>
+                  <th>Recruiter</th>
+                  <th>Jobs</th>
+                  <th>Active candidates</th>
+                  <th>Interviewed</th>
+                  <th>Offers</th>
+                  <th>Hired</th>
+                  <th />
+                </tr>
+              </thead>
+              <tbody>
+                {recruiterRows.map((r) => (
+                  <tr key={r.id} className={picked === r.id ? 'hm-row-on' : ''}>
+                    <td>
+                      <b>{empName(r.id)}</b>
+                      <div className="tx-s faint">
+                        {r.open} open · {r.jobs.length} in total
+                      </div>
+                    </td>
+                    <td>
+                      <div className="hm-chips">
+                        {r.jobs.map((j) => (
+                          <Link key={j.id} href={`/hiring/jobs/${j.id}`} className="hm-chip on" title={`${j.title} · ${j.status}`}>
+                            {j.code} {j.title}
+                          </Link>
+                        ))}
+                      </div>
+                    </td>
+                    <td className="mono">{r.active}</td>
+                    <td className="mono">{r.interviews}</td>
+                    <td className="mono">{r.offers}</td>
+                    <td className="mono">{r.hires}</td>
+                    <td style={{ textAlign: 'right' }}>
+                      <Button size="sm" variant={picked === r.id ? 'primary' : 'ghost'} onClick={() => setRecruiter(picked === r.id ? 'All' : r.id)}>
+                        {picked === r.id ? 'Show all' : 'Filter report'}
+                      </Button>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        )}
+      </Card>
+
+      <div className="hm-grid hm-grid-wide row-gap">
         <Card>
           <CardHeader title="Funnel conversion" sub="Candidates who reached each stage" />
           {!applications.length ? (

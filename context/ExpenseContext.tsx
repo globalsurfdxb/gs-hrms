@@ -6,6 +6,7 @@ import { Employee, ExpenseCategory, ExpenseClaim, Role } from '@/lib/types';
 import { useApp } from '@/context/AppContext';
 import { logAudit } from '@/lib/employeeStore';
 import { logTask } from '@/lib/activity';
+import { pushNotice } from '@/lib/notifications';
 
 /** Where a claim is routed for approval. The General Manager, and anyone with no manager on record, route to Super Admin, never HR. */
 export function claimRoute(claimant: Employee): { label: string; seniorOnly: boolean } {
@@ -89,13 +90,17 @@ export function ExpenseProvider({ children }: { children: React.ReactNode }) {
       submitClaim: (c) => {
         const id = `exp-${Date.now()}`;
         logTask('Expense', 'Expense claim submitted', id, `${c.category} · ${c.currency} ${c.amount.toLocaleString('en-US')}`, { employeeId: c.employeeId });
-        setClaims((p) => [{ ...c, id, status: 'Pending', submittedOn: REFERENCE_TODAY }, ...p]);
+        const claimant = employeeById(c.employeeId);
+        const route = claimant ? claimRoute(claimant) : { seniorOnly: true };
+        pushNotice({ id: `ex-act-${id}`, kind: 'expense', tone: 'pending', title: `${claimant?.name ?? 'Someone'} · ${c.currency} ${c.amount.toLocaleString('en-US')} ${c.category} claim needs approval`, sub: c.project || c.description, href: '/expense/approvals', toRoles: route.seniorOnly ? ['Super Admin'] : ['Super Admin', 'HR', 'Office Admin'], toIds: !route.seniorOnly && claimant?.reportingManagerId ? [claimant.reportingManagerId] : [], by: c.employeeId });
+        setClaims((p) => [{ ...c, id, status: 'Pending', submittedOn: REFERENCE_TODAY, submittedAt: new Date().toISOString() }, ...p]);
         return id;
       },
       canDecide,
       decide: (id, status, by, note) => {
         const target = claims.find((x) => x.id === id);
         if (!target || target.status !== 'Pending' || !canDecide(target)) return;
+        pushNotice({ kind: 'expense', tone: status === 'Approved' ? 'active' : 'expired', title: `Your ${target.category} claim was ${status === 'Approved' ? 'approved' : 'rejected'}`, sub: `${target.currency} ${target.amount.toLocaleString('en-US')} · decided by ${by}${note.trim() ? `: ${note.trim()}` : ''}`, href: '/expense/claims', toIds: [target.employeeId], by: currentEmployeeId });
         logAudit({ employeeId: `expense:${id}`, field: `Expense claim ${status === 'Approved' ? 'approved' : 'rejected'}`, from: 'Pending', to: status, changedBy: by, module: 'Expense' });
         setClaims((p) => p.map((x) => (x.id === id && x.status === 'Pending' ? { ...x, status, decidedOn: REFERENCE_TODAY, decidedBy: by, note: note.trim() || undefined } : x)));
       },

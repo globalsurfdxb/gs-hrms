@@ -16,7 +16,7 @@ export interface LocationDef {
   system: boolean;
 }
 
-export type Role = 'Super Admin' | 'HR' | 'Office Admin' | 'Team Lead' | 'Employee';
+export type Role = 'Super Admin' | 'HR' | 'Office Admin' | 'Talent Acquisition Manager' | 'Team Lead' | 'Recruiter' | 'Employee';
 
 export type EmploymentStatus = 'Active' | 'Onboarding' | 'Offboarding' | 'Inactive';
 
@@ -31,6 +31,13 @@ export interface EmployeeDocument {
 }
 
 export interface EmployeeProfile {
+  /** India records also keep the name split into parts (the full name stays as per passport). */
+  /** India: the name exactly as it is printed on the passport and on the Aadhaar card. */
+  passportName?: string;
+  aadhaarName?: string;
+  firstName?: string;
+  middleName?: string;
+  lastName?: string;
   gender: string;
   maritalStatus: string;
   bloodGroup: string;
@@ -47,15 +54,24 @@ export interface EmployeeProfile {
   labourCardExpiry?: string;
   aadhaar?: string;
   pan?: string;
+  /** Name exactly as printed on the PAN card. */
+  panName?: string;
   uan?: string;
+  /** India PF: already enrolled (Yes/No), the mobile linked to the UAN, an earlier PF member ID, EPS eligibility. */
+  pfEnrolled?: string;
+  uanMobile?: string;
+  pfMemberId?: string;
+  epsEligibility?: string;
   paymentMode: string;
   emergency: { group: string; name: string; relationship: string; mobile: string }[];
   totalExperience: string;
-  experience: { company: string; location: string; from: string; to: string; title: string; mode: string }[];
-  education: { qualification: string; institution: string; course: string; field: string; startYear: string; endYear: string }[];
-  family: { name: string; relationship: string; occupation: string }[];
+  experience: { company: string; location: string; from: string; to: string; title: string; mode: string; document?: string }[];
+  education: { qualification: string; institution: string; course: string; field: string; startYear: string; endYear: string; document?: string }[];
+  family: { name: string; relationship: string; occupation: string; dob?: string }[];
   salary: { currency: string; earnings: { label: string; amount: number }[]; deductions: { label: string; amount: number }[]; total: number; net: number };
   uploadedDocs: string[];
+  /** Text entered with a document: the passport or Aadhaar details, the certificate's qualification and institution. */
+  documentDetails?: { name: string; details: string }[];
 }
 
 export interface BankDetails {
@@ -63,6 +79,8 @@ export interface BankDetails {
   accountNumber: string;
   bankName: string;
   branchCode: string; // IFSC for Kochi, IBAN/routing for Dubai
+  /** India: the bank branch. */
+  branchName?: string;
   currency: 'AED' | 'INR';
 }
 
@@ -154,10 +172,12 @@ export interface OffboardingRequest {
 export interface EmployeeRequest {
   id: string;
   employeeId: string;
-  type: 'Information Update' | 'Document Request' | 'Address Change' | 'Bank Detail Update';
+  type: 'Information Update' | 'Document Request' | 'Address Change' | 'Bank Detail Update' | 'Other Request';
   details: string;
   status: 'Pending' | 'Approved' | 'Rejected';
   raisedOn: string;
+  /** The exact moment it was raised (requests raised in the app). */
+  raisedAt?: string;
   routedTo: 'HR' | 'Manager';
   /** Proposed new values for the employee record (keys from the employee form, e.g. bankName). Applied only on approval. */
   changes?: Record<string, string>;
@@ -263,6 +283,8 @@ export interface ExpenseClaim {
   description: string;
   status: 'Pending' | 'Approved' | 'Rejected';
   submittedOn?: string;
+  /** The exact moment it was submitted (claims submitted in the app). */
+  submittedAt?: string;
   receipt?: string;
   decidedOn?: string;
   decidedBy?: string;

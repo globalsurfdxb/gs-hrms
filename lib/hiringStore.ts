@@ -1,10 +1,13 @@
+import { docsCleared, getDocRequests } from '@/lib/hiringDocs';
 import { useSyncExternalStore } from 'react';
 import { addDays, daysBetween, todayISO } from '@/lib/dates';
 import { Role } from '@/lib/types';
 import { logAudit } from '@/lib/employeeStore';
+import { EMPLOYEES } from '@/lib/data';
 import { chainSteps } from '@/lib/workflow';
 import { seedHiring } from '@/lib/hiringSeed';
-import { HiringLevel } from '@/lib/hiringAccess';
+import { pushNotice } from '@/lib/notifications';
+import { HiringLevel, canChooseRecruiter, isTalentManager, talentManager } from '@/lib/hiringAccess';
 import {
   Application,
   ApprovalStep,
@@ -43,9 +46,14 @@ function load() {
   loaded = true;
   try {
     const raw = localStorage.getItem(KEY);
-    if (!raw) return;
+    if (!raw) {
+      state = withHires(state);
+      return;
+    }
     const parsed = JSON.parse(raw) as Partial<HiringState>;
-    if (parsed.requisitions && parsed.jobs && parsed.candidates && parsed.applications && parsed.interviews && parsed.offers) state = parsed as HiringState;
+    if (parsed.requisitions && parsed.jobs && parsed.candidates && parsed.applications && parsed.interviews && parsed.offers) {
+      state = withHires(parsed as HiringState);
+    }
   } catch {
     /* unreadable saved data: keep the sample data */
   }
@@ -97,7 +105,67 @@ const nowIso = () => {
   const p = (n: number) => String(n).padStart(2, '0');
   return `${todayISO()}T${p(d.getHours())}:${p(d.getMinutes())}:00`;
 };
+/** An accepted offer is a hire: the candidate moves to Hired and the position counts as filled (the job becomes Filled
+    when every approved position is). Returns the data unchanged when the candidate is already Hired. */
+function applyHire(st: HiringState, offerId: string, by: string): HiringState {
+  const o = st.offers.find((x) => x.id === offerId);
+  const a = o && st.applications.find((x) => x.id === o.applicationId);
+  const j = a && st.jobs.find((x) => x.id === a.jobId);
+  if (!o || !a || !j || a.stage === 'Hired') return st;
+  const stamp = nowIso();
+  const filled = j.filled + 1;
+  const jobStatus: JobStatus = filled >= j.positions ? 'Filled' : j.status;
+  const cand = st.candidates.find((c) => c.id === a.candidateId);
+  return {
+    ...st,
+    applications: st.applications.map((x) =>
+      x.id === a.id ? { ...x, stage: 'Hired', exit: undefined, exitFrom: undefined, exitReason: undefined, exitNote: undefined, history: [...x.history, { id: uid('sc'), at: stamp, by, from: x.stage, to: 'Hired', note: `Offer ${o.code} accepted` }] } : x,
+    ),
+    jobs: st.jobs.map((x) =>
+      x.id === j.id
+        ? {
+            ...x,
+            filled,
+            status: jobStatus,
+            updatedAt: stamp,
+            history: [
+              ...(x.history ?? []),
+              { id: uid('jh'), at: stamp, by, text: `${cand?.name ?? 'Candidate'} accepted ${o.code}: ${filled} of ${j.positions} positions filled` },
+              ...(jobStatus !== j.status ? [{ id: uid('jh'), at: stamp, by: 'System', text: `Status changed from ${j.status} to ${jobStatus}` }] : []),
+            ],
+          }
+        : x,
+    ),
+  };
+}
+
+/** Offers accepted before an acceptance counted as a hire (older saved data, and the sample data): bring them in line. */
+function withHires(st: HiringState): HiringState {
+  let next = st;
+  st.offers.filter((o) => o.status === 'Accepted' && !o.employeeId).forEach((o) => (next = applyHire(next, o.id, 'System')));
+  return next;
+}
+
 const nextCode = (prefix: string, existing: string[]) => `${prefix}-${String(existing.reduce((m, c) => Math.max(m, parseInt(c.replace(/\D/g, ''), 10) || 0), 0) + 1).padStart(4, '0')}`;
+
+const HR_ROLES: Role[] = ['HR', 'Office Admin', 'Super Admin'];
+
+/** Tell whoever must act on the requisition's current approval step. */
+function notifyStep(r: Requisition, by: string) {
+  const step = r.approvals.find((a) => a.status === 'Pending');
+  if (!step) return;
+  pushNotice({
+    id: `req-act-${r.id}`,
+    kind: 'hiring',
+    tone: 'pending',
+    title: `${r.code} needs your approval`,
+    sub: `${r.title} · ${r.positions} position${r.positions === 1 ? '' : 's'} · ${step.label} step`,
+    href: `/hiring/requisitions/${r.id}`,
+    toIds: step.label === 'Hiring Manager' ? [r.hiringManagerId] : [],
+    toRoles: step.label === 'Hiring Manager' ? [] : step.label === 'HR' ? HR_ROLES : ['Super Admin'],
+    by,
+  });
+}
 
 const audit = (id: string, field: string, from: string | undefined, to: string, by: string) => logAudit({ employeeId: `hiring:${id}`, field, from, to, changedBy: by, module: 'Hiring' });
 
@@ -114,11 +182,18 @@ export function canDecideStep(label: string, role: Role, meId: string, req: Requ
   return false;
 }
 
+/** A job is someone's own when they are its hiring manager or its recruiter. */
+export const isMyJob = (j: Job, meId: string) => j.hiringManagerId === meId || recruiterIdOf(j) === meId;
+
 export function visibleRequisitions(s: HiringState, level: HiringLevel, meId: string) {
-  return level === 'full' ? s.requisitions : level === 'manager' ? s.requisitions.filter((r) => r.hiringManagerId === meId || r.createdById === meId) : [];
+  return level === 'full'
+    ? s.requisitions
+    : level === 'manager'
+      ? s.requisitions.filter((r) => r.hiringManagerId === meId || r.createdById === meId || s.jobs.some((j) => j.requisitionId === r.id && isMyJob(j, meId)))
+      : [];
 }
 export function visibleJobs(s: HiringState, level: HiringLevel, meId: string) {
-  return level === 'full' ? s.jobs : level === 'manager' ? s.jobs.filter((j) => j.hiringManagerId === meId) : [];
+  return level === 'full' ? s.jobs : level === 'manager' ? s.jobs.filter((j) => isMyJob(j, meId)) : [];
 }
 
 /* ---------------------------------------------------------------------- lookups */
@@ -144,7 +219,7 @@ export const isPanelistFor = (s: HiringState, candId: string, meId: string) => a
 export function canViewCandidate(s: HiringState, level: HiringLevel, meId: string, candId: string): boolean {
   if (level === 'full') return true;
   const apps = appsForCandidate(s, candId);
-  if (level === 'manager' && apps.some((a) => jobById(s, a.jobId)?.hiringManagerId === meId)) return true;
+  if (level === 'manager' && apps.some((a) => { const j = jobById(s, a.jobId); return !!j && isMyJob(j, meId); })) return true;
   return isPanelistFor(s, candId, meId);
 }
 
@@ -155,6 +230,8 @@ export interface RequisitionInput {
   companyId: string;
   departmentId: string;
   department: string;
+  designationTitle?: string;
+  newDesignation?: boolean;
   location: string;
   positions: number;
   employmentType: EmploymentKind;
@@ -216,6 +293,7 @@ export function submitRequisition(id: string, actor: Actor): Result<{ requisitio
   const next: Requisition = { ...r, status: 'Pending Approval', approvals: steps, updatedAt: stamp };
   commit({ ...state, requisitions: state.requisitions.map((x) => (x.id === id ? next : x)) });
   audit(id, 'Requisition submitted', r.status, 'Pending Approval', actor.name);
+  notifyStep(next, actor.id);
   return { ok: true, requisition: next };
 }
 
@@ -236,6 +314,14 @@ export function decideRequisition(id: string, decision: 'Approved' | 'Rejected',
   const status: RequisitionStatus = decision === 'Rejected' ? 'Rejected' : idx === r.approvals.length - 1 ? 'Approved' : 'Pending Approval';
   commit({ ...state, requisitions: state.requisitions.map((x) => (x.id === id ? { ...x, approvals, status, updatedAt: stamp } : x)) });
   audit(id, `Requisition ${step.label} step ${decision.toLowerCase()}`, r.status, status, actor.name);
+  if (status === 'Approved' && r.newDesignation && r.designationTitle) audit(id, 'New designation approved', '—', `${r.designationTitle} added to ${r.department}`, actor.name);
+  const decided = { ...r, approvals, status };
+  if (status === 'Pending Approval') notifyStep(decided, actor.id);
+  else {
+    const ok = status === 'Approved';
+    pushNotice({ kind: 'hiring', tone: ok ? 'active' : 'expired', title: `${r.code} was ${ok ? 'approved' : 'rejected'}`, sub: `${r.title}${ok ? '. A job can now be created from it.' : `. ${note.trim()}`}`, href: `/hiring/requisitions/${id}`, toIds: [r.createdById, r.hiringManagerId], by: actor.id });
+    if (ok) pushNotice({ kind: 'hiring', tone: 'info', title: `${r.code} is approved: create the job`, sub: `${r.title} · ${r.positions} position${r.positions === 1 ? '' : 's'}`, href: `/hiring/requisitions/${id}`, toRoles: [...HR_ROLES, 'Talent Acquisition Manager'], by: actor.id });
+  }
   return { ok: true };
 }
 
@@ -259,6 +345,7 @@ export interface JobInput {
   referralEligible: boolean;
   closingDate: string;
   designationTitle: string;
+  recruiterId: string;
   publish: boolean;
 }
 
@@ -270,6 +357,9 @@ export function createJob(requisitionId: string, input: JobInput, actor: Actor):
   if (jobForRequisition(state, requisitionId)) return fail('This requisition already has a job.');
   const stamp = nowIso();
   const { publish, ...rest } = input;
+  // A new job goes to the Talent Acquisition Manager, who chooses the recruiter. They (and a Super Admin) can choose right away.
+  const ta = talentManager(EMPLOYEES);
+  const handOver = !!ta && !isTalentManager(EMPLOYEES.find((e) => e.id === actor.id)) && actor.role !== 'Talent Acquisition Manager' && actor.role !== 'Super Admin';
   const job: Job = {
     id: uid('job'),
     code: nextCode('JOB', state.jobs.map((x) => x.code)),
@@ -283,6 +373,8 @@ export function createJob(requisitionId: string, input: JobInput, actor: Actor):
     filled: 0,
     employmentType: r.employmentType,
     ...rest,
+    ...(ta ? { taManagerId: ta.id } : {}),
+    ...(handOver ? { recruiterId: '' } : {}),
     status: publish ? 'Open' : 'Draft',
     hiringManagerId: r.hiringManagerId,
     budgetMin: r.budgetMin,
@@ -291,11 +383,44 @@ export function createJob(requisitionId: string, input: JobInput, actor: Actor):
     createdBy: actor.name,
     createdAt: stamp,
     updatedAt: stamp,
-    history: [{ id: uid('jh'), at: stamp, by: actor.name, text: `Job created from ${r.code} as ${publish ? 'Open' : 'Draft'}` }],
+    history: [
+      { id: uid('jh'), at: stamp, by: actor.name, text: `Job created from ${r.code} as ${publish ? 'Open' : 'Draft'}` },
+      ...(handOver && ta ? [{ id: uid('jh'), at: stamp, by: actor.name, text: `Handed to ${ta.name} (Talent Acquisition Manager) to choose the recruiter` }] : []),
+    ],
   };
   commit({ ...state, jobs: [job, ...state.jobs] });
   audit(job.id, 'Job created', '—', `${job.code} · ${job.title} (${job.status})`, actor.name);
+  if (handOver && ta) {
+    audit(job.id, 'Job handed to Talent Acquisition', '—', ta.name, actor.name);
+    pushNotice({ kind: 'hiring', tone: 'info', title: `${job.code} needs a recruiter`, sub: `${job.title} · choose who will run it`, href: `/hiring/jobs/${job.id}`, toIds: [ta.id], by: actor.id });
+  }
   return { ok: true, job };
+}
+
+/** The recruiter of a job; for jobs saved before recruiters existed, the person who created it. */
+export const recruiterIdOf = (j: Job): string | undefined => j.recruiterId ?? EMPLOYEES.find((e) => e.name === j.createdBy)?.id;
+
+/** The recruiter's name for lists and headers, or that the Talent Acquisition Manager has yet to choose one. */
+export const recruiterLabel = (j: Job): string => {
+  const id = recruiterIdOf(j);
+  if (id) return EMPLOYEES.find((e) => e.id === id)?.name ?? '—';
+  const ta = EMPLOYEES.find((e) => e.id === j.taManagerId);
+  return ta ? `Not chosen yet (${ta.name})` : 'Not chosen yet';
+};
+
+export function setJobRecruiter(id: string, recruiterId: string, actor: Actor): Result {
+  const j = jobById(state, id);
+  if (!j) return fail('Job not found.');
+  if (!canChooseRecruiter(actor, j, EMPLOYEES)) return fail('Only the Talent Acquisition Manager can choose the recruiter for this job.');
+  const next = EMPLOYEES.find((e) => e.id === recruiterId);
+  if (!next) return fail('Choose a recruiter.');
+  const prev = EMPLOYEES.find((e) => e.id === recruiterIdOf(j));
+  if (prev?.id === next.id) return { ok: true };
+  const stamp = nowIso();
+  commit({ ...state, jobs: state.jobs.map((x) => (x.id === id ? { ...x, recruiterId, updatedAt: stamp, history: [...(x.history ?? []), { id: uid('jh'), at: stamp, by: actor.name, text: prev ? `Recruiter changed from ${prev.name} to ${next.name}` : `${next.name} chosen as the recruiter` }] } : x)) });
+  audit(id, prev ? 'Job recruiter' : 'Job recruiter chosen', prev?.name ?? '—', next.name, actor.name);
+  if (next.id !== actor.id) pushNotice({ kind: 'hiring', tone: 'info', title: `You are now the recruiter for ${j.code}`, sub: j.title, href: `/hiring/jobs/${j.id}`, toIds: [next.id], by: actor.id });
+  return { ok: true };
 }
 
 export function setJobStatus(id: string, status: JobStatus, actor: Actor): Result {
@@ -371,6 +496,7 @@ export function addCandidate(input: CandidateInput, jobId: string | null, actor:
   const application = j ? newApplication(candidate, j, actor.name) : undefined;
   commit({ ...state, candidates: [candidate, ...state.candidates], applications: application ? [application, ...state.applications] : state.applications });
   audit(candidate.id, 'Candidate added', '—', `${candidate.name}${j ? ` → ${j.code} ${j.title}` : ''}`, actor.name);
+  if (j && actor.id === 'careers-page') pushNotice({ kind: 'hiring', tone: 'info', title: `New application for ${j.title}`, sub: `${candidate.name} applied through ${candidate.source}`, href: `/hiring/candidates/${candidate.id}`, toRoles: HR_ROLES, toIds: [j.hiringManagerId] });
   return { ok: true, candidate, application };
 }
 
@@ -382,6 +508,7 @@ export function applyToJob(candidateId: string, jobId: string, actor: Actor): Re
   const application = newApplication(c, j, actor.name);
   commit({ ...state, applications: [application, ...state.applications] });
   audit(candidateId, 'Applied to job', '—', `${j.code} ${j.title}`, actor.name);
+  if (actor.id === 'careers-page') pushNotice({ kind: 'hiring', tone: 'info', title: `New application for ${j.title}`, sub: `${c.name} applied again through the careers page`, href: `/hiring/candidates/${c.id}`, toRoles: HR_ROLES, toIds: [j.hiringManagerId] });
   return { ok: true, application };
 }
 
@@ -481,6 +608,8 @@ export function scheduleInterview(input: InterviewInput, actor: Actor): Result<{
   const interview: Interview = { id: uid('int'), location: a.location, status: 'Scheduled', scheduledBy: actor.name, createdAt: nowIso(), ...input };
   commit({ ...state, interviews: [interview, ...state.interviews] });
   audit(interview.id, 'Interview scheduled', '—', `${input.round} · ${input.date} ${input.time}`, actor.name);
+  const cand = candById(state, a.candidateId);
+  pushNotice({ kind: 'hiring', tone: 'pending', title: 'You were added to an interview', sub: `${cand?.name ?? 'Candidate'} · ${input.round} · ${input.date} at ${input.time} (${input.mode})`, href: cand ? `/hiring/candidates/${cand.id}` : '/my/interviews', toIds: input.panelIds, by: actor.id });
   // Scheduling a round moves the candidate forward to it when they are still behind.
   const target = ROUND_STAGE[input.round];
   if (target && STAGES.indexOf(target) > STAGES.indexOf(a.stage)) moveStage(a.id, target, actor, `Interview scheduled: ${input.round}`);
@@ -493,6 +622,7 @@ export function rescheduleInterview(id: string, patch: Pick<InterviewInput, 'dat
   if (!patch.panelIds.length) return fail('Add at least one panel member.');
   commit({ ...state, interviews: state.interviews.map((x) => (x.id === id ? { ...x, ...patch, rescheduled: (x.rescheduled ?? 0) + 1 } : x)) });
   audit(id, 'Interview rescheduled', `${i.date} ${i.time}`, `${patch.date} ${patch.time}`, actor.name);
+  pushNotice({ kind: 'hiring', tone: 'soon', title: 'An interview was moved', sub: `${i.round} is now ${patch.date} at ${patch.time}`, href: '/my/interviews', toIds: patch.panelIds, by: actor.id });
   return { ok: true };
 }
 
@@ -501,6 +631,7 @@ export function setInterviewStatus(id: string, status: 'Completed' | 'Cancelled'
   if (!i) return;
   commit({ ...state, interviews: state.interviews.map((x) => (x.id === id ? { ...x, status } : x)) });
   audit(id, 'Interview status', i.status, status, actor.name);
+  if (status === 'Cancelled') pushNotice({ kind: 'hiring', tone: 'info', title: 'An interview was cancelled', sub: `${i.round} on ${i.date} at ${i.time}`, href: '/my/interviews', toIds: i.panelIds, by: actor.id });
 }
 
 /* ---------------------------------------------------------------------- offers */
@@ -518,6 +649,7 @@ export function createOffer(appId: string, input: OfferInput, actor: Actor): Res
   if (!a || !j) return fail('Application not found.');
   if (a.stage !== 'Offer' || a.exit) return fail('Move the candidate to the Offer stage first.');
   if (offerForApp(state, appId)) return fail('This candidate already has an offer.');
+  if (!docsCleared(getDocRequests(), appId)) return fail('Collect and verify the candidate’s documents first. Open their profile → Pre-offer documents (or skip the check there, with a reason).');
   const total = input.lines.reduce((n, l) => n + (Number.isFinite(l.amount) ? l.amount : 0), 0);
   if (total <= 0) return fail('Enter the salary breakdown.');
   const stamp = nowIso();
@@ -526,6 +658,7 @@ export function createOffer(appId: string, input: OfferInput, actor: Actor): Res
     code: nextCode('OFF', state.offers.map((x) => x.code)),
     applicationId: appId,
     location: a.location,
+    companyId: j.companyId,
     status: 'Draft',
     currency: j.currency,
     ...input,
@@ -545,10 +678,181 @@ export function setOfferStatus(id: string, status: OfferStatus, actor: Actor): R
   const o = offerById(state, id);
   if (!o) return fail('Offer not found.');
   const stamp = nowIso();
-  const responded = status === 'Accepted' || status === 'Declined' ? stamp : o.respondedAt;
-  commit({ ...state, offers: state.offers.map((x) => (x.id === id ? { ...x, status, updatedAt: stamp, respondedAt: responded } : x)) });
+  const answered = status === 'Accepted' || status === 'Declined';
+  const responded = answered ? stamp : o.respondedAt;
+  const via = answered && !o.respondedVia ? (actor.id === 'candidate' ? 'link' : 'hr') : o.respondedVia;
+  commit({
+    ...state,
+    offers: state.offers.map((x) =>
+      x.id === id ? { ...x, status, updatedAt: stamp, respondedAt: responded, respondedVia: via, events: answered && actor.id !== 'candidate' ? addEvent(x, `${status} recorded by ${actor.name}`) : x.events } : x,
+    ),
+  });
   audit(id, 'Offer status', o.status, status, actor.name);
+  if (status === 'Accepted' || status === 'Declined') {
+    const oa = appById(state, o.applicationId);
+    const oc = oa && candById(state, oa.candidateId);
+    const oj = oa && jobById(state, oa.jobId);
+    pushNotice({ kind: 'hiring', tone: status === 'Accepted' ? 'active' : 'expired', title: `${o.code} was ${status.toLowerCase()}`, sub: `${oc?.name ?? 'Candidate'} · ${oj?.title ?? ''}`, href: '/hiring/offers', toRoles: HR_ROLES, toIds: oj ? [oj.hiringManagerId] : [], by: actor.id });
+  }
+  if (status === 'Accepted') {
+    const before = state;
+    const next = applyHire(state, id, actor.name);
+    if (next !== before) {
+      commit(next);
+      const ha = appById(next, o.applicationId);
+      if (ha) audit(ha.id, 'Hired', 'Offer', `Offer ${o.code} accepted`, actor.name);
+    }
+  }
   if (status === 'Declined') exitApplication(o.applicationId, 'Withdrawn', actor, 'Offer declined');
+  return { ok: true };
+}
+
+/* ---------------------------------------------------------------------- offer letter: send, read, download, respond */
+
+export const offerByToken = (s: HiringState, token: string) => (token ? s.offers.find((o) => o.token === token) : undefined);
+const newToken = () => `${Math.random().toString(36).slice(2, 10)}${Date.now().toString(36)}${Math.random().toString(36).slice(2, 8)}`;
+const addEvent = (o: Offer, text: string) => [...(o.events ?? []), { at: nowIso(), text }];
+
+/** Keeps the prepared letter on the offer (while it is still a draft or has been sent but not answered). */
+export function saveOfferLetter(id: string, html: string, actor: Actor, companyId?: string): Result {
+  const o = offerById(state, id);
+  if (!o) return fail('Offer not found.');
+  if (o.status === 'Accepted' || o.status === 'Declined') return fail('This offer has been answered; its letter can no longer change.');
+  commit({ ...state, offers: state.offers.map((x) => (x.id === id ? { ...x, letterHtml: html, letterAt: nowIso(), updatedAt: nowIso(), companyId: companyId ?? x.companyId, events: addEvent(x, `Letter prepared by ${actor.name}`) } : x)) });
+  audit(id, 'Offer letter prepared', undefined, o.code, actor.name);
+  return { ok: true };
+}
+
+const squash = (n: string) => n.normalize('NFD').replace(/[̀-ͯ]/g, '').toLowerCase().replace(/[.'’-]/g, ' ').replace(/\s+/g, ' ').trim();
+
+/** What is wrong with the name a candidate typed to accept an offer, in words for them; '' when it is fine. It must be a
+    real full name (letters only, a first and a last name) and the name on the offer, spelling differences in case,
+    accents and spacing aside. */
+export function nameProblem(entered: string, expected: string): string {
+  const typed = entered.replace(/\s+/g, ' ').trim();
+  if (!typed) return 'Type your full name to accept.';
+  if (!/^[\p{L}][\p{L}\s.'’-]*$/u.test(typed)) return 'Use letters only in your name (no numbers or symbols).';
+  if (expected.trim().split(/\s+/).length > 1 && typed.split(/\s+/).length < 2) return 'Enter your full name: first and last name.';
+  if (squash(typed) !== squash(expected)) return `Enter your name exactly as it appears on the offer: ${expected}.`;
+  return '';
+}
+
+/** Sends the offer: it needs a letter, gets a link token and moves to Sent. Sending again keeps the same link. */
+export function sendOffer(id: string, actor: Actor): Result<{ token: string }> {
+  const o = offerById(state, id);
+  if (!o) return fail('Offer not found.');
+  if (!o.letterHtml) return fail('Prepare the offer letter first.');
+  if (o.status === 'Accepted' || o.status === 'Declined') return fail('This offer has already been answered.');
+  const token = o.token ?? newToken();
+  const resend = o.status === 'Sent';
+  const stamp = nowIso();
+  commit({
+    ...state,
+    offers: state.offers.map((x) => (x.id === id ? { ...x, token, status: 'Sent', sentAt: stamp, sentBy: actor.name, updatedAt: stamp, events: addEvent(x, `${resend ? 'Sent again' : 'Sent'} by ${actor.name}`) } : x)),
+  });
+  audit(id, resend ? 'Offer sent again' : 'Offer sent', o.status, 'Sent', actor.name);
+  return { ok: true, token };
+}
+
+/** Withdraws a sent offer: the link stops working and the offer goes back to Draft so it can be corrected and sent again. */
+export function revokeOfferLink(id: string, actor: Actor): Result {
+  const o = offerById(state, id);
+  if (!o) return fail('Offer not found.');
+  if (o.status !== 'Sent') return fail('Only a sent offer can be withdrawn.');
+  const stamp = nowIso();
+  commit({
+    ...state,
+    offers: state.offers.map((x) => (x.id === id ? { ...x, status: 'Draft', token: undefined, viewedAt: undefined, downloadedAt: undefined, updatedAt: stamp, events: addEvent(x, `Link withdrawn by ${actor.name}`) } : x)),
+  });
+  audit(id, 'Offer link withdrawn', 'Sent', 'Draft', actor.name);
+  return { ok: true };
+}
+
+/** The candidate opened or downloaded the letter. Recorded once each; the first open is shown to HR. */
+export function recordOfferEvent(token: string, kind: 'viewed' | 'downloaded'): void {
+  const o = offerByToken(state, token);
+  if (!o || o.status !== 'Sent') return;
+  const field = kind === 'viewed' ? 'viewedAt' : 'downloadedAt';
+  if (o[field]) return;
+  const stamp = nowIso();
+  commit({ ...state, offers: state.offers.map((x) => (x.id === o.id ? { ...x, [field]: stamp, events: addEvent(x, kind === 'viewed' ? 'Candidate opened the letter' : 'Candidate downloaded the letter') } : x)) });
+  audit(o.id, kind === 'viewed' ? 'Offer letter opened' : 'Offer letter downloaded', undefined, 'By the candidate', 'Candidate');
+  if (kind === 'viewed') {
+    const oa = appById(state, o.applicationId);
+    const oc = oa && candById(state, oa.candidateId);
+    const oj = oa && jobById(state, oa.jobId);
+    pushNotice({ kind: 'hiring', tone: 'info', title: `${oc?.name ?? 'The candidate'} opened ${o.code}`, sub: oj?.title ?? '', href: '/hiring/offers', toRoles: HR_ROLES, toIds: oj ? [oj.hiringManagerId] : [], by: 'candidate' });
+  }
+}
+
+/** The candidate's answer from the public page. Accepting requires the letter to have been downloaded and a typed name. */
+export function respondToOffer(token: string, decision: 'Accepted' | 'Declined', input: { name?: string; reason?: string; signature?: string }): Result {
+  const o = offerByToken(state, token);
+  if (!o) return fail('This link is not valid any more.');
+  if (o.status === 'Accepted' || o.status === 'Declined') return fail(`This offer was already ${o.status.toLowerCase()}.`);
+  if (o.status !== 'Sent') return fail('This offer is not open for a response.');
+  if (o.expiryDate < todayISO()) return fail(`This offer expired on ${o.expiryDate}. Please contact HR.`);
+  if (!o.downloadedAt) return fail('Download the letter first, then respond.');
+  if (decision === 'Accepted' && !(input.name ?? '').trim()) return fail('Type your full name to accept.');
+  if (decision === 'Accepted') {
+    const who = candById(state, appById(state, o.applicationId)?.candidateId ?? '');
+    const bad = who ? nameProblem(input.name ?? '', who.name) : '';
+    if (bad) return fail(bad);
+  }
+  if (decision === 'Accepted' && !input.signature) return fail('Add your signature to accept.');
+  if (decision === 'Declined' && !(input.reason ?? '').trim()) return fail('Tell us briefly why you are declining.');
+  commit({
+    ...state,
+    offers: state.offers.map((x) =>
+      x.id === o.id
+        ? { ...x, signedName: decision === 'Accepted' ? (candById(state, appById(state, o.applicationId)?.candidateId ?? '')?.name ?? (input.name ?? '').replace(/\s+/g, ' ').trim()) : x.signedName, signature: decision === 'Accepted' ? input.signature : x.signature, signedAt: decision === 'Accepted' ? nowIso() : x.signedAt, declineReason: decision === 'Declined' ? (input.reason ?? '').trim() : undefined, respondedVia: 'link', events: addEvent(x, decision === 'Accepted' ? `Accepted and e-signed by ${(input.name ?? '').trim()}` : 'Declined by the candidate') }
+        : x,
+    ),
+  });
+  return setOfferStatus(o.id, decision, { id: 'candidate', name: 'Candidate (offer link)', role: 'Employee' });
+}
+
+/** The candidate backed out after accepting, before an employee was created. The offer is closed as declined, the
+    candidate leaves the Hired column (withdrawn from the Offer stage) and the position is open again. */
+export function withdrawAcceptedOffer(offerId: string, reason: string, actor: Actor): Result {
+  const o = offerById(state, offerId);
+  const a = o && appById(state, o.applicationId);
+  const j = a && jobById(state, a.jobId);
+  if (!o || !a || !j) return fail('Offer not found.');
+  if (o.status !== 'Accepted') return fail('Only an accepted offer can be withdrawn this way.');
+  if (o.employeeId) return fail(`${o.employeeId} was already created from this offer. Close it from Offboarding instead.`);
+  if (!reason.trim()) return fail('Say why the candidate backed out.');
+  const stamp = nowIso();
+  const counted = a.stage === 'Hired';
+  const filled = counted ? Math.max(0, j.filled - 1) : j.filled;
+  const jobStatus: JobStatus = j.status === 'Filled' && filled < j.positions ? 'Open' : j.status;
+  const cand = candById(state, a.candidateId);
+  commit({
+    ...state,
+    offers: state.offers.map((x) => (x.id === offerId ? { ...x, status: 'Declined', declineReason: reason.trim(), updatedAt: stamp, events: addEvent(x, `Withdrawn after acceptance by ${actor.name}: ${reason.trim()}`) } : x)),
+    applications: state.applications.map((x) =>
+      x.id === a.id
+        ? { ...x, stage: 'Offer', exit: 'Withdrawn', exitFrom: 'Offer', exitReason: 'Backed out after accepting', exitNote: reason.trim(), history: [...x.history, { id: uid('sc'), at: stamp, by: actor.name, from: x.stage, to: 'Withdrawn', note: `Backed out after accepting ${o.code}: ${reason.trim()}` }] }
+        : x,
+    ),
+    jobs: state.jobs.map((x) =>
+      x.id === j.id
+        ? {
+            ...x,
+            filled,
+            status: jobStatus,
+            updatedAt: stamp,
+            history: [
+              ...(x.history ?? []),
+              { id: uid('jh'), at: stamp, by: actor.name, text: `${cand?.name ?? 'Candidate'} backed out after accepting ${o.code}: ${filled} of ${j.positions} positions filled` },
+              ...(jobStatus !== j.status ? [{ id: uid('jh'), at: stamp, by: 'System', text: `Status changed from ${j.status} to ${jobStatus}` }] : []),
+            ],
+          }
+        : x,
+    ),
+  });
+  audit(offerId, 'Accepted offer withdrawn', 'Accepted', `Declined: ${reason.trim()}`, actor.name);
+  pushNotice({ kind: 'hiring', tone: 'expired', title: `${o.code} was withdrawn after acceptance`, sub: `${cand?.name ?? 'Candidate'} · ${j.title}`, href: `/hiring/jobs/${j.id}`, toRoles: HR_ROLES, toIds: [j.hiringManagerId], by: actor.id });
   return { ok: true };
 }
 
@@ -561,7 +865,9 @@ export function completeHire(offerId: string, employee: { id: string; code: stri
   if (!o || !a || !j) return fail('Offer not found.');
   if (o.employeeId) return fail(`This offer was already used to onboard ${o.employeeId}.`);
   const stamp = nowIso();
-  const filled = j.filled + 1;
+  // Accepting the offer already moved the candidate to Hired and counted the position; older data may not have.
+  const counted = a.stage === 'Hired';
+  const filled = counted ? j.filled : j.filled + 1;
   const jobStatus: JobStatus = filled >= j.positions ? 'Filled' : j.status;
   commit({
     ...state,
@@ -579,7 +885,7 @@ export function completeHire(offerId: string, employee: { id: string; code: stri
             updatedAt: stamp,
             history: [
               ...(x.history ?? []),
-              { id: uid('jh'), at: stamp, by: actor.name, text: `${employee.name} hired (${employee.code}): ${filled} of ${j.positions} positions filled` },
+              { id: uid('jh'), at: stamp, by: actor.name, text: counted ? `Onboarding started for ${employee.name} (${employee.code})` : `${employee.name} hired (${employee.code}): ${filled} of ${j.positions} positions filled` },
               ...(jobStatus !== j.status ? [{ id: uid('jh'), at: stamp, by: 'System', text: `Status changed from ${j.status} to ${jobStatus}` }] : []),
             ],
           }

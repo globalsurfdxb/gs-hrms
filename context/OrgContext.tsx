@@ -6,6 +6,7 @@ import { Company, Department, Designation, LocationDef } from '@/lib/types';
 import { logTask } from '@/lib/activity';
 import { useAuth } from '@/lib/auth';
 import { fetchOrg, orgApi } from '@/lib/orgApi';
+import { useHiring } from '@/lib/hiringStore';
 
 /* Organization master data. Read from the backend (/api/org/*) once someone is signed in; before that (the sign-in and
    public careers pages) — and if the backend cannot be read — the mock data from lib/data.ts is used. Changes go to
@@ -78,6 +79,17 @@ export function OrgProvider({ children }: { children: React.ReactNode }) {
     },
     [connected, reload],
   );
+
+  // A designation asked for on a requisition joins its department once the requisition has been fully approved.
+  const { requisitions } = useHiring();
+  const [seenRequisitions, setSeenRequisitions] = useState<typeof requisitions | null>(null);
+  if (seenRequisitions !== requisitions) {
+    setSeenRequisitions(requisitions);
+    const approved = requisitions.filter((r) => r.newDesignation && r.designationTitle && r.departmentId && r.approvals.length > 0 && r.approvals.every((x) => x.status === 'Approved'));
+    const have = (list: Designation[], r: (typeof approved)[number]) => list.some((d) => d.departmentId === r.departmentId && d.title.toLowerCase() === r.designationTitle!.toLowerCase());
+    const add = approved.filter((r, i) => !have(designations, r) && approved.findIndex((x) => x.departmentId === r.departmentId && x.designationTitle!.toLowerCase() === r.designationTitle!.toLowerCase()) === i);
+    if (add.length) setDesignations([...designations, ...add.map((r) => ({ id: `des-${r.id}`, departmentId: r.departmentId, title: r.designationTitle! }))]);
+  }
 
   const value = useMemo<OrgContextValue>(
     () => ({

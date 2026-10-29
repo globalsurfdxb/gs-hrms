@@ -1,5 +1,7 @@
 import { HiringState, EmploymentKind } from '@/lib/hiringTypes';
 import { appById, candById, jobById, offerById } from '@/lib/hiringStore';
+import { JoiningForm, getInvites } from '@/lib/onboardingForms';
+import { Referral, docRequestFor, getDocRequests } from '@/lib/hiringDocs';
 
 /* The handoff from an accepted offer to the onboarding wizard. */
 
@@ -29,6 +31,12 @@ export interface OnboardingPrefill {
   /** Offer lines the wizard has no matching line for. */
   unmapped: { label: string; amount: number }[];
   currency: string;
+  /** What the joiner entered on their joining form, when they have submitted it. */
+  form?: JoiningForm;
+  formSubmittedAt?: string;
+  /** What HR collected and verified before the offer letter, and the background-verification referral. */
+  preDocs?: { label: string; files: string[]; verified: boolean }[];
+  referral?: Referral;
 }
 
 const UAE_MAP: Record<string, string> = { Basic: 'Basic Salary', Housing: 'Accommodation Allowance', Transport: 'Transportation Allowance' };
@@ -53,7 +61,14 @@ export function onboardingPrefill(s: HiringState, offerId: string): OnboardingPr
     if (target && l.amount > 0) salary[target] = String(amount);
     else if (l.amount > 0) unmapped.push({ label: l.label, amount: l.amount });
   });
+  const invite = getInvites().find((i) => i.offerId === o.id && i.status === 'Submitted');
+  const dreq = docRequestFor(getDocRequests(), o.applicationId);
+  const preDocs = dreq?.items.filter((i) => i.files.length).map((i) => ({ label: i.label, files: i.files.map((f) => f.name), verified: i.status === 'Verified' }));
   return {
+    preDocs: preDocs?.length ? preDocs : undefined,
+    referral: dreq && dreq.bgv.name ? dreq.bgv : undefined,
+    form: invite?.data,
+    formSubmittedAt: invite?.submittedAt,
     offerId: o.id,
     offerCode: o.code,
     candidateId: c.id,
@@ -76,4 +91,15 @@ export function onboardingPrefill(s: HiringState, offerId: string): OnboardingPr
     unmapped,
     currency: o.currency,
   };
+}
+
+/** Why an offer cannot start onboarding, in words for the person looking at the screen; null when it can. */
+export function prefillProblem(s: HiringState, offerId: string): string | null {
+  const o = offerById(s, offerId);
+  if (!o) return 'That offer is not in the hiring data of this browser. Hiring data is kept per browser, so open the offer from Hiring → Offers in the browser where it was created.';
+  if (o.employeeId) return `${o.code} was already used to onboard ${o.employeeId}. Open that employee's record instead.`;
+  if (o.status !== 'Accepted') return `${o.code} is ${o.status.toLowerCase()}, not accepted yet. Mark it Accepted on Hiring → Offers first, then start onboarding.`;
+  const a = appById(s, o.applicationId);
+  if (!a || !candById(s, a.candidateId) || !jobById(s, a.jobId)) return `${o.code} has lost its candidate or job record, so there is nothing to carry over.`;
+  return null;
 }

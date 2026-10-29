@@ -10,7 +10,7 @@ import { CheckIcon, JoinIcon, PeopleIcon, PlusIcon, SearchIcon } from '@/compone
 import { Banner, JobBadge, HiringHeader, empName, fmtDate, money, payUnit } from '@/components/hiring/HiringBits';
 import { JobDrawer } from '@/components/hiring/HiringForms';
 import { useScoped } from '@/components/hiring/useScoped';
-import { isActiveApp, jobForRequisition } from '@/lib/hiringStore';
+import { isActiveApp, jobForRequisition, recruiterIdOf, recruiterLabel } from '@/lib/hiringStore';
 import { JobStatus, Requisition } from '@/lib/hiringTypes';
 
 const STATUSES: ('All' | JobStatus)[] = ['All', 'Open', 'Draft', 'On Hold', 'Filled', 'Closed'];
@@ -20,12 +20,14 @@ export default function JobsPage() {
   const router = useRouter();
   const [q, setQ] = useState('');
   const [status, setStatus] = useState<'All' | JobStatus>('All');
+  const [recruiter, setRecruiter] = useState('All');
   const [picker, setPicker] = useState(false);
   const [from, setFrom] = useState<Requisition | null>(null);
   const [notice, setNotice] = useState('');
 
   const needle = q.trim().toLowerCase();
-  const rows = jobs.filter((j) => (status === 'All' || j.status === status) && (!needle || `${j.code} ${j.title} ${j.department}`.toLowerCase().includes(needle)));
+  const recruiters = [...new Set(jobs.map((j) => recruiterIdOf(j) ?? ''))].filter(Boolean);
+  const rows = jobs.filter((j) => (status === 'All' || j.status === status) && (recruiter === 'All' || (recruiterIdOf(j) ?? '') === recruiter) && (!needle || `${j.code} ${j.title} ${j.department}`.toLowerCase().includes(needle)));
   const count = (st: JobStatus) => jobs.filter((j) => j.status === st).length;
   const eligible = requisitions.filter((r) => r.status === 'Approved' && !jobForRequisition(s, r.id));
   const openPositions = jobs.filter((j) => j.status === 'Open').reduce((n, j) => n + Math.max(0, j.positions - j.filled), 0);
@@ -63,6 +65,16 @@ export default function JobsPage() {
             <SearchIcon />
             <input value={q} onChange={(e) => setQ(e.target.value)} placeholder="Search code, title or department…" />
           </div>
+          {level === 'full' && recruiters.length > 0 && (
+            <select className="chip" value={recruiter} onChange={(e) => setRecruiter(e.target.value)} aria-label="Recruiter">
+              <option value="All">All recruiters</option>
+              {recruiters.map((id) => (
+                <option key={id} value={id}>
+                  {empName(id)} · {jobs.filter((j) => recruiterIdOf(j) === id).length}
+                </option>
+              ))}
+            </select>
+          )}
           {STATUSES.map((st) => (
             <button key={st} type="button" className={`chip ${status === st ? 'tx-chip-on' : ''}`} onClick={() => setStatus(st)}>
               {st} · {st === 'All' ? jobs.length : count(st)}
@@ -78,6 +90,7 @@ export default function JobsPage() {
                 <tr>
                   <th>Job</th>
                   <th>Hiring manager</th>
+                  <th>Recruiter</th>
                   <th>Filled</th>
                   <th>Candidates</th>
                   <th>Closes</th>
@@ -99,6 +112,7 @@ export default function JobsPage() {
                         </Link>
                       </td>
                       <td>{empName(j.hiringManagerId)}</td>
+                      <td>{recruiterLabel(j)}</td>
                       <td className="mono">
                         <span className="hm-fill">
                           {j.filled}/{j.positions}

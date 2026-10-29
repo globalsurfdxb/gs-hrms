@@ -1,5 +1,6 @@
 'use client';
 
+import { DateField } from '@/components/ui/DateField';
 import { useState } from 'react';
 import Link from 'next/link';
 import { useApp, useCurrentEmployee } from '@/context/AppContext';
@@ -187,11 +188,11 @@ export default function AllClaimsPage() {
           </select>
           <label className="tx-dates">
             From
-            <input type="date" value={from} onChange={(e) => setFrom(e.target.value)} />
+            <DateField value={from} onChange={(e) => setFrom(e.target.value)} />
           </label>
           <label className="tx-dates">
             To
-            <input type="date" value={to} onChange={(e) => setTo(e.target.value)} />
+            <DateField value={to} onChange={(e) => setTo(e.target.value)} />
           </label>
           {(from || to) && (
             <button

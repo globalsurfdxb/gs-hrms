@@ -1,13 +1,12 @@
 'use client';
 
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { useMemo, useRef, useState } from 'react';
 import Link from 'next/link';
 import { EMPLOYEES } from '@/lib/data';
 import { departmentsMissingFromMaster, designationsMissingFromMaster, sameText } from '@/lib/headcount';
 import { useOrg } from '@/context/OrgContext';
-import { useApp, useCurrentEmployee } from '@/context/AppContext';
 import { Employee } from '@/lib/types';
-import { canEditEmployees, saveEmployee, toForm, useEmployeeVersion } from '@/lib/employeeStore';
+import { useEmployeeVersion } from '@/lib/employeeStore';
 import { PageHeader } from '@/components/ui/PageHeader';
 import { Card, EmptyState } from '@/components/ui/Card';
 import { BuildingIcon, ChevronDownIcon, ChevronRightIcon, PeopleIcon, SearchIcon, TagIcon, TreeIcon, XIcon } from '@/components/icons';
@@ -33,25 +32,12 @@ export default function OrgStructurePage() {
   const [dept, setDept] = useState('all');
   const [collapsed, setCollapsed] = useState<Record<string, boolean>>({});
   const empVersion = useEmployeeVersion();
-  const { role } = useApp();
-  const me = useCurrentEmployee();
-  const canMove = canEditEmployees(role);
 
-  // drag a card onto another to change who someone reports to; drag the background to pan
-  const [drag, setDrag] = useState<string | null>(null);
-  const [over, setOver] = useState<string | null>(null);
-  const [pending, setPending] = useState<{ id: string; to: string | null } | null>(null);
-  const [toast, setToast] = useState<{ text: string; undo?: () => void } | null>(null);
+  // drag the background to pan
   const [zoom, setZoom] = useState(1);
   const [panning, setPanning] = useState(false);
   const wrapRef = useRef<HTMLDivElement>(null);
   const pan = useRef<{ x: number; y: number; l: number; t: number } | null>(null);
-
-  useEffect(() => {
-    if (!toast) return;
-    const id = setTimeout(() => setToast(null), 8000);
-    return () => clearTimeout(id);
-  }, [toast]);
 
   const companyName = (id: string) => companies.find((c) => c.id === id)?.name ?? 'Unknown company';
 
@@ -110,48 +96,6 @@ export default function OrgStructurePage() {
     people.filter((e) => sameText(e.company, companyName(companyId)) && sameText(e.department, deptName) && (title === undefined || sameText(e.designation, title))).length;
   const headRec = (name: string) => EMPLOYEES.find((e) => e.name === name);
 
-  const emp = (id: string) => EMPLOYEES.find((x) => x.id === id);
-  /** A card can be dropped on anyone except itself, its current manager, or someone below it (that would be a loop). */
-  const canDropOn = (dragId: string, targetId: string) => {
-    const d = emp(dragId);
-    if (!d || dragId === targetId || d.reportingManagerId === targetId) return false;
-    const seen = new Set<string>();
-    let t = emp(targetId);
-    while (t && !seen.has(t.id)) {
-      if (t.id === dragId) return false;
-      seen.add(t.id);
-      t = t.reportingManagerId ? emp(t.reportingManagerId) : undefined;
-    }
-    return true;
-  };
-  const setManager = (id: string, to: string | null) => {
-    const d = emp(id);
-    if (!d) return;
-    const form = toForm(d);
-    form.v.reportingManagerId = to ?? '';
-    saveEmployee(id, form, me.name);
-  };
-  const confirmMove = () => {
-    if (!pending) return;
-    const d = emp(pending.id);
-    if (!d) return setPending(null);
-    const prev = d.reportingManagerId;
-    setManager(pending.id, pending.to);
-    const target = pending.to ? emp(pending.to)?.name : null;
-    setToast({
-      text: target ? `${d.name} now reports to ${target}.` : `${d.name} no longer has a manager.`,
-      undo: () => {
-        setManager(d.id, prev);
-        setToast({ text: 'Change undone.' });
-      },
-    });
-    setPending(null);
-  };
-  const endDrag = () => {
-    setDrag(null);
-    setOver(null);
-  };
-
   const renderNode = (e: Employee): React.ReactNode => {
     const reports = kids.get(e.id) ?? [];
     const closed = isCollapsed(e.id);
@@ -160,29 +104,8 @@ export default function OrgStructurePage() {
     const hit = active && isHit(e);
     return (
       <li key={e.id}>
-        <div
-          className={`oc-card ${hit ? 'hit' : ''} ${active && !hit ? 'dim' : ''} ${canMove ? 'movable' : ''} ${drag === e.id ? 'dragging' : ''} ${drag && over === e.id && drag !== e.id ? (canDropOn(drag, e.id) ? 'drop-ok' : 'drop-no') : ''}`}
-          draggable={canMove}
-          onDragStart={(ev) => {
-            ev.dataTransfer.setData('text/plain', e.id);
-            ev.dataTransfer.effectAllowed = 'move';
-            setTimeout(() => setDrag(e.id), 0);
-          }}
-          onDragEnd={endDrag}
-          onDragEnter={() => drag && setOver(e.id)}
-          onDragOver={(ev) => {
-            if (drag && canDropOn(drag, e.id)) {
-              ev.preventDefault();
-              ev.dataTransfer.dropEffect = 'move';
-            }
-          }}
-          onDrop={(ev) => {
-            ev.preventDefault();
-            if (drag && canDropOn(drag, e.id)) setPending({ id: drag, to: e.id });
-            endDrag();
-          }}
-        >
-          <Link href={`/directory/${e.employeeCode}`} className="oc-who" draggable={false}>
+        <div className={`oc-card ${hit ? 'hit' : ''} ${active && !hit ? 'dim' : ''}`}>
+          <Link href={`/directory/${e.employeeCode}`} className="oc-who">
             <span className="oc-av" style={{ background: col.bg, color: col.fg }}>
               {e.avatarInitials}
             </span>
@@ -324,21 +247,7 @@ export default function OrgStructurePage() {
             <EmptyState icon={<TreeIcon />} title="No hierarchy to show" description={`No employees found for ${scopeLabel}.`} />
           ) : (
             <div className="oc-stage">
-              <div className="oc-hint">{canMove ? 'Drag a card onto another to change who they report to. Drag the background to move around.' : 'Drag the background to move around.'}</div>
-              {canMove && drag && emp(drag)?.reportingManagerId && (
-                <div
-                  className={`oc-rootdrop ${over === '__root' ? 'over' : ''}`}
-                  onDragEnter={() => setOver('__root')}
-                  onDragOver={(ev) => ev.preventDefault()}
-                  onDrop={(ev) => {
-                    ev.preventDefault();
-                    setPending({ id: drag, to: null });
-                    endDrag();
-                  }}
-                >
-                  Drop here to remove their manager (top level)
-                </div>
-              )}
+              <div className="oc-hint">Drag the background to move around.</div>
             <div
               ref={wrapRef}
               className={`oc-wrap ${panning ? 'panning' : ''}`}
@@ -489,43 +398,6 @@ export default function OrgStructurePage() {
         )}
       </Card>
 
-      {pending && (
-        <div className="oc-confirm" role="alertdialog" aria-label="Confirm change of manager">
-          <div>
-            {pending.to ? (
-              <>
-                Make <b>{emp(pending.id)?.name}</b> report to <b>{emp(pending.to)?.name}</b>?
-              </>
-            ) : (
-              <>
-                Remove the manager of <b>{emp(pending.id)?.name}</b> so they sit at the top level?
-              </>
-            )}
-            <small>
-              Currently reports to {emp(pending.id)?.reportingManagerId ? emp(emp(pending.id)!.reportingManagerId!)?.name : 'no one'}. Saved to the employee record and logged in Audit Logs.
-            </small>
-          </div>
-          <button type="button" className="btn ghost sm" onClick={() => setPending(null)}>
-            Cancel
-          </button>
-          <button type="button" className="btn primary sm" onClick={confirmMove} autoFocus>
-            Move
-          </button>
-        </div>
-      )}
-      {toast && (
-        <div className="oc-toast" role="status">
-          <span>{toast.text}</span>
-          {toast.undo && (
-            <button type="button" onClick={toast.undo}>
-              Undo
-            </button>
-          )}
-          <button type="button" className="x" onClick={() => setToast(null)} aria-label="Dismiss">
-            ×
-          </button>
-        </div>
-      )}
     </div>
   );
 }

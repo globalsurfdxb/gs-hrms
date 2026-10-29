@@ -22,6 +22,7 @@ export const UserIcon = base(<><circle cx="12" cy="8" r="3.6" /><path d="M4.5 20
 export const MapPinIcon = base(<><path d="M12 21s-7-5.5-7-11a7 7 0 0 1 14 0c0 5.5-7 11-7 11Z" /><circle cx="12" cy="10" r="2.6" /></>);
 export const SearchIcon = base(<><circle cx="11" cy="11" r="7" /><path d="m21 21-4.3-4.3" /></>);
 export const BellIcon = base(<><path d="M18 8a6 6 0 1 0-12 0c0 7-3 9-3 9h18s-3-2-3-9" /><path d="M13.7 21a2 2 0 0 1-3.4 0" /></>);
+export const FilterIcon = base(<><path d="M4 6h16M7 12h10M10 18h4" /></>);
 export const ChevronRightIcon = base(<path d="m9 6 6 6-6 6" />);
 export const ChevronDownIcon = base(<path d="m6 9 6 6 6-6" />);
 export const PlusIcon = base(<path d="M12 5v14M5 12h14" />);

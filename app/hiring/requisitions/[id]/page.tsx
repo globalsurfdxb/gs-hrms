@@ -34,7 +34,7 @@ export default function RequisitionDetailPage() {
 
   // Look the record up directly (not only in the current location) so a link always opens, but respect who may see it.
   const r = reqById(s, id);
-  const mine = !!r && (level === 'full' || r.hiringManagerId === me.id || r.createdById === me.id);
+  const mine = !!r && (level === 'full' || r.hiringManagerId === me.id || r.createdById === me.id || requisitions.some((x) => x.id === r.id));
   void requisitions;
   if (!r || !mine) {
     return (
@@ -75,7 +75,7 @@ export default function RequisitionDetailPage() {
         icon={<InboxIcon />}
         title={r.title}
         badges={<ReqBadge status={r.status} />}
-        meta={[r.code, r.department, company?.name ?? '', r.location === 'Kochi' ? 'India' : 'United Arab Emirates']}
+        meta={[r.code, r.department, ...(r.designationTitle ? [r.newDesignation ? `${r.designationTitle} (new)` : r.designationTitle] : []), company?.name ?? '', r.location === 'Kochi' ? 'India' : 'United Arab Emirates']}
         actions={
           <>
             {mayEdit && <Button onClick={() => setEdit(true)}>Edit</Button>}
@@ -118,6 +118,12 @@ export default function RequisitionDetailPage() {
           <div style={{ padding: '2px 20px 18px' }}>
             <Row label="Positions">{r.positions}</Row>
             <Row label="Employment type">{r.employmentType}</Row>
+            {r.designationTitle && (
+              <Row label="Designation">
+                {r.designationTitle}
+                {r.newDesignation && <span className="faint"> · {r.approvals.every((a) => a.status === 'Approved') ? `new, added to ${r.department}` : `new: added to ${r.department} once this is approved`}</span>}
+              </Row>
+            )}
             <Row label="Reason">
               {r.reason}
               {r.replacesId && <span className="faint"> · replaces {empName(r.replacesId)}</span>}

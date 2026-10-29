@@ -8,6 +8,8 @@ import { Avatar } from '@/components/ui/Avatar';
 import { ArrowLeftIcon, PeopleIcon, XIcon } from '@/components/icons';
 import { Banner, Hero, OfferBadge, RejectDialog, StageBadge, TEXTAREA_STYLE, empName, fmtDate, fmtDateTime, money, payUnit, useActor } from '@/components/hiring/HiringBits';
 import { InterviewDrawer, OfferDrawer } from '@/components/hiring/HiringForms';
+import { DocsChip, DocsPanel } from '@/components/hiring/DocCollection';
+import { docRequestFor, docsCleared, useDocRequests } from '@/lib/hiringDocs';
 import { ComposeDrawer, MailList, useStageMail } from '@/components/hiring/Mail';
 import { RuleKey, messagesFor, useHiringMail } from '@/lib/hiringMail';
 import { useScoped } from '@/components/hiring/useScoped';
@@ -22,9 +24,11 @@ import {
   exitApplication,
   getHiring,
   interviewsForApp,
+  isMyJob,
   jobById,
   moveStage,
   offerForApp,
+  recruiterIdOf,
   reopenApplication,
   updateCandidateTags,
 } from '@/lib/hiringStore';
@@ -59,6 +63,7 @@ export default function CandidateProfilePage() {
   const notify = (text: string, tone: 'info' | 'warn' = 'info') => setMsg({ text, tone });
   const mailer = useStageMail(notify, (id) => setScheduleFor(appById(getHiring(), id) ?? null));
   const mail = useHiringMail();
+  const docReqs = useDocRequests();
   const [composing, setComposing] = useState(false);
 
   const c = candById(s, id);
@@ -79,11 +84,14 @@ export default function CandidateProfilePage() {
 
   const apps = appsForCandidate(s, c.id);
   // HR/Admin may act on everything; a hiring manager only on their own jobs; an interviewer only reads.
-  const manages = (a: Application) => level === 'full' || (level === 'manager' && jobById(s, a.jobId)?.hiringManagerId === me.id);
-  const seesPay = level === 'full' || apps.some((a) => canSeeSalary(level, me.id, jobById(s, a.jobId)?.hiringManagerId ?? ''));
+  const manages = (a: Application) => {
+    const j = jobById(s, a.jobId);
+    return level === 'full' || (level === 'manager' && !!j && isMyJob(j, me.id));
+  };
+  const seesPay = level === 'full' || apps.some((a) => { const j = jobById(s, a.jobId); return canSeeSalary(level, me.id, j?.hiringManagerId ?? '', j ? recruiterIdOf(j) : undefined); });
   const canAct = apps.some(manages) || level === 'full';
   const applied = new Set(apps.map((a) => a.jobId));
-  const jobsToApply = s.jobs.filter((j) => j.status === 'Open' && j.location === c.location && !applied.has(j.id) && (level === 'full' || j.hiringManagerId === me.id));
+  const jobsToApply = s.jobs.filter((j) => j.status === 'Open' && j.location === c.location && !applied.has(j.id) && (level === 'full' || isMyJob(j, me.id)));
 
   const events: Event[] = [
     { id: 'added', at: c.createdAt, kind: 'system' as const, text: <>Added by <b>{c.createdBy}</b> from {c.source}</> },
@@ -264,6 +272,11 @@ export default function CandidateProfilePage() {
                         Offer {offer.code} <OfferBadge status={offer.status} /> · {money(offer.total, offer.currency)} {payUnit(offer.currency)}
                       </div>
                     )}
+                    {!a.exit && !offer && ['HR Interview', 'Offer'].includes(a.stage) && (
+                      <div className="hm-card-note">
+                        <DocsChip applicationId={a.id} />
+                      </div>
+                    )}
                     {mine && a.stage !== 'Hired' && (
                       <div className="hm-card-act" style={{ marginTop: 10 }}>
                         <select
@@ -291,7 +304,7 @@ export default function CandidateProfilePage() {
                           </button>
                         )}
                         {!a.exit && a.stage === 'Offer' && !offer && (
-                          <button type="button" className="hm-mini" onClick={() => setOfferFor(a)}>
+                          <button type="button" className="hm-mini" onClick={() => setOfferFor(a)} disabled={!docsCleared(docReqs, a.id)} title={docsCleared(docReqs, a.id) ? undefined : 'Collect and verify the documents first (see Pre-offer documents below)'}>
                             Create offer
                           </button>
                         )}
@@ -325,6 +338,12 @@ export default function CandidateProfilePage() {
               </div>
             )}
           </Card>
+
+          {apps
+            .filter((a) => !a.exit && a.stage !== 'Hired' && (['HR Interview', 'Offer'].includes(a.stage) || docRequestFor(docReqs, a.id)))
+            .map((a) => (
+              <DocsPanel key={a.id} application={a} candidate={c} canAct={manages(a)} notify={notify} />
+            ))}
 
           <Card>
             <CardHeader title="Emails" sub={`${messagesFor(mail, c.id).length} sent`} action={canAct ? <button type="button" className="lnk" onClick={() => setComposing(true)}>Write email →</button> : undefined} />

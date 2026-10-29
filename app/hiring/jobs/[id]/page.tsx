@@ -4,28 +4,33 @@ import { useState } from 'react';
 import Link from 'next/link';
 import { useParams } from 'next/navigation';
 import { Card, CardHeader, EmptyState, Button } from '@/components/ui/Card';
-import { ArrowLeftIcon, JoinIcon, PlusIcon } from '@/components/icons';
+import { ArrowLeftIcon, JoinIcon, PlusIcon, WarnIcon } from '@/components/icons';
+import { useApp } from '@/context/AppContext';
+import { EMPLOYEES } from '@/lib/data';
+import { canChooseRecruiter } from '@/lib/hiringAccess';
 import { Banner, Hero, JobBadge, empName, fmtDate, money, payUnit, useActor } from '@/components/hiring/HiringBits';
-import { CandidateDrawer } from '@/components/hiring/HiringForms';
+import { CandidateDrawer, RecruiterDrawer } from '@/components/hiring/HiringForms';
 import { ShareJobDrawer } from '@/components/hiring/ShareJob';
 import { JobHistory } from '@/components/hiring/JobHistory';
 import { Pipeline } from '@/components/hiring/Pipeline';
 import { useScoped } from '@/components/hiring/useScoped';
-import { appsForJob, isActiveApp, jobById, reqById, setJobStatus } from '@/lib/hiringStore';
+import { appsForJob, isActiveApp, isMyJob, jobById, recruiterIdOf, recruiterLabel, reqById, setJobStatus } from '@/lib/hiringStore';
 import { JobStatus } from '@/lib/hiringTypes';
 
 export default function JobDetailPage() {
   const { id } = useParams<{ id: string }>();
   const { s, level, me } = useScoped();
   const actor = useActor();
+  const { role } = useApp();
   const [tab, setTab] = useState<'pipeline' | 'details' | 'history'>('pipeline');
   const [adding, setAdding] = useState(false);
   const [sharing, setSharing] = useState(false);
+  const [changing, setChanging] = useState(false);
   const [msg, setMsg] = useState<{ text: string; tone: 'info' | 'warn' } | null>(null);
   const notify = (text: string, tone: 'info' | 'warn' = 'info') => setMsg({ text, tone });
 
   const job = jobById(s, id);
-  const allowed = !!job && (level === 'full' || job.hiringManagerId === me.id);
+  const allowed = !!job && (level === 'full' || isMyJob(job, me.id));
   if (!job || !allowed) {
     return (
       <div className="hm-page">
@@ -50,6 +55,8 @@ export default function JobDetailPage() {
     notify(`Job is now ${st.toLowerCase()}.`);
   };
   const canManage = level === 'full';
+  const canAssign = canChooseRecruiter({ id: me.id, role }, job, EMPLOYEES);
+  const awaiting = !recruiterIdOf(job);
 
   return (
     <div className="hm-page">
@@ -61,7 +68,7 @@ export default function JobDetailPage() {
         icon={<JoinIcon />}
         title={job.title}
         badges={<JobBadge status={job.status} />}
-        meta={[job.code, job.department, job.location === 'Kochi' ? 'India' : 'United Arab Emirates', job.employmentType, `Hiring manager: ${empName(job.hiringManagerId)}`]}
+        meta={[job.code, job.department, job.location === 'Kochi' ? 'India' : 'United Arab Emirates', job.employmentType, `Hiring manager: ${empName(job.hiringManagerId)}`, `Recruiter: ${recruiterLabel(job)}`]}
         actions={
           <>
             {canManage && job.status === 'Draft' && <Button onClick={() => setStatus('Open')}>Open for applications</Button>}
@@ -69,6 +76,11 @@ export default function JobDetailPage() {
             {canManage && job.status === 'On Hold' && <Button onClick={() => setStatus('Open')}>Resume</Button>}
             {canManage && (job.status === 'Open' || job.status === 'On Hold') && <Button onClick={() => setStatus('Closed')}>Close job</Button>}
             {canManage && job.status === 'Closed' && job.filled < job.positions && <Button onClick={() => setStatus('Open')}>Reopen</Button>}
+            {canAssign && (
+              <Button variant={awaiting ? 'primary' : undefined} onClick={() => setChanging(true)}>
+                {awaiting ? 'Choose recruiter' : 'Change recruiter'}
+              </Button>
+            )}
             <Button onClick={() => setSharing(true)}>Share job</Button>
             <Button variant="primary" onClick={() => setAdding(true)} disabled={job.status === 'Closed' || job.status === 'Filled'}>
               <PlusIcon /> Add candidate
@@ -84,6 +96,12 @@ export default function JobDetailPage() {
         ]}
       />
       {msg && <Banner tone={msg.tone} onClose={() => setMsg(null)}>{msg.text}</Banner>}
+      {awaiting && (
+        <div className="note-box" style={{ marginBottom: 14 }}>
+          <WarnIcon />
+          <div>{canAssign ? 'This job has no recruiter yet. Choose who will run it.' : `Waiting for ${job.taManagerId ? empName(job.taManagerId) : 'the Talent Acquisition Manager'} to choose the recruiter.`}</div>
+        </div>
+      )}
 
       <div className="subseg hm-tabs" role="tablist" aria-label="Job sections">
         <button role="tab" aria-selected={tab === 'pipeline'} className={tab === 'pipeline' ? 'on' : ''} onClick={() => setTab('pipeline')}>
@@ -130,6 +148,7 @@ export default function JobDetailPage() {
       )}
 
       <ShareJobDrawer job={job} open={sharing} onClose={() => setSharing(false)} />
+      <RecruiterDrawer job={changing ? job : null} onClose={() => setChanging(false)} onDone={(text) => { setChanging(false); notify(text); }} />
       <CandidateDrawer
         open={adding}
         job={job}

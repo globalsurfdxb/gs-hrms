@@ -55,6 +55,10 @@ export interface Requisition {
   companyId: string;
   departmentId: string;
   department: string;
+  /** The designation (job grade) the role is for, when the department has designations. */
+  designationTitle?: string;
+  /** The designation above is a proposal: it is added to the department only once the requisition is approved. */
+  newDesignation?: boolean;
   location: string;
   positions: number;
   employmentType: EmploymentKind;
@@ -106,6 +110,10 @@ export interface Job {
   closingDate: string;
   status: JobStatus;
   hiringManagerId: string;
+  /** The Talent Acquisition Manager the job was handed to; they choose the recruiter. */
+  taManagerId?: string;
+  /** The recruiter who runs this job. Empty until the Talent Acquisition Manager chooses one. Older saved jobs have none: the person who created the job is used. */
+  recruiterId?: string;
   budgetMin: number;
   budgetMax: number;
   currency: string;
@@ -203,6 +211,8 @@ export interface Offer {
   code: string;
   applicationId: string;
   location: string;
+  /** The company issuing the offer (from the job). */
+  companyId?: string;
   status: OfferStatus;
   currency: string;
   /** Salary lines: UAE per month, India per year. */
@@ -218,6 +228,24 @@ export interface Offer {
   respondedAt?: string;
   /** Employee created by Start onboarding. */
   employeeId?: string;
+  /** The letter as prepared: a snapshot, so the candidate reads what was sent even if the template changes later. */
+  letterHtml?: string;
+  letterAt?: string;
+  /** Secret part of the candidate's link. Cleared on revoke so the old link stops working. */
+  token?: string;
+  sentAt?: string;
+  sentBy?: string;
+  viewedAt?: string;
+  downloadedAt?: string;
+  /** Typed by the candidate when accepting. */
+  signedName?: string;
+  /** Their signature (a PNG data URL) and when they signed. */
+  signature?: string;
+  signedAt?: string;
+  declineReason?: string;
+  /** How the answer arrived: through the link, or recorded by HR from a call or email. */
+  respondedVia?: 'link' | 'hr';
+  events?: { at: string; text: string }[];
 }
 
 export interface HiringState {

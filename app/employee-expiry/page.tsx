@@ -1,5 +1,6 @@
 'use client';
 
+import { DateField } from '@/components/ui/DateField';
 import { useState } from 'react';
 import Link from 'next/link';
 import { EMPLOYEES, REFERENCE_TODAY, employeeById, matchesEmployee } from '@/lib/data';
@@ -440,8 +441,7 @@ export default function EmployeeExpiryPage() {
                 <label>
                   New expiry date <span className="req">*</span>
                 </label>
-                <input
-                  type="date"
+                <DateField
                   value={newExpiry}
                   onChange={(e) => {
                     setNewExpiry(e.target.value);
@@ -516,7 +516,7 @@ export default function EmployeeExpiryPage() {
             <label>
               Expiry date <span className="req">*</span>
             </label>
-            <input type="date" value={addDate} onChange={(e) => { setAddDate(e.target.value); setAddError(''); }} />
+            <DateField value={addDate} onChange={(e) => { setAddDate(e.target.value); setAddError(''); }} />
           </div>
           {addType === 'Other' && (
             <div className="fg full">

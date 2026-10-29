@@ -1,5 +1,6 @@
 'use client';
 
+import { DateField } from '@/components/ui/DateField';
 import { useState } from 'react';
 import Link from 'next/link';
 import { useApp, useCurrentEmployee } from '@/context/AppContext';
@@ -504,7 +505,7 @@ export default function PerformancePage() {
             <label>
               Due date <span className="req">*</span>
             </label>
-            <input type="date" value={dueDate} onChange={(e) => { setDueDate(e.target.value); setCycleError(''); }} />
+            <DateField value={dueDate} onChange={(e) => { setDueDate(e.target.value); setCycleError(''); }} />
           </div>
         </div>
 

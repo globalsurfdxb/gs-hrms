@@ -1,5 +1,6 @@
 'use client';
 
+import { DateField } from '@/components/ui/DateField';
 import { useState } from 'react';
 import { useCurrentEmployee } from '@/context/AppContext';
 import { REFERENCE_TODAY } from '@/lib/data';
@@ -173,11 +174,11 @@ export default function MyLeaveAttendancePage() {
               </div>
               <div className="fg">
                 <label>From</label>
-                <input type="date" value={from} onChange={(e) => setFrom(e.target.value)} />
+                <DateField value={from} onChange={(e) => setFrom(e.target.value)} />
               </div>
               <div className="fg">
                 <label>To</label>
-                <input type="date" value={to} min={from || undefined} onChange={(e) => setTo(e.target.value)} />
+                <DateField value={to} min={from || undefined} onChange={(e) => setTo(e.target.value)} />
               </div>
               {preview.shortfall > 0 && (
                 <div className="fg full">

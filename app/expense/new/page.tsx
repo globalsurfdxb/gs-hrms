@@ -1,5 +1,6 @@
 'use client';
 
+import { DateField } from '@/components/ui/DateField';
 import { useRef, useState } from 'react';
 import Link from 'next/link';
 import { useApp, useCurrentEmployee } from '@/context/AppContext';
@@ -223,8 +224,7 @@ export default function NewClaimPage() {
                 </span>
               </Fg>
               <Fg label="Expense date" required>
-                <input
-                  type="date"
+                <DateField
                   min={OLDEST_DATE}
                   max={REFERENCE_TODAY}
                   value={date}

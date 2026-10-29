@@ -41,6 +41,8 @@ interface Persona {
 export const PERS: Record<Role, Persona> = {
   Employee: { modules: ['home'], scopes: ['my'] },
   'Team Lead': { modules: ['home'], scopes: ['my', 'team'] },
+  'Talent Acquisition Manager': { modules: ['home'], scopes: ['my', 'team'] },
+  Recruiter: { modules: ['home'], scopes: ['my'] },
   HR: { modules: ['home', 'operations', 'reports', 'administration'], scopes: ['my', 'org'] },
   'Office Admin': { modules: ['home', 'operations', 'reports', 'administration'], scopes: ['my', 'org'] },
   'Super Admin': { modules: ['home', 'operations', 'reports', 'administration'], scopes: ['my', 'team', 'org'] },
@@ -72,6 +74,7 @@ export const HOME_TABS: Record<Scope, TabDef[]> = {
     { key: 'leave', label: 'Leave', href: '/team/leave' },
     { key: 'visa', label: 'Visa', href: '/team/visa' },
     { key: 'separation', label: 'Separation', href: '/team/separation' },
+    { key: 'requests', label: 'Requests', href: '/team/requests' },
     { key: 'expiry', label: 'Expiry', href: '/team/expiry' },
     { key: 'performance', label: 'Performance', href: '/performance' },
     { key: 'notifications', label: 'Notifications', href: '/team/notifications' },

@@ -2,113 +2,78 @@
 
 import { useState } from 'react';
 import Link from 'next/link';
-import { useApp, useCurrentEmployee } from '@/context/AppContext';
-import { PERS } from '@/lib/nav';
-import { useVisa } from '@/context/VisaContext';
-import { directReports, employeeById } from '@/lib/data';
-import { useRequests } from '@/context/RequestsContext';
+import { useRouter } from 'next/navigation';
 import { PageHeader } from '@/components/ui/PageHeader';
-import { Card, CardHeader, EmptyState } from '@/components/ui/Card';
+import { Card, CardHeader, EmptyState, Button } from '@/components/ui/Card';
 import { StatStrip } from '@/components/ui/StatStrip';
 import { FilterChips } from '@/components/ui/FilterChips';
-import { BellIcon, ChevronRightIcon, ClockIcon, IdIcon, InboxIcon, SearchIcon, WarnIcon } from '@/components/icons';
+import { BellIcon, CheckIcon, ChevronRightIcon, ClockIcon, SearchIcon, WarnIcon } from '@/components/icons';
+import { NoticeKind, ago } from '@/lib/notifications';
+import { iconFor } from '@/components/notifications/NotificationBell';
+import { ViewNotice, useNotifications } from '@/components/notifications/useNotifications';
 
-type Kind = 'request' | 'visa';
+type Group = 'all' | 'unread' | 'request' | 'expense' | 'hiring' | 'expiry' | 'work';
+const GROUP_OF: Record<NoticeKind, Group> = { request: 'request', expense: 'expense', hiring: 'hiring', expiry: 'expiry', review: 'work', learning: 'work', system: 'work' };
 
-export interface Notice {
-  id: string;
-  kind: Kind;
-  /** Drives the icon tile colour (matches the dashboard attention rows). */
-  tone: 'pending' | 'soon' | 'expired';
-  icon: React.ReactNode;
-  title: string;
-  sub: string;
-  href?: string;
-}
-
-/** The alerts for one person (their own) or for their direct reports. The notification pages and the top-bar bell both read this. */
-export function useNotices(forceTeam: boolean) {
-  const me = useCurrentEmployee();
-  const { stateOf, visaExpiryOf } = useVisa();
-  const { requests } = useRequests();
-  const people = forceTeam ? directReports(me.id) : [me];
-  const peopleIds = new Set(people.map((p) => p.id));
-
-  const notices: Notice[] = [];
-
-  requests.filter((r) => r.status === 'Pending' && peopleIds.has(r.employeeId)).forEach((r) => {
-    const e = employeeById(r.employeeId);
-    notices.push({
-      id: `req-${r.id}`,
-      kind: 'request',
-      tone: 'pending',
-      icon: <InboxIcon />,
-      title: forceTeam ? `${e?.name} (${e?.employeeCode}) · ${r.type} pending` : `${r.type} pending approval`,
-      sub: r.details,
-      href: forceTeam ? undefined : '/my/requests',
-    });
-  });
-
-  people.forEach((e) => {
-    if (stateOf(e) === 'soon' || stateOf(e) === 'expired') {
-      const expired = stateOf(e) === 'expired';
-      notices.push({
-        id: `visa-${e.id}`,
-        kind: 'visa',
-        tone: expired ? 'expired' : 'soon',
-        icon: expired ? <WarnIcon /> : <IdIcon />,
-        title: forceTeam ? `${e.name} (${e.employeeCode})'s visa ${expired ? 'has expired' : 'expires soon'}` : `Your visa ${expired ? 'has expired' : 'expires soon'}`,
-        sub: `Residence visa — ${visaExpiryOf(e)}`,
-        href: forceTeam ? '/team/visa' : '/my/expiry',
-      });
-    }
-  });
-
-  return { notices, people };
-}
-
-/** Number on the bell: your own alerts, plus your team's when your role has a Team space. Zero hides the badge. */
-export function useNoticeCount() {
-  const { role } = useApp();
-  const mine = useNotices(false);
-  const team = useNotices(true);
-  return mine.notices.length + (PERS[role].scopes.includes('team') ? team.notices.length : 0);
-}
-
+/** The full list of notifications for the signed-in person (or, on the Team page, for their direct reports), with the
+    time of each, what is unread, and what needs action. */
 export function NotificationsView({ forceTeam = false }: { forceTeam?: boolean }) {
-  const { notices, people } = useNotices(forceTeam);
+  const { items, unread, now, markRead, markAllRead } = useNotifications(forceTeam ? 'team' : 'me');
+  const router = useRouter();
   const [q, setQ] = useState('');
-  const [kind, setKind] = useState<'all' | Kind>('all');
-  const requestCount = notices.filter((n) => n.kind === 'request').length;
-  const visaCount = notices.filter((n) => n.kind === 'visa').length;
-  const expiredCount = notices.filter((n) => n.tone === 'expired').length;
+  const [group, setGroup] = useState<Group>('all');
 
+  const count = (g: Group) => items.filter((n) => (g === 'all' ? true : g === 'unread' ? n.unread : GROUP_OF[n.kind] === g)).length;
   const needle = q.trim().toLowerCase();
-  const shown = notices.filter((n) => (kind === 'all' || n.kind === kind) && (!needle || `${n.title} ${n.sub}`.toLowerCase().includes(needle)));
+  const shown = items.filter((n) => (group === 'all' ? true : group === 'unread' ? n.unread : GROUP_OF[n.kind] === group) && (!needle || `${n.title} ${n.sub}`.toLowerCase().includes(needle)));
+  const action = items.filter((n) => n.tone === 'pending' || n.tone === 'soon' || n.tone === 'expired').length;
+  const overdue = items.filter((n) => n.tone === 'expired').length;
+
+  const open = (n: ViewNotice) => {
+    if (n.unread) markRead([n.id]);
+    if (n.href) router.push(n.href);
+  };
+
+  const options: { key: Group; label: string }[] = [
+    { key: 'all', label: 'All' },
+    { key: 'unread', label: 'Unread' },
+    { key: 'request', label: 'Requests' },
+    { key: 'expense', label: 'Expense' },
+    { key: 'hiring', label: 'Hiring' },
+    { key: 'expiry', label: 'Expiry' },
+    { key: 'work', label: 'Reviews & training' },
+  ];
 
   return (
     <div>
       <PageHeader
         eyebrow={forceTeam ? 'Team' : 'My Space'}
         title="Notifications"
-        description={forceTeam ? 'Alerts for your direct reports — pending approvals and expiring documents.' : 'Alerts on your own requests and document expiries.'}
+        description={forceTeam ? 'What needs attention for your direct reports: pending requests and documents about to expire.' : 'Requests, approvals, interviews, reminders and expiries for you, with the time each one arrived.'}
+        actions={
+          unread > 0 && !forceTeam ? (
+            <Button onClick={markAllRead}>
+              <CheckIcon /> Mark all as read
+            </Button>
+          ) : undefined
+        }
       />
 
       <div className="ss-strip">
         <StatStrip
           items={[
-            { label: 'Notifications', value: notices.length, icon: <BellIcon />, tone: notices.length ? 'blue' : 'gray', hint: forceTeam ? `${people.length} direct report(s)` : 'For you' },
-            { label: 'Pending requests', value: requestCount, icon: <InboxIcon />, tone: 'amber', hint: 'Awaiting approval' },
-            { label: 'Expiring soon', value: visaCount - expiredCount, icon: <ClockIcon />, tone: 'purple', hint: 'Visa renewals due' },
-            { label: 'Expired', value: expiredCount, icon: <WarnIcon />, tone: 'red', hint: 'Needs action' },
+            { label: 'Notifications', value: items.length, icon: <BellIcon />, tone: items.length ? 'blue' : 'gray', hint: forceTeam ? 'For your team' : `${unread} unread` },
+            { label: 'Needs action', value: action, icon: <ClockIcon />, tone: 'amber', hint: 'Waiting on you or due soon' },
+            { label: 'Overdue or urgent', value: overdue, icon: <WarnIcon />, tone: 'red', hint: 'Needs attention now' },
+            { label: 'Unread', value: unread, icon: <BellIcon />, tone: 'purple', hint: 'Not opened yet' },
           ]}
         />
       </div>
 
       <Card>
-        <CardHeader title="Recent" sub={`${notices.length} notification(s)`} />
-        {!notices.length ? (
-          <EmptyState icon={<BellIcon />} title="All caught up" description="Nothing needs your attention right now." />
+        <CardHeader title="Recent" sub={`${items.length} notification${items.length === 1 ? '' : 's'}, newest first`} />
+        {!items.length ? (
+          <EmptyState icon={<BellIcon />} title="All caught up" description="Nothing needs your attention right now. New ones appear here the moment they happen." />
         ) : (
           <>
             <div className="tbar">
@@ -116,26 +81,22 @@ export function NotificationsView({ forceTeam = false }: { forceTeam?: boolean }
                 <SearchIcon />
                 <input value={q} onChange={(e) => setQ(e.target.value)} placeholder="Search notifications…" />
               </div>
-              <FilterChips
-                value={kind}
-                onChange={setKind}
-                options={[
-                  { key: 'all', label: 'All', count: notices.length },
-                  { key: 'request', label: 'Requests', count: requestCount },
-                  { key: 'visa', label: 'Visa & expiry', count: visaCount },
-                ]}
-              />
+              <FilterChips value={group} onChange={setGroup} options={options.filter((o) => o.key === 'all' || count(o.key) > 0 || o.key === group).map((o) => ({ ...o, count: count(o.key) }))} />
             </div>
             <div className="da-list">
               {!shown.length && <EmptyState icon={<SearchIcon />} title="No matches" description="No notifications match your search or filter." />}
               {shown.map((n) => {
                 const body = (
                   <>
-                    <span className={`da-ic t-${n.tone}`}>{n.icon}</span>
+                    <span className={`da-ic t-${n.tone}`}>{iconFor(n)}</span>
                     <div style={{ minWidth: 0, flex: 1 }}>
-                      <div className="da-t">{n.title}</div>
+                      <div className="da-t">
+                        {n.title}
+                        {n.unread && <i className="nt-dot inline" aria-label="Unread" />}
+                      </div>
                       <div className="da-s">{n.sub}</div>
                     </div>
+                    <span className="nt-when">{ago(n.at, now)}</span>
                     {n.href && (
                       <span className="da-go">
                         <ChevronRightIcon />
@@ -144,11 +105,19 @@ export function NotificationsView({ forceTeam = false }: { forceTeam?: boolean }
                   </>
                 );
                 return n.href ? (
-                  <Link key={n.id} href={n.href} className="da-row">
+                  <Link
+                    key={n.id}
+                    href={n.href}
+                    className={`da-row ${n.unread ? 'nt-unread' : ''}`}
+                    onClick={(e) => {
+                      e.preventDefault();
+                      open(n);
+                    }}
+                  >
                     {body}
                   </Link>
                 ) : (
-                  <div key={n.id} className="da-row">
+                  <div key={n.id} className={`da-row ${n.unread ? 'nt-unread' : ''}`} onClick={() => n.unread && markRead([n.id])} role="button" tabIndex={0} onKeyDown={(e) => e.key === 'Enter' && n.unread && markRead([n.id])}>
                     {body}
                   </div>
                 );
@@ -156,7 +125,7 @@ export function NotificationsView({ forceTeam = false }: { forceTeam?: boolean }
             </div>
             <div className="ss-foot">
               <span>
-                Showing {shown.length} of {notices.length} notification(s)
+                Showing {shown.length} of {items.length} notification{items.length === 1 ? '' : 's'}
               </span>
             </div>
           </>

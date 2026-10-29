@@ -65,6 +65,8 @@ function job(n: number, r: Requisition, p: Pick<Job, 'designationTitle' | 'descr
     ...rest,
     status: 'Open',
     hiringManagerId: r.hiringManagerId,
+    taManagerId: 'GS-155',
+    recruiterId: 'GS-156',
     budgetMin: r.budgetMin,
     budgetMax: r.budgetMax,
     currency: r.currency,
