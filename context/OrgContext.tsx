@@ -6,6 +6,7 @@ import { Company, Department, Designation, LocationDef } from '@/lib/types';
 import { logTask } from '@/lib/activity';
 import { useAuth } from '@/lib/auth';
 import { fetchOrg, orgApi } from '@/lib/orgApi';
+import { API_ENABLED } from '@/lib/api';
 import { useHiring } from '@/lib/hiringStore';
 
 /* Organization master data. Read from the backend (/api/org/*) once someone is signed in; before that (the sign-in and
@@ -60,7 +61,7 @@ export function OrgProvider({ children }: { children: React.ReactNode }) {
   const reload = useCallback(async () => apply(await fetchOrg()), [apply]);
 
   useEffect(() => {
-    if (!signedIn) return;
+    if (!signedIn || !API_ENABLED) return;
     let cancelled = false;
     fetchOrg()
       .then((org) => !cancelled && apply(org))

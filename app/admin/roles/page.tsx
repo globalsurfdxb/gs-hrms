@@ -2,7 +2,7 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { ROLE_SCOPE } from '@/lib/data';
-import { errorMessage } from '@/lib/api';
+import { API_ENABLED, errorMessage } from '@/lib/api';
 import { ApiRole, fetchCatalog, rolesApi } from '@/lib/rolesApi';
 import { logAudit } from '@/lib/employeeStore';
 import { useCurrentEmployee } from '@/context/AppContext';
@@ -356,6 +356,7 @@ export default function AdminRolesPage() {
 
   // The page is only drawn for a signed-in person, so the session already exists.
   useEffect(() => {
+    if (!API_ENABLED) return;
     let cancelled = false;
     Promise.all([fetchCatalog(), rolesApi.list()])
       .then(([cat, list]) => {
