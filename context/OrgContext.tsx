@@ -1,32 +1,40 @@
 'use client';
 
-import { createContext, useContext, useMemo, useState } from 'react';
+import { createContext, useCallback, useContext, useEffect, useMemo, useState } from 'react';
 import { COMPANIES, DEPARTMENTS, DESIGNATIONS, EMPLOYEES, LOCATIONS } from '@/lib/data';
 import { Company, Department, Designation, LocationDef } from '@/lib/types';
 import { logTask } from '@/lib/activity';
+import { useAuth } from '@/lib/auth';
+import { fetchOrg, orgApi } from '@/lib/orgApi';
 import { useHiring } from '@/lib/hiringStore';
 
+/* Organization master data. Read from the backend (/api/org/*) once someone is signed in; before that (the sign-in and
+   public careers pages) — and if the backend cannot be read — the mock data from lib/data.ts is used. Changes go to
+   the API when connected (it validates, audits and may refuse them: the promise rejects with an ApiError). */
+
 interface OrgContextValue {
+  /** true when the data below comes from the backend. */
+  connected: boolean;
   locations: LocationDef[];
   locationName: (id: string) => string;
   locationsLabel: (ids: string[]) => string;
   locationDef: (id: string) => LocationDef | undefined;
-  addLocation: (l: Omit<LocationDef, 'id' | 'system'>) => void;
-  updateLocation: (l: LocationDef) => void;
-  removeLocation: (id: string) => void;
+  addLocation: (l: Omit<LocationDef, 'id' | 'system'>) => Promise<void>;
+  updateLocation: (l: LocationDef) => Promise<void>;
+  removeLocation: (id: string) => Promise<void>;
   locationUsage: (id: string) => { companies: number; departments: number; employees: number };
   companies: Company[];
   departments: Department[];
   designations: Designation[];
-  addCompany: (c: Omit<Company, 'id'>) => void;
-  updateCompany: (c: Company) => void;
-  removeCompany: (id: string) => void;
-  addDepartment: (d: Omit<Department, 'id'>) => void;
-  updateDepartment: (d: Department) => void;
-  removeDepartment: (id: string) => void;
-  addDesignation: (d: Omit<Designation, 'id'>) => void;
-  updateDesignation: (d: Designation) => void;
-  removeDesignation: (id: string) => void;
+  addCompany: (c: Omit<Company, 'id'>) => Promise<void>;
+  updateCompany: (c: Company) => Promise<void>;
+  removeCompany: (id: string) => Promise<void>;
+  addDepartment: (d: Omit<Department, 'id'>) => Promise<void>;
+  updateDepartment: (d: Department) => Promise<void>;
+  removeDepartment: (id: string) => Promise<void>;
+  addDesignation: (d: Omit<Designation, 'id'>) => Promise<void>;
+  updateDesignation: (d: Designation) => Promise<void>;
+  removeDesignation: (id: string) => Promise<void>;
 }
 
 const OrgContext = createContext<OrgContextValue | null>(null);
@@ -36,6 +44,41 @@ export function OrgProvider({ children }: { children: React.ReactNode }) {
   const [companies, setCompanies] = useState<Company[]>(COMPANIES);
   const [departments, setDepartments] = useState<Department[]>(DEPARTMENTS);
   const [designations, setDesignations] = useState<Designation[]>(DESIGNATIONS);
+  const [connected, setConnected] = useState(false);
+
+  // Re-read whenever a different person signs in.
+  const { status, user } = useAuth();
+  const signedIn = status === 'in' ? (user?.employeeCode ?? null) : null;
+
+  const apply = useCallback((org: Awaited<ReturnType<typeof fetchOrg>>) => {
+    setLocations(org.locations);
+    setCompanies(org.companies);
+    setDepartments(org.departments);
+    setDesignations(org.designations);
+    setConnected(true);
+  }, []);
+  const reload = useCallback(async () => apply(await fetchOrg()), [apply]);
+
+  useEffect(() => {
+    if (!signedIn) return;
+    let cancelled = false;
+    fetchOrg()
+      .then((org) => !cancelled && apply(org))
+      .catch((e) => console.warn('[OrgContext] using mock data — the backend could not be read:', e));
+    return () => {
+      cancelled = true;
+    };
+  }, [signedIn, apply]);
+
+  // When connected, write through the API and re-read; otherwise change the local mock state as before.
+  const write = useCallback(
+    async (call: () => Promise<unknown>, local: () => void) => {
+      if (!connected) return local();
+      await call();
+      await reload();
+    },
+    [connected, reload],
+  );
 
   // A designation asked for on a requisition joins its department once the requisition has been fully approved.
   const { requisitions } = useHiring();
@@ -50,22 +93,23 @@ export function OrgProvider({ children }: { children: React.ReactNode }) {
 
   const value = useMemo<OrgContextValue>(
     () => ({
+      connected,
       locations,
       locationName: (id) => (id === 'Both' ? 'All locations' : locations.find((l) => l.id === id)?.name ?? id),
       locationsLabel: (ids) => (ids.length > 1 && locations.every((l) => ids.includes(l.id)) ? 'All locations' : ids.map((id) => locations.find((l) => l.id === id)?.name ?? id).join(', ') || 'No location'),
       locationDef: (id) => locations.find((l) => l.id === id),
-      addLocation: (l) => {
+      addLocation: async (l) => {
+        await write(() => orgApi.addLocation(l), () => setLocations((p) => [...p, { ...l, id: `loc-${Date.now()}`, system: false }]));
         logTask('Organization', 'Location added', l.name, `${l.name} (${l.currency})`);
-        setLocations((p) => [...p, { ...l, id: `loc-${Date.now()}`, system: false }]);
       },
-      updateLocation: (l) => {
+      updateLocation: async (l) => {
+        await write(() => orgApi.updateLocation(l), () => setLocations((p) => p.map((x) => (x.id === l.id ? l : x))));
         logTask('Organization', 'Location changed', l.name, 'Details updated');
-        setLocations((p) => p.map((x) => (x.id === l.id ? l : x)));
       },
-      removeLocation: (id) => {
+      removeLocation: async (id) => {
         const l = locations.find((x) => x.id === id);
+        await write(() => orgApi.removeLocation(id), () => setLocations((p) => p.filter((x) => x.id !== id || x.system)));
         if (l && !l.system) logTask('Organization', 'Location removed', l.name, 'Removed');
-        setLocations((p) => p.filter((x) => x.id !== id || x.system));
       },
       locationUsage: (id) => ({
         companies: companies.filter((c) => c.location === id).length,
@@ -75,51 +119,61 @@ export function OrgProvider({ children }: { children: React.ReactNode }) {
       companies,
       departments,
       designations,
-      addCompany: (c) => {
+      addCompany: async (c) => {
+        await write(() => orgApi.addCompany(c), () => setCompanies((p) => [...p, { ...c, id: `co-${Date.now()}` }]));
         logTask('Organization', 'Company added', c.name, c.name);
-        setCompanies((p) => [...p, { ...c, id: `co-${Date.now()}` }]);
       },
-      updateCompany: (c) => {
+      updateCompany: async (c) => {
+        await write(() => orgApi.updateCompany(c), () => setCompanies((p) => p.map((x) => (x.id === c.id ? c : x))));
         logTask('Organization', 'Company changed', c.name, 'Details updated');
-        setCompanies((p) => p.map((x) => (x.id === c.id ? c : x)));
       },
-      removeCompany: (id) => {
+      removeCompany: async (id) => {
         const co = companies.find((x) => x.id === id);
+        await write(
+          () => orgApi.removeCompany(id),
+          () => {
+            const deptIds = new Set(departments.filter((d) => d.companyId === id).map((d) => d.id));
+            setCompanies((p) => p.filter((x) => x.id !== id));
+            setDepartments((p) => p.filter((d) => d.companyId !== id));
+            setDesignations((p) => p.filter((d) => !deptIds.has(d.departmentId)));
+          },
+        );
         if (co) logTask('Organization', 'Company removed', co.name, 'Company, its departments and designations removed');
-        const deptIds = new Set(departments.filter((d) => d.companyId === id).map((d) => d.id));
-        setCompanies((p) => p.filter((x) => x.id !== id));
-        setDepartments((p) => p.filter((d) => d.companyId !== id));
-        setDesignations((p) => p.filter((d) => !deptIds.has(d.departmentId)));
       },
-      addDepartment: (d) => {
+      addDepartment: async (d) => {
+        await write(() => orgApi.addDepartment(d), () => setDepartments((p) => [...p, { ...d, id: `dep-${Date.now()}` }]));
         logTask('Organization', 'Department added', d.name, `${d.name} in ${companies.find((c) => c.id === d.companyId)?.name ?? ''}`);
-        setDepartments((p) => [...p, { ...d, id: `dep-${Date.now()}` }]);
       },
-      updateDepartment: (d) => {
+      updateDepartment: async (d) => {
+        await write(() => orgApi.updateDepartment(d), () => setDepartments((p) => p.map((x) => (x.id === d.id ? d : x))));
         logTask('Organization', 'Department changed', d.name, 'Details updated');
-        setDepartments((p) => p.map((x) => (x.id === d.id ? d : x)));
       },
-      removeDepartment: (id) => {
+      removeDepartment: async (id) => {
         const dep = departments.find((x) => x.id === id);
+        await write(
+          () => orgApi.removeDepartment(id),
+          () => {
+            setDepartments((p) => p.filter((d) => d.id !== id));
+            setDesignations((p) => p.filter((d) => d.departmentId !== id));
+          },
+        );
         if (dep) logTask('Organization', 'Department removed', dep.name, 'Department and its designations removed');
-        setDepartments((p) => p.filter((d) => d.id !== id));
-        setDesignations((p) => p.filter((d) => d.departmentId !== id));
       },
-      addDesignation: (d) => {
+      addDesignation: async (d) => {
+        await write(() => orgApi.addDesignation(d), () => setDesignations((p) => [...p, { ...d, id: `des-${Date.now()}` }]));
         logTask('Organization', 'Designation added', d.title, d.title);
-        setDesignations((p) => [...p, { ...d, id: `des-${Date.now()}` }]);
       },
-      updateDesignation: (d) => {
+      updateDesignation: async (d) => {
+        await write(() => orgApi.updateDesignation(d), () => setDesignations((p) => p.map((x) => (x.id === d.id ? d : x))));
         logTask('Organization', 'Designation changed', d.title, 'Title updated');
-        setDesignations((p) => p.map((x) => (x.id === d.id ? d : x)));
       },
-      removeDesignation: (id) => {
+      removeDesignation: async (id) => {
         const des = designations.find((x) => x.id === id);
+        await write(() => orgApi.removeDesignation(id), () => setDesignations((p) => p.filter((d) => d.id !== id)));
         if (des) logTask('Organization', 'Designation removed', des.title, 'Removed');
-        setDesignations((p) => p.filter((d) => d.id !== id));
       },
     }),
-    [locations, companies, departments, designations]
+    [connected, write, locations, companies, departments, designations]
   );
 
   return <OrgContext.Provider value={value}>{children}</OrgContext.Provider>;

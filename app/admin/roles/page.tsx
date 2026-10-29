@@ -1,7 +1,9 @@
 'use client';
 
-import { useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { ROLE_SCOPE } from '@/lib/data';
+import { errorMessage } from '@/lib/api';
+import { ApiRole, fetchCatalog, rolesApi } from '@/lib/rolesApi';
 import { logAudit } from '@/lib/employeeStore';
 import { useCurrentEmployee } from '@/context/AppContext';
 import { ACTIONS, AccessAction, AccessCategory, AccessFeature, AccessModule, EXTRA_ACTIONS, ExtraAction, SYSTEM_ROLES, buildCatalog, defaultGrants, permKey } from '@/lib/access';
@@ -53,6 +55,8 @@ const describePerms = (keys: string[], catalog: AccessModule[]) => {
 
 const NEW_CATEGORY = '__new__';
 const blankRole = (): RoleDef => ({ id: '', name: '', description: '', system: false, perms: [] });
+const toRole = (r: ApiRole): RoleDef => ({ id: r.id, name: r.name, description: r.description, system: r.system, perms: r.permissions });
+const sameKeys = (a: string[], b: string[]) => a.length === b.length && a.every((k) => b.includes(k));
 const catFeatures = (c: AccessCategory) => c.features;
 const modFeatures = (m: AccessModule) => m.categories.flatMap(catFeatures);
 
@@ -342,6 +346,34 @@ export default function AdminRolesPage() {
   const [featActs, setFeatActs] = useState<ExtraAction[]>(['add', 'edit', 'delete']);
   const [featError, setFeatError] = useState('');
 
+  /* Connected to the backend, roles and the catalogue come from /api/iam and every change is saved there (the server
+     audits it and signs the role's members out). Without a backend session the page keeps working locally. */
+  const [connected, setConnected] = useState(false);
+  const [notice, setNotice] = useState('');
+  const [busy, setBusy] = useState(false);
+  const saves = useRef(new Map<string, Promise<unknown>>());
+  const reloadRoles = useCallback(async () => setRoles((await rolesApi.list()).map(toRole)), []);
+
+  // The page is only drawn for a signed-in person, so the session already exists.
+  useEffect(() => {
+    let cancelled = false;
+    Promise.all([fetchCatalog(), rolesApi.list()])
+      .then(([cat, list]) => {
+        if (cancelled) return;
+        setCatalog(cat);
+        setRoles(list.map(toRole));
+        // Local roles are keyed by name, server roles by id: keep the same selection.
+        const idOf = (k: string) => list.find((r) => r.id === k || r.name === k)?.id;
+        setSelectedId((k) => idOf(k) ?? list[0]?.id ?? k);
+        setCmp((ks) => ks.map(idOf).filter((id): id is string => !!id));
+        setConnected(true);
+      })
+      .catch((e) => console.warn('[roles] using local roles — the backend could not be read:', e));
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
   const searching = q.trim().length > 0;
   const match = (f: AccessFeature, c: AccessCategory, m: AccessModule) => `${f.label} ${c.label} ${m.name}`.toLowerCase().includes(q.trim().toLowerCase());
   const view = useMemo(
@@ -382,8 +414,27 @@ export default function AdminRolesPage() {
   };
   const mutate = (roleId: string, fn: (p: string[]) => string[]) => {
     const r = roles.find((x) => x.id === roleId);
-    if (r) auditPerms(r.name, r.perms, fn(r.perms));
-    setRoles((prev) => prev.map((x) => (x.id === roleId ? { ...x, perms: fn(x.perms) } : x)));
+    if (!r) return;
+    const next = fn(r.perms);
+    setRoles((prev) => prev.map((x) => (x.id === roleId ? { ...x, perms: next } : x)));
+    if (!connected) return auditPerms(r.name, r.perms, next);
+
+    // Saved one at a time per role, in click order; each save sends the role's whole set. A refused change (your own
+    // role, a grant you do not hold, the Super Admin role) is rolled back to what the server has.
+    const run = (saves.current.get(roleId) ?? Promise.resolve())
+      .then(() => rolesApi.setPermissions(roleId, next))
+      .then(
+        (res) => {
+          setNotice('');
+          auditPerms(r.name, r.perms, next);
+          if (saves.current.get(roleId) === run) setRoles((prev) => prev.map((x) => (x.id === roleId ? toRole(res.role) : x)));
+        },
+        async (e) => {
+          setNotice(`${r.name}: ${errorMessage(e)}`);
+          await reloadRoles().catch(() => undefined);
+        },
+      );
+    saves.current.set(roleId, run);
   };
   const stat = (perms: string[], list: AccessFeature[]) => {
     const n = list.filter((f) => perms.includes(f.id)).length;
@@ -415,18 +466,56 @@ export default function AdminRolesPage() {
     setRoleError('');
     setRoleDrawer(true);
   };
-  const deleteRole = (r: RoleDef) => {
+  const deleteRole = async (r: RoleDef) => {
     if (r.system || !window.confirm(`Delete the role "${r.name}"? People who have it lose its access.`)) return;
+    if (connected) {
+      // Refused while someone still has the role (role.in_use).
+      try {
+        await rolesApi.remove(r.id);
+        setNotice('');
+        setCmp((p) => p.filter((x) => x !== r.id));
+        if (selectedId === r.id) setSelectedId(roles.find((x) => x.id !== r.id)?.id ?? '');
+      } catch (e) {
+        setNotice(`${r.name}: ${errorMessage(e)}`);
+      }
+      await reloadRoles().catch(() => undefined);
+      return;
+    }
     logAudit({ employeeId: `role:${r.name}`, field: 'Role deleted', from: r.name, to: 'Removed', changedBy: me.name, module: 'Access' });
     setRoles((prev) => prev.filter((x) => x.id !== r.id));
     setCmp((p) => p.filter((x) => x !== r.id));
     if (selectedId === r.id) setSelectedId(roles[0].id);
   };
 
-  const saveRole = () => {
+  const saveRole = async () => {
     const name = draft.name.trim();
     if (!name) return setRoleError('Role name is required.');
     if (mode === 'add' && roles.some((r) => r.name.toLowerCase() === name.toLowerCase())) return setRoleError('A role with that name already exists.');
+    if (connected) {
+      setBusy(true);
+      try {
+        if (mode === 'add') {
+          const created = await rolesApi.create({ name, description: draft.description.trim(), permissions: draft.perms });
+          setSelectedId(created.id);
+          setTab('role');
+        } else {
+          const before = roles.find((r) => r.id === draft.id);
+          if (!before) return;
+          const details: { name?: string; description?: string } = {};
+          if (!before.system && before.name !== name) details.name = name;
+          if (before.description !== draft.description.trim()) details.description = draft.description.trim();
+          if (Object.keys(details).length) await rolesApi.update(draft.id, details);
+          if (!sameKeys(before.perms, draft.perms)) await rolesApi.setPermissions(draft.id, draft.perms);
+        }
+        setRoleDrawer(false);
+      } catch (e) {
+        setRoleError(errorMessage(e));
+      } finally {
+        await reloadRoles().catch(() => undefined);
+        setBusy(false);
+      }
+      return;
+    }
     if (mode === 'add') {
       logAudit({ employeeId: `role:${name}`, field: 'Role created', to: `${name} · ${draft.perms.length} permissions`, changedBy: me.name, module: 'Access' });
       const id = `role-${Date.now()}`;
@@ -503,7 +592,7 @@ export default function AdminRolesPage() {
         description="One access model for every module. Pick a role to set what it can do (View, Add, Edit or Delete), or compare roles side by side."
         actions={
           <>
-            <Button variant="ghost" onClick={openFeature}>
+            <Button variant="ghost" onClick={openFeature} disabled={connected} title={connected ? 'Custom features are not saved on the server yet' : undefined}>
               <PlusIcon /> Add feature
             </Button>
             <Button variant="primary" onClick={openAdd}>
@@ -677,6 +766,11 @@ export default function AdminRolesPage() {
         <span>Module → category → feature. Add, Edit and Delete include View. The V A E D buttons on a module or category set that action for everything inside it.</span>
       </div>
       <div className="rp-card">
+        {notice && (
+          <div role="alert" style={{ margin: '12px 16px 0', padding: '10px 12px', borderRadius: 8, fontSize: 13, color: 'var(--danger)', background: 'var(--danger-50)' }}>
+            {notice}
+          </div>
+        )}
         <div className="tbar">
           <div className="tsearch">
             <SearchIcon />
@@ -805,7 +899,17 @@ export default function AdminRolesPage() {
         <div className="note-box" style={{ margin: 16 }}>
           <ShieldIcon />
           <div>
-            Changes are held in this browser session. Each module reads its grants from this one catalogue (<code>lib/access.ts</code>); the RBAC backend will persist them and enforce them on every API call.
+            {connected ? (
+              <>
+                Changes are saved on the server and enforced on every API call. Members of a changed role are signed out so the change applies at once. You can&apos;t change your own role, grant
+                permissions you don&apos;t have, or change the Super Admin role.
+              </>
+            ) : (
+              <>
+                Changes are held in this browser session. Each module reads its grants from this one catalogue (<code>lib/access.ts</code>); the RBAC backend will persist them and enforce them on every
+                API call.
+              </>
+            )}
           </div>
         </div>
       </div>
@@ -844,7 +948,7 @@ export default function AdminRolesPage() {
             <Button variant="ghost" onClick={() => setRoleDrawer(false)}>
               Cancel
             </Button>
-            <Button variant="primary" onClick={saveRole}>
+            <Button variant="primary" onClick={saveRole} disabled={busy}>
               {mode === 'add' ? 'Add role' : 'Save changes'}
             </Button>
           </>

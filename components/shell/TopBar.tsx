@@ -6,7 +6,7 @@ import { usePathname, useRouter } from 'next/navigation';
 import { useApp, useCurrentEmployee } from '@/context/AppContext';
 import { APP_MODULES, HOME_TABS, PERS, RAIL_LABEL, SCOPE_LABEL, inModule, resolveLocation } from '@/lib/nav';
 import { laCall, useLaChrome } from '@/lib/laStore';
-import { signOut, useAuth } from '@/lib/auth';
+import { signOut } from '@/lib/auth';
 import { useLocationName } from '@/components/shell/useLocationName';
 import { NotificationBell } from '@/components/notifications/NotificationBell';
 import { BellIcon, GearIcon, MenuIcon, PlusIcon } from '@/components/icons';
@@ -30,7 +30,6 @@ export function TopBar({ onMenu }: { onMenu: () => void }) {
   const me = useCurrentEmployee();
   const pathname = usePathname();
   const router = useRouter();
-  const auth = useAuth();
   const locName = useLocationName();
   const [menu, setMenu] = useState(false);
   const loc = resolveLocation(pathname);
@@ -99,7 +98,7 @@ export function TopBar({ onMenu }: { onMenu: () => void }) {
               </Link>
             )
           )}
-          <button type="button" className="ztb" title="Sign out" aria-label="Sign out" onClick={() => { signOut(); router.replace('/login'); }}>
+          <button type="button" className="ztb" title="Sign out" aria-label="Sign out" onClick={() => void signOut().then(() => router.replace('/login'))}>
             <LogoutIcon />
           </button>
           <div className="zacct">
@@ -118,7 +117,7 @@ export function TopBar({ onMenu }: { onMenu: () => void }) {
                     <div className="zacct-av">{me.avatarInitials}</div>
                     <div style={{ minWidth: 0 }}>
                       <div className="zacct-nm">{me.name}</div>
-                      <div className="zacct-em">{auth.email ?? me.email}</div>
+                      <div className="zacct-em">{me.email}</div>
                       <div className="zacct-rl">
                         {role} · {me.employeeCode} · {locName(me.location)}
                       </div>
@@ -134,8 +133,7 @@ export function TopBar({ onMenu }: { onMenu: () => void }) {
                     className="zacct-it out"
                     onClick={() => {
                       setMenu(false);
-                      signOut();
-                      router.replace('/login');
+                      void signOut().then(() => router.replace('/login'));
                     }}
                   >
                     <LogoutIcon />

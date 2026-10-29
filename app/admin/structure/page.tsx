@@ -8,6 +8,7 @@ import { useSeparation } from '@/context/SeparationContext';
 import { departmentsMissingFromMaster, designationsMissingFromMaster, headcountByCompany, headcountByDepartment, headcountByDesignation, sameText } from '@/lib/headcount';
 import { useOrg } from '@/context/OrgContext';
 import { Department, Designation } from '@/lib/types';
+import { errorMessage } from '@/lib/api';
 import { PageHeader } from '@/components/ui/PageHeader';
 import { Card, EmptyState, Button } from '@/components/ui/Card';
 import { Drawer } from '@/components/ui/Drawer';
@@ -47,7 +48,8 @@ function Fg({ label, required, children }: { label: string; required?: boolean; 
 }
 
 export default function AdminStructurePage() {
-  const { companies, departments, designations, locations, locationName, addDepartment, updateDepartment, removeDepartment, addDesignation, updateDesignation, removeDesignation } = useOrg();
+  const { connected, companies, departments, designations, locations, locationName, addDepartment, updateDepartment, removeDepartment, addDesignation, updateDesignation, removeDesignation } = useOrg();
+  const [busy, setBusy] = useState(false);
   const [selectedId, setSelectedId] = useState('');
   const [q, setQ] = useState('');
   const [locFilter, setLocFilter] = useState('all');
@@ -115,7 +117,8 @@ export default function AdminStructurePage() {
   };
 
   const openAddDept = () => {
-    setDeptDraft({ ...blankDept(company.id), locations: locations.map((l) => l.id) });
+    // A company that operates in one location can only have departments there (the API refuses others).
+    setDeptDraft({ ...blankDept(company.id), locations: company.location === 'Both' ? locations.map((l) => l.id) : [company.location] });
     setDeptMode('add');
     setDeptError('');
     setDeptOpen(true);
@@ -126,20 +129,36 @@ export default function AdminStructurePage() {
     setDeptError('');
     setDeptOpen(true);
   };
-  const saveDept = () => {
+  const saveDept = async () => {
     const name = deptDraft.name.trim();
     if (!name) return setDeptError('Department name is required.');
     if (companyDepts.some((d) => d.id !== deptDraft.id && d.name.toLowerCase() === name.toLowerCase())) return setDeptError(`${company.name} already has a department called "${name}".`);
     if (deptDraft.locations.length === 0) return setDeptError('Choose at least one work location.');
     const record = { ...deptDraft, name };
-    if (deptMode === 'add') addDepartment(record);
-    else updateDepartment(record);
-    setDeptOpen(false);
+    setBusy(true);
+    try {
+      if (deptMode === 'add') await addDepartment(record);
+      else await updateDepartment(record);
+      setDeptOpen(false);
+    } catch (e) {
+      setDeptError(errorMessage(e));
+    } finally {
+      setBusy(false);
+    }
   };
-  const deleteDept = (d: Department) => {
+  const deleteDept = async (d: Department) => {
     const n = designations.filter((x) => x.departmentId === d.id).length;
-    if (n > 0 && !window.confirm(`Delete ${d.name}? Its ${n} designation(s) will also be removed.`)) return;
-    removeDepartment(d.id);
+    // Connected, the server refuses a department still in use (department.in_use), so say so before asking.
+    const msg = connected
+      ? `Delete ${d.name}?${n > 0 ? ` Its ${n} designation(s) are deleted with it.` : ''}\n\nA department still used by employees or hiring records (or one of its designations) can't be deleted.`
+      : `Delete ${d.name}? Its ${n} designation(s) will also be removed.`;
+    if ((connected || n > 0) && !window.confirm(msg)) return;
+    try {
+      await removeDepartment(d.id);
+    } catch (e) {
+      // e.g. department.in_use: employees or hiring records still use it or one of its designations.
+      window.alert(errorMessage(e));
+    }
   };
 
   const openAddDesig = (d: Department) => {
@@ -154,20 +173,32 @@ export default function AdminStructurePage() {
     setDesError('');
     setDesOpen(true);
   };
-  const saveDesig = () => {
+  const saveDesig = async () => {
     const title = desDraft.title.trim();
     if (!title) return setDesError('Designation title is required.');
     if (designations.some((x) => x.departmentId === desDraft.departmentId && x.id !== desDraft.id && x.title.toLowerCase() === title.toLowerCase())) return setDesError(`This department already has a designation called "${title}".`);
     const record = { ...desDraft, title };
-    if (desMode === 'add') addDesignation(record);
-    else updateDesignation(record);
-    setDesOpen(false);
+    setBusy(true);
+    try {
+      if (desMode === 'add') await addDesignation(record);
+      else await updateDesignation(record);
+      setDesOpen(false);
+    } catch (e) {
+      setDesError(errorMessage(e));
+    } finally {
+      setBusy(false);
+    }
   };
-  const deleteDesig = (x: Designation) => {
+  const deleteDesig = async (x: Designation) => {
     const d = departments.find((y) => y.id === x.departmentId);
     const n = d ? people(d.name, x.title) : 0;
     if (n > 0 && !window.confirm(`${n} employee(s) currently hold "${x.title}". Delete it anyway?`)) return;
-    removeDesignation(x.id);
+    try {
+      await removeDesignation(x.id);
+    } catch (e) {
+      // e.g. designation.in_use: the server refuses while employees, requisitions or jobs use it.
+      window.alert(errorMessage(e));
+    }
   };
 
   const desDept = departments.find((d) => d.id === desDraft.departmentId);
@@ -489,7 +520,7 @@ export default function AdminStructurePage() {
             <Button variant="ghost" onClick={() => setDeptOpen(false)}>
               Cancel
             </Button>
-            <Button variant="primary" onClick={saveDept}>
+            <Button variant="primary" onClick={saveDept} disabled={busy}>
               {deptMode === 'add' ? 'Add department' : 'Save changes'}
             </Button>
           </>
@@ -536,7 +567,9 @@ export default function AdminStructurePage() {
             </div>
           </Fg>
           <Fg label="Department head">
-            <SearchSelect options={headOptions(deptDraft.head)} value={deptDraft.head} onChange={(v) => setDeptDraft({ ...deptDraft, head: v })} placeholder="Search by name or employee ID…" emptyText="No employees found" />
+            <SearchSelect options={headOptions(deptDraft.head)} value={deptDraft.head} onChange={(v) => setDeptDraft({ ...deptDraft, head: v })} placeholder="Search by name or employee ID…" emptyText="No employees found" disabled={connected} />
+            {/* The API stores the head as an employee id; the employee list is not connected to the API yet. */}
+            {connected && <span className="hint">Department heads can be changed once the employee directory is connected to the server.</span>}
           </Fg>
         </div>
         {deptError && <div style={{ marginTop: 10, fontSize: 12, color: 'var(--danger)' }}>{deptError}</div>}
@@ -552,7 +585,7 @@ export default function AdminStructurePage() {
             <Button variant="ghost" onClick={() => setDesOpen(false)}>
               Cancel
             </Button>
-            <Button variant="primary" onClick={saveDesig}>
+            <Button variant="primary" onClick={saveDesig} disabled={busy}>
               {desMode === 'add' ? 'Add designation' : 'Save changes'}
             </Button>
           </>
