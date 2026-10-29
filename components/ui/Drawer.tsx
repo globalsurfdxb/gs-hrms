@@ -10,6 +10,7 @@ export function Drawer({
   description,
   footer,
   wide,
+  variant = 'drawer',
   children,
 }: {
   open: boolean;
@@ -18,6 +19,8 @@ export function Drawer({
   description?: string;
   footer?: React.ReactNode;
   wide?: boolean;
+  /** "drawer" slides in from the right (the default); "modal" opens as a centred popup. */
+  variant?: 'drawer' | 'modal';
   children: React.ReactNode;
 }) {
   const [mounted, setMounted] = useState(false);
@@ -35,12 +38,20 @@ export function Drawer({
     return () => clearTimeout(t);
   }, [open]);
 
+  // A popup can also be closed with Escape.
+  useEffect(() => {
+    if (!open || variant !== 'modal') return;
+    const onKey = (e: KeyboardEvent) => e.key === 'Escape' && onClose();
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, [open, variant, onClose]);
+
   if (!mounted) return null;
 
   return (
     <>
       <div className={`drawer-scrim ${entered ? 'open' : ''}`} onClick={onClose} />
-      <div className={`drawer ${wide ? 'wide' : ''} ${entered ? 'open' : ''}`} role="dialog" aria-modal="true">
+      <div className={`drawer ${variant === 'modal' ? 'modal' : ''} ${wide ? 'wide' : ''} ${entered ? 'open' : ''}`} role="dialog" aria-modal="true">
         <div className="drawer-head">
           <div>
             <h3>{title}</h3>

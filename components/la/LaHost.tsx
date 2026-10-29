@@ -15,7 +15,7 @@ import { logTask } from '@/lib/activity';
 const BASE = '/modules/leave-attendance';
 
 /* The signed-in role decides which Leave & Attendance spaces and Operations tools the runtime offers. */
-const PERSONA_FOR: Partial<Record<Role, string>> = { 'Super Admin': 'admin', HR: 'hr', 'Office Admin': 'hr', 'Team Lead': 'lead', Employee: 'employee' };
+const PERSONA_FOR: Partial<Record<Role, string>> = { 'Super Admin': 'admin', HR: 'hr', 'Office Admin': 'hr', 'Team Lead': 'lead', 'Talent Acquisition Manager': 'lead', Recruiter: 'employee', Employee: 'employee' };
 
 const SHELL = `
 <main class="content" id="view"></main>

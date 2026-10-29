@@ -14,7 +14,7 @@ export interface LocationDef {
   system: boolean;
 }
 
-export type Role = 'Super Admin' | 'HR' | 'Office Admin' | 'Team Lead' | 'Employee';
+export type Role = 'Super Admin' | 'HR' | 'Office Admin' | 'Talent Acquisition Manager' | 'Team Lead' | 'Recruiter' | 'Employee';
 
 export type EmploymentStatus = 'Active' | 'Onboarding' | 'Offboarding' | 'Inactive';
 

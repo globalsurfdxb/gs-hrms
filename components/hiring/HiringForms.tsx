@@ -14,7 +14,7 @@ import { Button } from '@/components/ui/Card';
 import { SearchSelect } from '@/components/ui/SearchSelect';
 import { XIcon } from '@/components/icons';
 import { Fg, TEXTAREA_STYLE, TZ_LABEL, empName, money, payUnit, useActor, useHiringLocation } from '@/components/hiring/HiringBits';
-import { canSeeSalary, hiringLevel, teamLeadScope } from '@/lib/hiringAccess';
+import { canSeeSalary, hiringLevel, isTalentManager, recruiterPool, talentManager, teamLeadScope } from '@/lib/hiringAccess';
 import { sandboxTeamsLink, useHiringMail } from '@/lib/hiringMail';
 import { useApp } from '@/context/AppContext';
 import {
@@ -28,6 +28,7 @@ import {
   createRequisition,
   findDuplicates,
   interviewsForApp,
+  isMyJob,
   jobById,
   recruiterIdOf,
   setJobRecruiter,
@@ -58,8 +59,12 @@ import {
   UAE_OFFER_LINES,
 } from '@/lib/hiringTypes';
 
+/** The "request a new designation" choice in the designation list. */
+const NEW_DESIGNATION = '__new__';
 const num = (s: string) => (s.trim() === '' ? NaN : Number(s));
 const people = () => EMPLOYEES.filter((e) => e.employmentStatus === 'Active').map((e) => ({ value: e.id, label: e.name, meta: e.employeeCode }));
+/** The Talent Acquisition team: the recruiters and their manager. */
+const pool = () => recruiterPool(EMPLOYEES).map((e) => ({ value: e.id, label: e.name, meta: `${e.designation} · ${e.employeeCode}` }));
 
 /** Picks several employees: a search box to add, chips to remove. */
 export function PanelPicker({ value, onChange, label = 'Add panel member…' }: { value: string[]; onChange: (v: string[]) => void; label?: string }) {
@@ -157,7 +162,11 @@ function RequisitionForm({
 
   const errors: Record<string, string> = {};
   if (!v.title.trim()) errors.title = 'Job title is required.';
-  if (desigs.length && !v.designationTitle) errors.designationTitle = 'Choose a designation.';
+  if (v.newDesignation) {
+    const t = (v.designationTitle ?? '').trim();
+    if (t.length < 2) errors.designationTitle = 'Enter the new designation.';
+    else if (desigs.some((d) => d.title.toLowerCase() === t.toLowerCase())) errors.designationTitle = 'That designation already exists in this department. Choose it from the list.';
+  } else if (desigs.length && !v.designationTitle) errors.designationTitle = 'Choose a designation.';
   if (!v.companyId) errors.companyId = locked ? 'Your company is not set up under Administration → Companies.' : 'Choose a company.';
   if (!v.departmentId) errors.departmentId = locked && !scope?.length ? 'Your department is not set up under Administration → Departments & Designations.' : 'Choose a department.';
   if (!(v.positions >= 1) || !Number.isInteger(v.positions)) errors.positions = 'Enter 1 or more positions.';
@@ -172,7 +181,7 @@ function RequisitionForm({
   const shown = (k: string) => (attempted ? errors[k] : undefined);
 
   // The designation belongs to a department, so it goes when the department does. A title that was only filled from it goes too.
-  const dropDesignation = (p: RequisitionInput) => ({ designationTitle: undefined, title: p.designationTitle && p.title === p.designationTitle ? '' : p.title });
+  const dropDesignation = (p: RequisitionInput) => ({ designationTitle: undefined, newDesignation: undefined, title: p.designationTitle && p.title === p.designationTitle ? '' : p.title });
 
   const me = useCurrentEmployee();
 
@@ -199,7 +208,7 @@ function RequisitionForm({
   const save = (submit: boolean) => {
     setAttempted(true);
     if (Object.keys(errors).length) return;
-    const input: RequisitionInput = { ...v, title: v.title.trim(), currency: cur, justification: v.justification.trim(), replacesId: v.reason === 'Replacement' ? v.replacesId : undefined };
+    const input: RequisitionInput = { ...v, designationTitle: v.designationTitle?.trim() || undefined, title: v.title.trim(), currency: cur, justification: v.justification.trim(), replacesId: v.reason === 'Replacement' ? v.replacesId : undefined };
     if (edit) {
       updateRequisition(edit.id, input, actor);
       if (submit) {
@@ -257,14 +266,27 @@ function RequisitionForm({
               )}
             </>
           ) : (
-            <Fg label="Requesting for" error={shown('companyId') ?? shown('departmentId')} hint="You can ask for headcount in your own team only." full>
-              <div className="hm-scope">
-                <strong>{companyName || '—'}</strong>
-                <span>{v.department || '—'}</span>
-                <span>{locationDef(v.location)?.name ?? v.location}</span>
-                <span>Hiring manager: {empName(v.hiringManagerId)}</span>
-              </div>
-            </Fg>
+            <>
+              <Fg label="Requesting for" error={shown('companyId') ?? shown('departmentId')} hint="You can ask for headcount in your own team only." full>
+                <div className="hm-scope">
+                  <strong>{companyName || '—'}</strong>
+                  <span>{v.department || '—'}</span>
+                  {!multiLocation && <span>{locationDef(v.location)?.name ?? v.location}</span>}
+                  <span>Hiring manager: {empName(v.hiringManagerId)}</span>
+                </div>
+              </Fg>
+              {multiLocation && (
+                <Fg label="Location" required hint={`${v.department} works in more than one country. Choose where this role is based.`} full>
+                  <select value={v.location} onChange={(e) => changeLocation(e.target.value)}>
+                    {locations.filter((l) => pickedDept?.locations.includes(l.id)).map((l) => (
+                      <option key={l.id} value={l.id}>
+                        {l.name}
+                      </option>
+                    ))}
+                  </select>
+                </Fg>
+              )}
+            </>
           )
         ) : (
           <>
@@ -306,24 +328,38 @@ function RequisitionForm({
             </Fg>
           </>
         )}
-        <Fg label="Designation" required={desigs.length > 0} error={shown('designationTitle')} hint="The grade. It carries through to the job and onboarding." full={locked}>
+        <Fg label="Designation" required={desigs.length > 0 || !!v.newDesignation} error={v.newDesignation ? undefined : shown('designationTitle')} hint="The grade. It carries through to the job and onboarding." full={locked}>
           <select
-            value={v.designationTitle ?? ''}
-            disabled={!v.departmentId || !desigs.length}
+            value={v.newDesignation ? NEW_DESIGNATION : (v.designationTitle ?? '')}
+            disabled={!v.departmentId}
             onChange={(e) => {
               const t = e.target.value;
               // The job title follows the designation until it has been typed by hand.
-              setV((p) => ({ ...p, designationTitle: t || undefined, title: !p.title.trim() || p.title === p.designationTitle ? t : p.title }));
+              if (t === NEW_DESIGNATION) setV((p) => ({ ...p, newDesignation: true, designationTitle: undefined, title: p.designationTitle && p.title === p.designationTitle ? '' : p.title }));
+              else setV((p) => ({ ...p, newDesignation: undefined, designationTitle: t || undefined, title: !p.title.trim() || p.title === p.designationTitle ? t : p.title }));
             }}
           >
-            <option value="">{!v.departmentId ? 'Choose a department first' : desigs.length ? 'Select…' : 'No designations in this department'}</option>
+            <option value="">{!v.departmentId ? 'Choose a department first' : 'Select…'}</option>
             {desigs.map((d) => (
               <option key={d.id} value={d.title}>
                 {d.title}
               </option>
             ))}
+            {v.departmentId && <option value={NEW_DESIGNATION}>+ Request a new designation…</option>}
           </select>
         </Fg>
+        {v.newDesignation && (
+          <Fg label="New designation" required error={shown('designationTitle')} hint={`Added to ${v.department || 'the department'} only once this requisition is approved. Until then it stays a request.`} full>
+            <input
+              value={v.designationTitle ?? ''}
+              placeholder="e.g. Senior Cloud Engineer"
+              onChange={(e) => {
+                const t = e.target.value;
+                setV((p) => ({ ...p, designationTitle: t, title: !p.title.trim() || p.title === p.designationTitle ? t : p.title }));
+              }}
+            />
+          </Fg>
+        )}
         <Fg label="Job title" required error={shown('title')} hint="Shown on the careers page. Fills from the designation; edit it if the advert should read differently." full>
           <input value={v.title} onChange={(e) => set('title', e.target.value)} placeholder="e.g. Network Engineer" />
         </Fg>
@@ -387,6 +423,10 @@ function JobForm({ requisition, onClose, onDone }: { requisition: Requisition; o
   const { role } = useApp();
   const { designations } = useOrg();
   const desigs = designations.filter((d) => d.departmentId === requisition.departmentId).map((d) => d.title);
+  // With a Talent Acquisition Manager in place, a new job is handed to them and they choose the recruiter. They (and a
+  // Super Admin) can choose straight away; with no manager, whoever creates the job chooses.
+  const ta = talentManager(EMPLOYEES);
+  const handOver = !!ta && !isTalentManager(EMPLOYEES.find((e) => e.id === actor.id)) && role !== 'Talent Acquisition Manager' && role !== 'Super Admin';
   const [v, setV] = useState({
     designationTitle: requisition.designationTitle && desigs.includes(requisition.designationTitle) ? requisition.designationTitle : desigs.includes(requisition.title) ? requisition.title : (desigs[0] ?? requisition.title),
     description: '',
@@ -395,7 +435,7 @@ function JobForm({ requisition, onClose, onDone }: { requisition: Requisition; o
     expMax: '6',
     qualifications: '',
     panelIds: [requisition.hiringManagerId],
-    recruiterId: role === 'HR' || role === 'Office Admin' ? actor.id : '',
+    recruiterId: !ta && (role === 'HR' || role === 'Office Admin') ? actor.id : '',
     referralEligible: true,
     closingDate: addDays(todayISO(), 30),
     publish: true,
@@ -409,7 +449,7 @@ function JobForm({ requisition, onClose, onDone }: { requisition: Requisition; o
   if (!v.skills.trim()) errors.skills = 'List at least one key skill.';
   if (!(num(v.expMin) >= 0)) errors.expMin = 'Enter the minimum years.';
   if (!(num(v.expMax) >= num(v.expMin))) errors.expMax = 'Maximum is below the minimum.';
-  if (!v.recruiterId) errors.recruiterId = 'Choose the recruiter who will run this job.';
+  if (!handOver && !v.recruiterId) errors.recruiterId = 'Choose the recruiter who will run this job.';
   if (!v.panelIds.length) errors.panelIds = 'Add at least one interviewer.';
   if (!v.closingDate) errors.closingDate = 'Choose a closing date.';
   const shown = (k: string) => (attempted ? errors[k] : undefined);
@@ -427,7 +467,7 @@ function JobForm({ requisition, onClose, onDone }: { requisition: Requisition; o
         expMax: num(v.expMax),
         qualifications: v.qualifications.trim(),
         panelIds: v.panelIds,
-        recruiterId: v.recruiterId,
+        recruiterId: handOver ? '' : v.recruiterId,
         referralEligible: v.referralEligible,
         closingDate: v.closingDate,
         publish: v.publish,
@@ -487,9 +527,19 @@ function JobForm({ requisition, onClose, onDone }: { requisition: Requisition; o
         <Fg label="Qualifications" full>
           <input value={v.qualifications} onChange={(e) => set('qualifications', e.target.value)} placeholder="e.g. CCNA or higher" />
         </Fg>
-        <Fg label="Recruiter" required error={shown('recruiterId')} hint="Runs this job: screening, scheduling and offers. Reports can be filtered by recruiter." full>
-          <SearchSelect options={people()} value={v.recruiterId} onChange={(x) => set('recruiterId', x)} placeholder="Search employee…" />
-        </Fg>
+        {handOver && ta ? (
+          <Fg label="Recruiter" hint="The job goes to the Talent Acquisition Manager, who chooses the recruiter once it is created." full>
+            <div className="hm-scope">
+              <strong>{ta.name}</strong>
+              <span>Talent Acquisition Manager</span>
+              <span>chooses the recruiter</span>
+            </div>
+          </Fg>
+        ) : (
+          <Fg label="Recruiter" required error={shown('recruiterId')} hint="Runs this job: screening, scheduling and offers. Reports can be filtered by recruiter." full>
+            <SearchSelect options={ta ? pool() : people()} value={v.recruiterId} onChange={(x) => set('recruiterId', x)} placeholder="Search recruiter…" />
+          </Fg>
+        )}
         <Fg label="Interview panel" required error={shown('panelIds')} full>
           <PanelPicker value={v.panelIds} onChange={(x) => set('panelIds', x)} />
         </Fg>
@@ -522,7 +572,7 @@ function RecruiterForm({ job, onClose, onDone }: { job: Job; onClose: () => void
     <Drawer
       open
       onClose={onClose}
-      title="Change recruiter"
+      title={recruiterIdOf(job) ? 'Change recruiter' : 'Choose recruiter'}
       description={`${job.code} · ${job.title}`}
       footer={
         <>
@@ -545,8 +595,8 @@ function RecruiterForm({ job, onClose, onDone }: { job: Job; onClose: () => void
     >
       {error && <div className="tx-err" style={{ marginBottom: 12 }}>{error}</div>}
       <div className="form-grid hm-form">
-        <Fg label="Recruiter" required full>
-          <SearchSelect options={people()} value={who} onChange={setWho} placeholder="Search employee…" />
+        <Fg label="Recruiter" required hint="Runs this job: screening, scheduling and offers." full>
+          <SearchSelect options={pool().length ? pool() : people()} value={who} onChange={setWho} placeholder="Search recruiter…" />
         </Fg>
       </div>
     </Drawer>
@@ -597,10 +647,10 @@ function CandidateForm({ job, onClose, onDone }: { job?: Job; onClose: () => voi
   const [error, setError] = useState('');
   const set = <K extends keyof typeof v>(k: K, val: (typeof v)[K]) => setV((p) => ({ ...p, [k]: val }));
 
-  const openJobs = s.jobs.filter((j) => j.status === 'Open' && (level === 'full' || j.hiringManagerId === me.id));
+  const openJobs = s.jobs.filter((j) => j.status === 'Open' && (level === 'full' || isMyJob(j, me.id)));
   const chosenJob = job ?? jobById(s, v.jobId);
   const cur = chosenJob?.currency ?? locationDef(v.location)?.currency ?? currency;
-  const seesPay = level === 'full' || (!!chosenJob && canSeeSalary(level, me.id, chosenJob.hiringManagerId));
+  const seesPay = level === 'full' || (!!chosenJob && canSeeSalary(level, me.id, chosenJob.hiringManagerId, recruiterIdOf(chosenJob)));
   const dups = findDuplicates(s, v.email, v.phone);
   const alreadyApplied = (c: Candidate) => !!chosenJob && s.applications.some((a) => a.candidateId === c.id && a.jobId === chosenJob.id);
 
@@ -830,7 +880,7 @@ function InterviewForm({ application, interview, onClose, onDone }: { applicatio
   const WAITING: Stage[] = ['Screening', 'Technical Interview', 'HR Interview'];
   const booked = (id: string) => interviewsForApp(s, id).some((i) => i.status === 'Scheduled');
   const apps = s.applications
-    .filter((a) => !a.exit && a.stage !== 'Hired' && a.stage !== 'Offer' && a.location === loc && (level === 'full' || jobById(s, a.jobId)?.hiringManagerId === me.id))
+    .filter((a) => !a.exit && a.stage !== 'Hired' && a.stage !== 'Offer' && a.location === loc && (level === 'full' || (() => { const j = jobById(s, a.jobId); return !!j && isMyJob(j, me.id); })()))
     .sort((a, b) => Number(WAITING.includes(b.stage) && !booked(b.id)) - Number(WAITING.includes(a.stage) && !booked(a.id)) || WAITING.indexOf(b.stage) - WAITING.indexOf(a.stage));
   const [appId, setAppId] = useState(fixed?.id ?? '');
   const app = appById(s, appId);

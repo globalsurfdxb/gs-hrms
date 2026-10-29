@@ -7,7 +7,7 @@ import { EMPLOYEES } from '@/lib/data';
 import { chainSteps } from '@/lib/workflow';
 import { seedHiring } from '@/lib/hiringSeed';
 import { pushNotice } from '@/lib/notifications';
-import { HiringLevel } from '@/lib/hiringAccess';
+import { HiringLevel, canChooseRecruiter, isTalentManager, talentManager } from '@/lib/hiringAccess';
 import {
   Application,
   ApprovalStep,
@@ -182,11 +182,18 @@ export function canDecideStep(label: string, role: Role, meId: string, req: Requ
   return false;
 }
 
+/** A job is someone's own when they are its hiring manager or its recruiter. */
+export const isMyJob = (j: Job, meId: string) => j.hiringManagerId === meId || recruiterIdOf(j) === meId;
+
 export function visibleRequisitions(s: HiringState, level: HiringLevel, meId: string) {
-  return level === 'full' ? s.requisitions : level === 'manager' ? s.requisitions.filter((r) => r.hiringManagerId === meId || r.createdById === meId) : [];
+  return level === 'full'
+    ? s.requisitions
+    : level === 'manager'
+      ? s.requisitions.filter((r) => r.hiringManagerId === meId || r.createdById === meId || s.jobs.some((j) => j.requisitionId === r.id && isMyJob(j, meId)))
+      : [];
 }
 export function visibleJobs(s: HiringState, level: HiringLevel, meId: string) {
-  return level === 'full' ? s.jobs : level === 'manager' ? s.jobs.filter((j) => j.hiringManagerId === meId) : [];
+  return level === 'full' ? s.jobs : level === 'manager' ? s.jobs.filter((j) => isMyJob(j, meId)) : [];
 }
 
 /* ---------------------------------------------------------------------- lookups */
@@ -212,7 +219,7 @@ export const isPanelistFor = (s: HiringState, candId: string, meId: string) => a
 export function canViewCandidate(s: HiringState, level: HiringLevel, meId: string, candId: string): boolean {
   if (level === 'full') return true;
   const apps = appsForCandidate(s, candId);
-  if (level === 'manager' && apps.some((a) => jobById(s, a.jobId)?.hiringManagerId === meId)) return true;
+  if (level === 'manager' && apps.some((a) => { const j = jobById(s, a.jobId); return !!j && isMyJob(j, meId); })) return true;
   return isPanelistFor(s, candId, meId);
 }
 
@@ -224,6 +231,7 @@ export interface RequisitionInput {
   departmentId: string;
   department: string;
   designationTitle?: string;
+  newDesignation?: boolean;
   location: string;
   positions: number;
   employmentType: EmploymentKind;
@@ -306,12 +314,13 @@ export function decideRequisition(id: string, decision: 'Approved' | 'Rejected',
   const status: RequisitionStatus = decision === 'Rejected' ? 'Rejected' : idx === r.approvals.length - 1 ? 'Approved' : 'Pending Approval';
   commit({ ...state, requisitions: state.requisitions.map((x) => (x.id === id ? { ...x, approvals, status, updatedAt: stamp } : x)) });
   audit(id, `Requisition ${step.label} step ${decision.toLowerCase()}`, r.status, status, actor.name);
+  if (status === 'Approved' && r.newDesignation && r.designationTitle) audit(id, 'New designation approved', '—', `${r.designationTitle} added to ${r.department}`, actor.name);
   const decided = { ...r, approvals, status };
   if (status === 'Pending Approval') notifyStep(decided, actor.id);
   else {
     const ok = status === 'Approved';
     pushNotice({ kind: 'hiring', tone: ok ? 'active' : 'expired', title: `${r.code} was ${ok ? 'approved' : 'rejected'}`, sub: `${r.title}${ok ? '. A job can now be created from it.' : `. ${note.trim()}`}`, href: `/hiring/requisitions/${id}`, toIds: [r.createdById, r.hiringManagerId], by: actor.id });
-    if (ok) pushNotice({ kind: 'hiring', tone: 'info', title: `${r.code} is approved: create the job`, sub: `${r.title} · ${r.positions} position${r.positions === 1 ? '' : 's'}`, href: `/hiring/requisitions/${id}`, toRoles: HR_ROLES, by: actor.id });
+    if (ok) pushNotice({ kind: 'hiring', tone: 'info', title: `${r.code} is approved: create the job`, sub: `${r.title} · ${r.positions} position${r.positions === 1 ? '' : 's'}`, href: `/hiring/requisitions/${id}`, toRoles: [...HR_ROLES, 'Talent Acquisition Manager'], by: actor.id });
   }
   return { ok: true };
 }
@@ -348,6 +357,9 @@ export function createJob(requisitionId: string, input: JobInput, actor: Actor):
   if (jobForRequisition(state, requisitionId)) return fail('This requisition already has a job.');
   const stamp = nowIso();
   const { publish, ...rest } = input;
+  // A new job goes to the Talent Acquisition Manager, who chooses the recruiter. They (and a Super Admin) can choose right away.
+  const ta = talentManager(EMPLOYEES);
+  const handOver = !!ta && !isTalentManager(EMPLOYEES.find((e) => e.id === actor.id)) && actor.role !== 'Talent Acquisition Manager' && actor.role !== 'Super Admin';
   const job: Job = {
     id: uid('job'),
     code: nextCode('JOB', state.jobs.map((x) => x.code)),
@@ -361,6 +373,8 @@ export function createJob(requisitionId: string, input: JobInput, actor: Actor):
     filled: 0,
     employmentType: r.employmentType,
     ...rest,
+    ...(ta ? { taManagerId: ta.id } : {}),
+    ...(handOver ? { recruiterId: '' } : {}),
     status: publish ? 'Open' : 'Draft',
     hiringManagerId: r.hiringManagerId,
     budgetMin: r.budgetMin,
@@ -369,26 +383,42 @@ export function createJob(requisitionId: string, input: JobInput, actor: Actor):
     createdBy: actor.name,
     createdAt: stamp,
     updatedAt: stamp,
-    history: [{ id: uid('jh'), at: stamp, by: actor.name, text: `Job created from ${r.code} as ${publish ? 'Open' : 'Draft'}` }],
+    history: [
+      { id: uid('jh'), at: stamp, by: actor.name, text: `Job created from ${r.code} as ${publish ? 'Open' : 'Draft'}` },
+      ...(handOver && ta ? [{ id: uid('jh'), at: stamp, by: actor.name, text: `Handed to ${ta.name} (Talent Acquisition Manager) to choose the recruiter` }] : []),
+    ],
   };
   commit({ ...state, jobs: [job, ...state.jobs] });
   audit(job.id, 'Job created', '—', `${job.code} · ${job.title} (${job.status})`, actor.name);
+  if (handOver && ta) {
+    audit(job.id, 'Job handed to Talent Acquisition', '—', ta.name, actor.name);
+    pushNotice({ kind: 'hiring', tone: 'info', title: `${job.code} needs a recruiter`, sub: `${job.title} · choose who will run it`, href: `/hiring/jobs/${job.id}`, toIds: [ta.id], by: actor.id });
+  }
   return { ok: true, job };
 }
 
 /** The recruiter of a job; for jobs saved before recruiters existed, the person who created it. */
 export const recruiterIdOf = (j: Job): string | undefined => j.recruiterId ?? EMPLOYEES.find((e) => e.name === j.createdBy)?.id;
 
+/** The recruiter's name for lists and headers, or that the Talent Acquisition Manager has yet to choose one. */
+export const recruiterLabel = (j: Job): string => {
+  const id = recruiterIdOf(j);
+  if (id) return EMPLOYEES.find((e) => e.id === id)?.name ?? '—';
+  const ta = EMPLOYEES.find((e) => e.id === j.taManagerId);
+  return ta ? `Not chosen yet (${ta.name})` : 'Not chosen yet';
+};
+
 export function setJobRecruiter(id: string, recruiterId: string, actor: Actor): Result {
   const j = jobById(state, id);
   if (!j) return fail('Job not found.');
+  if (!canChooseRecruiter(actor, j, EMPLOYEES)) return fail('Only the Talent Acquisition Manager can choose the recruiter for this job.');
   const next = EMPLOYEES.find((e) => e.id === recruiterId);
   if (!next) return fail('Choose a recruiter.');
   const prev = EMPLOYEES.find((e) => e.id === recruiterIdOf(j));
   if (prev?.id === next.id) return { ok: true };
   const stamp = nowIso();
-  commit({ ...state, jobs: state.jobs.map((x) => (x.id === id ? { ...x, recruiterId, updatedAt: stamp, history: [...(x.history ?? []), { id: uid('jh'), at: stamp, by: actor.name, text: `Recruiter changed from ${prev?.name ?? 'none'} to ${next.name}` }] } : x)) });
-  audit(id, 'Job recruiter', prev?.name ?? '—', next.name, actor.name);
+  commit({ ...state, jobs: state.jobs.map((x) => (x.id === id ? { ...x, recruiterId, updatedAt: stamp, history: [...(x.history ?? []), { id: uid('jh'), at: stamp, by: actor.name, text: prev ? `Recruiter changed from ${prev.name} to ${next.name}` : `${next.name} chosen as the recruiter` }] } : x)) });
+  audit(id, prev ? 'Job recruiter' : 'Job recruiter chosen', prev?.name ?? '—', next.name, actor.name);
   if (next.id !== actor.id) pushNotice({ kind: 'hiring', tone: 'info', title: `You are now the recruiter for ${j.code}`, sub: j.title, href: `/hiring/jobs/${j.id}`, toIds: [next.id], by: actor.id });
   return { ok: true };
 }

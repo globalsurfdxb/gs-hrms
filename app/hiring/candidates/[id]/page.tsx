@@ -24,9 +24,11 @@ import {
   exitApplication,
   getHiring,
   interviewsForApp,
+  isMyJob,
   jobById,
   moveStage,
   offerForApp,
+  recruiterIdOf,
   reopenApplication,
   updateCandidateTags,
 } from '@/lib/hiringStore';
@@ -82,11 +84,14 @@ export default function CandidateProfilePage() {
 
   const apps = appsForCandidate(s, c.id);
   // HR/Admin may act on everything; a hiring manager only on their own jobs; an interviewer only reads.
-  const manages = (a: Application) => level === 'full' || (level === 'manager' && jobById(s, a.jobId)?.hiringManagerId === me.id);
-  const seesPay = level === 'full' || apps.some((a) => canSeeSalary(level, me.id, jobById(s, a.jobId)?.hiringManagerId ?? ''));
+  const manages = (a: Application) => {
+    const j = jobById(s, a.jobId);
+    return level === 'full' || (level === 'manager' && !!j && isMyJob(j, me.id));
+  };
+  const seesPay = level === 'full' || apps.some((a) => { const j = jobById(s, a.jobId); return canSeeSalary(level, me.id, j?.hiringManagerId ?? '', j ? recruiterIdOf(j) : undefined); });
   const canAct = apps.some(manages) || level === 'full';
   const applied = new Set(apps.map((a) => a.jobId));
-  const jobsToApply = s.jobs.filter((j) => j.status === 'Open' && j.location === c.location && !applied.has(j.id) && (level === 'full' || j.hiringManagerId === me.id));
+  const jobsToApply = s.jobs.filter((j) => j.status === 'Open' && j.location === c.location && !applied.has(j.id) && (level === 'full' || isMyJob(j, me.id)));
 
   const events: Event[] = [
     { id: 'added', at: c.createdAt, kind: 'system' as const, text: <>Added by <b>{c.createdBy}</b> from {c.source}</> },

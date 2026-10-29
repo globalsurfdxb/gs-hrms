@@ -10,7 +10,7 @@ import { CheckIcon, JoinIcon, PeopleIcon, PlusIcon, SearchIcon } from '@/compone
 import { Banner, JobBadge, HiringHeader, empName, fmtDate, money, payUnit } from '@/components/hiring/HiringBits';
 import { JobDrawer } from '@/components/hiring/HiringForms';
 import { useScoped } from '@/components/hiring/useScoped';
-import { isActiveApp, jobForRequisition, recruiterIdOf } from '@/lib/hiringStore';
+import { isActiveApp, jobForRequisition, recruiterIdOf, recruiterLabel } from '@/lib/hiringStore';
 import { JobStatus, Requisition } from '@/lib/hiringTypes';
 
 const STATUSES: ('All' | JobStatus)[] = ['All', 'Open', 'Draft', 'On Hold', 'Filled', 'Closed'];
@@ -112,7 +112,7 @@ export default function JobsPage() {
                         </Link>
                       </td>
                       <td>{empName(j.hiringManagerId)}</td>
-                      <td>{empName(recruiterIdOf(j))}</td>
+                      <td>{recruiterLabel(j)}</td>
                       <td className="mono">
                         <span className="hm-fill">
                           {j.filled}/{j.positions}

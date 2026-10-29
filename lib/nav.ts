@@ -41,6 +41,8 @@ interface Persona {
 export const PERS: Record<Role, Persona> = {
   Employee: { modules: ['home'], scopes: ['my'] },
   'Team Lead': { modules: ['home'], scopes: ['my', 'team'] },
+  'Talent Acquisition Manager': { modules: ['home'], scopes: ['my', 'team'] },
+  Recruiter: { modules: ['home'], scopes: ['my'] },
   HR: { modules: ['home', 'operations', 'reports', 'administration'], scopes: ['my', 'org'] },
   'Office Admin': { modules: ['home', 'operations', 'reports', 'administration'], scopes: ['my', 'org'] },
   'Super Admin': { modules: ['home', 'operations', 'reports', 'administration'], scopes: ['my', 'team', 'org'] },

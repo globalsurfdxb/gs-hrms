@@ -47,8 +47,10 @@ export interface AccessModule {
   categories: AccessCategory[];
 }
 
-export const SYSTEM_ROLES: Role[] = ['Super Admin', 'HR', 'Office Admin', 'Team Lead', 'Employee'];
-const RANK: Record<Role, number> = { Employee: 1, 'Team Lead': 2, 'Office Admin': 3, HR: 4, 'Super Admin': 5 };
+export const SYSTEM_ROLES: Role[] = ['Super Admin', 'HR', 'Office Admin', 'Talent Acquisition Manager', 'Team Lead', 'Recruiter', 'Employee'];
+const RANK: Record<Role, number> = { Employee: 1, Recruiter: 1, 'Team Lead': 2, 'Talent Acquisition Manager': 2, 'Office Admin': 3, HR: 4, 'Super Admin': 5 };
+/** The Talent Acquisition roles work in Hiring Management only; the manager sees all of it, a recruiter the recruiting work. */
+const isTalentRole = (role: Role) => role === 'Talent Acquisition Manager' || role === 'Recruiter';
 
 const feats = (module: string, category: string, labels: string[]): AccessFeature[] =>
   labels.map((label) => ({ id: `${module}:${category}:${label.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/(^-|-$)/g, '')}`, label }));
@@ -154,7 +156,8 @@ function defaultActions(role: Role, moduleId: string, c: AccessCategory, f: Acce
   if (role === 'Super Admin') return have;
   if (role === 'HR') return moduleId === 'administration' ? have.filter((a) => a !== 'delete') : have;
   if (role === 'Office Admin') return have.filter((a) => a !== 'delete');
-  if (c.rank <= 2) return have.filter((a) => (role === 'Team Lead' ? a !== 'delete' : a === 'add'));
+  if (isTalentRole(role) && moduleId === 'hiring') return have.filter((a) => a !== 'delete');
+  if (c.rank <= 2) return have.filter((a) => (role === 'Team Lead' || role === 'Talent Acquisition Manager' ? a !== 'delete' : a === 'add'));
   return [];
 }
 
@@ -170,6 +173,7 @@ export function defaultGrants(role: Role, catalog: AccessModule[]): string[] {
         else if (c.id === 'reports') allowed = p.modules.includes('reports' as RailModule);
         else allowed = p.modules.includes('operations' as RailModule);
       } else if (m.id === 'administration') allowed = p.modules.includes('administration' as RailModule);
+      else if (m.id === 'hiring' && isTalentRole(role)) allowed = role === 'Talent Acquisition Manager' || c.id === 'recruiting';
       else allowed = RANK[role] >= c.rank;
       if (allowed) c.features.forEach((f) => out.push(f.id, ...defaultActions(role, m.id, c, f).map((a) => permKey(f.id, a))));
     });

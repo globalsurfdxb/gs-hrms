@@ -8,7 +8,7 @@ import { Role } from '@/lib/types';
 import { accountFor, safeNext, signIn, useAuth, logFailedSignIn } from '@/lib/auth';
 import { ENTITY_NAME } from '@/lib/org';
 
-const DEMO_ROLES: Role[] = ['Super Admin', 'HR', 'Office Admin', 'Team Lead', 'Employee'];
+const DEMO_ROLES: Role[] = ['Super Admin', 'HR', 'Office Admin', 'Talent Acquisition Manager', 'Recruiter', 'Team Lead', 'Employee'];
 
 const icon = (d: ReactNode) => (
   <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">

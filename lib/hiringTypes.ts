@@ -57,6 +57,8 @@ export interface Requisition {
   department: string;
   /** The designation (job grade) the role is for, when the department has designations. */
   designationTitle?: string;
+  /** The designation above is a proposal: it is added to the department only once the requisition is approved. */
+  newDesignation?: boolean;
   location: string;
   positions: number;
   employmentType: EmploymentKind;
@@ -108,7 +110,9 @@ export interface Job {
   closingDate: string;
   status: JobStatus;
   hiringManagerId: string;
-  /** The recruiter who runs this job. Older saved jobs have none: the person who created the job is used. */
+  /** The Talent Acquisition Manager the job was handed to; they choose the recruiter. */
+  taManagerId?: string;
+  /** The recruiter who runs this job. Empty until the Talent Acquisition Manager chooses one. Older saved jobs have none: the person who created the job is used. */
   recruiterId?: string;
   budgetMin: number;
   budgetMax: number;
