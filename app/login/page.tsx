@@ -4,7 +4,8 @@ import { ReactNode, useEffect, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import { EMPLOYEES, PERSONAS } from '@/lib/data';
 import { Role } from '@/lib/types';
-import { accountFor, safeNext, signIn, useAuth, logFailedSignIn } from '@/lib/auth';
+import { ApiError, errorMessage } from '@/lib/api';
+import { safeNext, signIn, useAuth } from '@/lib/auth';
 import { ENTITY_NAME } from '@/lib/org';
 
 const DEMO_ROLES: Role[] = ['Super Admin', 'HR', 'Office Admin', 'Team Lead', 'Employee'];
@@ -104,7 +105,6 @@ export default function LoginPage() {
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [show, setShow] = useState(false);
-  const [remember, setRemember] = useState(true);
   const [error, setError] = useState<{ field: 'email' | 'password' | 'form'; msg: string } | null>(null);
   const [notice, setNotice] = useState('');
   const [busy, setBusy] = useState(false);
@@ -123,30 +123,31 @@ export default function LoginPage() {
     return () => clearTimeout(id);
   }, [slide]);
 
-  const submit = () => {
+  // The server checks the email and password and opens the session (httpOnly cookie). Unknown email and wrong password
+  // get the same answer, so the form never reveals which accounts exist.
+  const submit = async () => {
     setNotice('');
     const v = email.trim();
     if (!v) return setError({ field: 'email', msg: 'Enter your work email address.' });
     if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(v)) return setError({ field: 'email', msg: 'That doesn’t look like an email address.' });
-    const acc = accountFor(v);
-    if (!acc) {
-      logFailedSignIn(v, 'No account with this email');
-      return setError({ field: 'email', msg: 'We couldn’t find an account with that email. Check it or contact your HR administrator.' });
-    }
-    if (acc.employee.employmentStatus === 'Inactive') {
-      logFailedSignIn(v, 'Deactivated account');
-      return setError({ field: 'email', msg: 'This account has been deactivated. Contact your HR administrator.' });
-    }
     if (!password) return setError({ field: 'password', msg: 'Enter your password.' });
     setError(null);
     setBusy(true);
-    // No sign-in service is connected yet, so the session is created locally after a short pause.
-    setTimeout(() => {
-      signIn(v, remember);
+    try {
+      await signIn(v, password);
       router.replace(safeNext(new URLSearchParams(window.location.search).get('next')));
-    }, 650);
+    } catch (e) {
+      const status = e instanceof ApiError ? e.status : 0;
+      if (status === 401) setError({ field: 'password', msg: 'Email or password is incorrect. Only the demo accounts can sign in for now.' });
+      else if (status === 403) setError({ field: 'email', msg: 'This account doesn’t have access to GS HRMS. Contact your HR administrator.' });
+      else if (status === 404) setNotice('Email and password sign-in is only available in development. Use Microsoft sign-in.');
+      else setNotice(errorMessage(e));
+    } finally {
+      setBusy(false);
+    }
   };
 
+  // Demo accounts share the backend's DEV_LOGIN_PASSWORD (default demo1234).
   const pickDemo = (role: Role) => {
     const emp = EMPLOYEES.find((e) => e.id === PERSONAS[role].employeeId);
     if (!emp) return;
@@ -263,19 +264,14 @@ export default function LoginPage() {
                 </div>
               )}
 
-              <label className="sg-check">
-                <input type="checkbox" checked={remember} onChange={(e) => setRemember(e.target.checked)} />
-                <span className="sg-box" aria-hidden="true" />
-                Keep me signed in
-              </label>
-
+              {/* "Keep me signed in" is gone: the server decides how long a session lasts (idle and absolute limits). */}
               <button type="submit" className="sg-next" disabled={busy}>
                 {busy ? <span className="sg-spin" /> : 'Next'}
               </button>
             </form>
 
             <p className="sg-demo-note">
-              Demo build — no password is checked until the sign-in service is connected.{' '}
+              Development build — only the demo accounts can sign in.{' '}
               <button type="button" className="sg-link" onClick={() => setDemo((v) => !v)} aria-expanded={demo}>
                 {demo ? 'Hide demo accounts' : 'Use a demo account'}
               </button>

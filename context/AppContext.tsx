@@ -3,13 +3,13 @@
 import { createContext, useContext, useEffect, useMemo, useState } from 'react';
 import { Location, Role } from '@/lib/types';
 import { PERSONAS, employeeById } from '@/lib/data';
-import { accountFor, useAuth } from '@/lib/auth';
+import { useAccount } from '@/lib/auth';
 import { useOrg } from '@/context/OrgContext';
 import { useEmployeeVersion } from '@/lib/employeeStore';
 
-// The signed-in account decides the user and role (see lib/auth.ts). Without a session the Super Admin
-// account is used only as a harmless placeholder while the sign-in redirect happens. Role assignment will be
-// managed server-side once the RBAC backend exists.
+// The signed-in account (backend session, see lib/auth.ts) decides the user and role. Without a session the Super
+// Admin account is used only as a harmless placeholder while the sign-in redirect happens — the shell draws nothing
+// until signed in, and the server enforces the real grants on every call.
 const FALLBACK_ROLE: Role = 'Super Admin';
 
 interface AppContextValue {
@@ -26,8 +26,7 @@ const LOCATION_KEY = 'gsit.location';
 export function AppProvider({ children }: { children: React.ReactNode }) {
   const { locations } = useOrg();
   const [location, setLocationState] = useState<Location>('Dubai');
-  const { email } = useAuth();
-  const account = accountFor(email);
+  const account = useAccount();
   const role: Role = account?.role ?? FALLBACK_ROLE;
   const employeeId = account?.employee.id ?? PERSONAS[FALLBACK_ROLE].employeeId;
 

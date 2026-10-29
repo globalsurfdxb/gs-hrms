@@ -8,6 +8,8 @@ export interface LocationDef {
   phoneCode: string;
   phoneDigits: number;
   phoneExample?: string;
+  /** IANA timezone, e.g. Asia/Dubai. Leave and attendance days are counted in it. Required by the API. */
+  timezone?: string;
   workingHours: string;
   seating: string[];
   template: 'uae' | 'india';

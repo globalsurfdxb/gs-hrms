@@ -4,6 +4,7 @@ import { useState } from 'react';
 import { useApp } from '@/context/AppContext';
 import { useOrg } from '@/context/OrgContext';
 import { LocationDef } from '@/lib/types';
+import { errorMessage } from '@/lib/api';
 import { PageHeader } from '@/components/ui/PageHeader';
 import { Card, CardHeader, EmptyState, Button } from '@/components/ui/Card';
 import { StatStrip } from '@/components/ui/StatStrip';
@@ -16,6 +17,9 @@ import { BuildingIcon, EditIcon, MapPinIcon, PeopleIcon, PlusIcon, ReceiptIcon, 
 
 const CURRENCIES = ['AED', 'INR', 'USD', 'SAR', 'QAR', 'OMR', 'KWD', 'BHD', 'GBP', 'EUR'];
 
+/** IANA timezones known to the browser. Leave and attendance days of a location are counted in its timezone. */
+const TIMEZONES: string[] = typeof Intl.supportedValuesOf === 'function' ? Intl.supportedValuesOf('timeZone') : ['Asia/Dubai', 'Asia/Kolkata'];
+
 const TEMPLATE_LABEL: Record<LocationDef['template'], string> = {
   uae: 'UAE-style — visa, Emirates ID, WPS payroll',
   india: 'India-style — Aadhaar, PAN, PF payroll',
@@ -26,6 +30,7 @@ const blankLoc = (): LocationDef => ({
   name: '',
   city: '',
   currency: 'AED',
+  timezone: 'Asia/Dubai',
   phoneCode: '',
   phoneDigits: 9,
   workingHours: '09:00 – 18:00, Mon–Fri',
@@ -59,6 +64,7 @@ export default function AdminSettingsPage() {
   const [locMode, setLocMode] = useState<'add' | 'edit'>('add');
   const [locDraft, setLocDraft] = useState<LocationDef>(blankLoc());
   const [locError, setLocError] = useState('');
+  const [locBusy, setLocBusy] = useState(false);
   const [locNotice, setLocNotice] = useState('');
   const [seatInput, setSeatInput] = useState('');
   const [locQ, setLocQ] = useState('');
@@ -99,7 +105,7 @@ export default function AdminSettingsPage() {
     setLocError('');
   };
 
-  const saveLoc = () => {
+  const saveLoc = async () => {
     const name = locDraft.name.trim();
     if (!name) {
       setLocError('Location name is required.');
@@ -118,16 +124,27 @@ export default function AdminSettingsPage() {
       setLocError('Phone number length must be between 6 and 15 digits.');
       return;
     }
+    if (!locDraft.timezone) {
+      setLocError('Choose the timezone of this location.');
+      return;
+    }
     const pending = seatInput.trim();
     const seating = pending && !hasSeat(locDraft.seating, pending) ? [...locDraft.seating, pending] : locDraft.seating;
     const record: LocationDef = { ...locDraft, name, city: locDraft.city.trim(), phoneCode: code, workingHours: locDraft.workingHours.trim(), seating };
-    if (locMode === 'add') addLocation(record);
-    else updateLocation(record);
-    setLocNotice('');
-    setLocOpen(false);
+    setLocBusy(true);
+    try {
+      if (locMode === 'add') await addLocation(record);
+      else await updateLocation(record);
+      setLocNotice('');
+      setLocOpen(false);
+    } catch (e) {
+      setLocError(errorMessage(e));
+    } finally {
+      setLocBusy(false);
+    }
   };
 
-  const deleteLoc = (l: LocationDef) => {
+  const deleteLoc = async (l: LocationDef) => {
     const u = locationUsage(l.id);
     const used = [u.companies && `${u.companies} company(ies)`, u.departments && `${u.departments} department(s)`, u.employees && `${u.employees} employee(s)`].filter(Boolean);
     if (used.length) {
@@ -139,7 +156,12 @@ export default function AdminSettingsPage() {
       return;
     }
     setLocNotice('');
-    removeLocation(l.id);
+    try {
+      await removeLocation(l.id);
+    } catch (e) {
+      // The server also counts requisitions and candidates, which this screen does not know about (location.in_use).
+      setLocNotice(`Can't delete ${l.name}: ${errorMessage(e)}`);
+    }
   };
 
   return (
@@ -294,7 +316,7 @@ export default function AdminSettingsPage() {
             <Button variant="ghost" onClick={() => setLocOpen(false)}>
               Cancel
             </Button>
-            <Button variant="primary" onClick={saveLoc}>
+            <Button variant="primary" onClick={saveLoc} disabled={locBusy}>
               {locMode === 'add' ? 'Add location' : 'Save changes'}
             </Button>
           </>
@@ -321,6 +343,15 @@ export default function AdminSettingsPage() {
             <select value={locDraft.currency} onChange={(e) => setLocDraft({ ...locDraft, currency: e.target.value })}>
               {CURRENCIES.map((c) => (
                 <option key={c}>{c}</option>
+              ))}
+            </select>
+          </Fg>
+          <Fg label="Timezone" required>
+            <select value={locDraft.timezone ?? ''} onChange={(e) => setLocDraft({ ...locDraft, timezone: e.target.value })}>
+              {!locDraft.timezone && <option value="">Choose a timezone…</option>}
+              {locDraft.timezone && !TIMEZONES.includes(locDraft.timezone) && <option>{locDraft.timezone}</option>}
+              {TIMEZONES.map((tz) => (
+                <option key={tz}>{tz}</option>
               ))}
             </select>
           </Fg>

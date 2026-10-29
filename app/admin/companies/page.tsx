@@ -8,6 +8,7 @@ import { useSeparation } from '@/context/SeparationContext';
 import { countHeadcount, headcountByCompany } from '@/lib/headcount';
 import { useOrg } from '@/context/OrgContext';
 import { Company } from '@/lib/types';
+import { errorMessage } from '@/lib/api';
 import { PageHeader } from '@/components/ui/PageHeader';
 import { Card, EmptyState, Button } from '@/components/ui/Card';
 import { StatusBadge } from '@/components/ui/Badge';
@@ -64,13 +65,14 @@ function Fg({ label, required, children }: { label: string; required?: boolean; 
 }
 
 export default function AdminCompaniesPage() {
-  const { companies, departments, locations, locationName, addCompany, updateCompany, removeCompany } = useOrg();
+  const { connected, companies, departments, locations, locationName, addCompany, updateCompany, removeCompany } = useOrg();
   useEmployeeVersion();
   const { statusOf } = useSeparation();
   const [drawerOpen, setDrawerOpen] = useState(false);
   const [mode, setMode] = useState<'add' | 'edit'>('add');
   const [draft, setDraft] = useState<Company>(blankCompany());
   const [error, setError] = useState('');
+  const [busy, setBusy] = useState(false);
   const [q, setQ] = useState('');
   const [statusFilter, setStatusFilter] = useState('all');
   const [locFilter, setLocFilter] = useState('all');
@@ -88,13 +90,22 @@ export default function AdminCompaniesPage() {
 
   const totalHeadcount = countHeadcount(EMPLOYEES.filter((e) => companies.some((c) => c.name.trim().toLowerCase() === e.company.trim().toLowerCase())), statusOf);
 
-  const toggleStatus = (c: Company) => updateCompany({ ...c, status: c.status === 'Active' ? 'Inactive' : 'Active' });
+  const toggleStatus = (c: Company) => updateCompany({ ...c, status: c.status === 'Active' ? 'Inactive' : 'Active' }).catch((e) => window.alert(errorMessage(e)));
   const deptCount = (c: Company) => departments.filter((d) => d.companyId === c.id).length;
 
-  const remove = (c: Company) => {
+  const remove = async (c: Company) => {
     const n = departments.filter((d) => d.companyId === c.id).length;
-    if (n > 0 && !window.confirm(`Delete ${c.name}? Its ${n} department(s) and their designations will also be removed.`)) return;
-    removeCompany(c.id);
+    // Connected, the server refuses a company still in use (company.in_use), so say so before asking.
+    const msg = connected
+      ? `Delete ${c.name}?${n > 0 ? ` Its ${n} department(s) and their designations are deleted with it.` : ''}\n\nA company still used by employees or hiring records can't be deleted — deactivate it instead.`
+      : `Delete ${c.name}? Its ${n} department(s) and their designations will also be removed.`;
+    if ((connected || n > 0) && !window.confirm(msg)) return;
+    try {
+      await removeCompany(c.id);
+    } catch (e) {
+      // e.g. company.in_use: employees or hiring records still use it — the message says to deactivate it instead.
+      window.alert(errorMessage(e));
+    }
   };
 
   const openAdd = () => {
@@ -111,7 +122,7 @@ export default function AdminCompaniesPage() {
     setDrawerOpen(true);
   };
 
-  const save = () => {
+  const save = async () => {
     const name = draft.name.trim();
     if (!name) {
       setError('Company name is required.');
@@ -123,12 +134,19 @@ export default function AdminCompaniesPage() {
       return;
     }
     const record: Company = { ...draft, name, website, shortCode: draft.shortCode.trim() || deriveShortCode(name) };
-    if (mode === 'add') {
-      addCompany(record);
-    } else {
-      updateCompany(record);
+    setBusy(true);
+    try {
+      if (mode === 'add') {
+        await addCompany(record);
+      } else {
+        await updateCompany(record);
+      }
+      setDrawerOpen(false);
+    } catch (e) {
+      setError(errorMessage(e));
+    } finally {
+      setBusy(false);
     }
-    setDrawerOpen(false);
   };
 
   return (
@@ -305,7 +323,7 @@ export default function AdminCompaniesPage() {
             <Button variant="ghost" onClick={() => setDrawerOpen(false)}>
               Cancel
             </Button>
-            <Button variant="primary" onClick={save}>
+            <Button variant="primary" onClick={save} disabled={busy}>
               {mode === 'add' ? 'Add company' : 'Save changes'}
             </Button>
           </>
