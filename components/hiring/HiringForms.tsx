@@ -5,6 +5,7 @@ import { useMemo, useState } from 'react';
 import Link from 'next/link';
 import { useCurrentEmployee } from '@/context/AppContext';
 import { useOrg } from '@/context/OrgContext';
+import { Department } from '@/lib/types';
 import { EMPLOYEES } from '@/lib/data';
 import { addDays, todayISO } from '@/lib/dates';
 import { EMAIL_RE } from '@/lib/options';
@@ -13,7 +14,7 @@ import { Button } from '@/components/ui/Card';
 import { SearchSelect } from '@/components/ui/SearchSelect';
 import { XIcon } from '@/components/icons';
 import { Fg, TEXTAREA_STYLE, TZ_LABEL, empName, money, payUnit, useActor, useHiringLocation } from '@/components/hiring/HiringBits';
-import { canSeeSalary, hiringLevel } from '@/lib/hiringAccess';
+import { canSeeSalary, hiringLevel, teamLeadScope } from '@/lib/hiringAccess';
 import { sandboxTeamsLink, useHiringMail } from '@/lib/hiringMail';
 import { useApp } from '@/context/AppContext';
 import {
@@ -90,23 +91,27 @@ export function RequisitionDrawer({ open, onClose, edit, onDone }: { open: boole
   const me = useCurrentEmployee();
   const actor = useActor();
   const { companies, departments, designations, locations, locationDef } = useOrg();
+  // A Team Lead can ask only for their own team, so the company, department and location are fixed to theirs.
+  const scope = role === 'Team Lead' ? teamLeadScope(me, companies, departments).departments : undefined;
+  const first = scope?.[0];
+  const where = first ? (first.locations.includes(me.location) ? me.location : (first.locations[0] ?? me.location)) : scope ? me.location : loc;
   const blank = (): RequisitionInput => ({
     title: '',
-    companyId: '',
-    departmentId: '',
-    department: '',
-    location: loc,
+    companyId: first?.companyId ?? '',
+    departmentId: first?.id ?? '',
+    department: first?.name ?? '',
+    location: where,
     positions: 1,
     employmentType: 'Full-time',
     reason: 'New role',
     budgetMin: NaN,
     budgetMax: NaN,
-    currency: locationDef(loc)?.currency ?? 'AED',
+    currency: locationDef(where)?.currency ?? 'AED',
     targetStart: '',
     hiringManagerId: role === 'Team Lead' ? me.id : '',
     justification: '',
   });
-  return open ? <RequisitionForm key={edit?.id ?? 'new'} {...{ onClose, edit, onDone, blank, actor, companies, departments, designations, locations, locationDef }} /> : null;
+  return open ? <RequisitionForm key={edit?.id ?? 'new'} {...{ onClose, edit, onDone, blank, actor, companies, departments, designations, locations, locationDef }} scope={scope} /> : null;
 }
 
 function RequisitionForm({
@@ -120,6 +125,7 @@ function RequisitionForm({
   designations,
   locations,
   locationDef,
+  scope,
 }: {
   onClose: () => void;
   edit?: Requisition;
@@ -131,7 +137,10 @@ function RequisitionForm({
   designations: ReturnType<typeof useOrg>['designations'];
   locations: ReturnType<typeof useOrg>['locations'];
   locationDef: ReturnType<typeof useOrg>['locationDef'];
+  /** A Team Lead's departments (their own and any they head); undefined for everyone else. */
+  scope?: Department[];
 }) {
+  const locked = !!scope;
   const [v, setV] = useState<RequisitionInput>(() => (edit ? { ...edit } : blank()));
   const [attempted, setAttempted] = useState(false);
   const set = <K extends keyof RequisitionInput>(k: K, val: RequisitionInput[K]) => setV((p) => ({ ...p, [k]: val }));
@@ -148,8 +157,9 @@ function RequisitionForm({
 
   const errors: Record<string, string> = {};
   if (!v.title.trim()) errors.title = 'Job title is required.';
-  if (!v.companyId) errors.companyId = 'Choose a company.';
-  if (!v.departmentId) errors.departmentId = 'Choose a department.';
+  if (desigs.length && !v.designationTitle) errors.designationTitle = 'Choose a designation.';
+  if (!v.companyId) errors.companyId = locked ? 'Your company is not set up under Administration → Companies.' : 'Choose a company.';
+  if (!v.departmentId) errors.departmentId = locked && !scope?.length ? 'Your department is not set up under Administration → Departments & Designations.' : 'Choose a department.';
   if (!(v.positions >= 1) || !Number.isInteger(v.positions)) errors.positions = 'Enter 1 or more positions.';
   if (v.reason === 'Replacement' && !v.replacesId) errors.replacesId = 'Choose the employee being replaced.';
   if (!(v.budgetMin > 0)) errors.budgetMin = 'Enter the minimum.';
@@ -161,11 +171,29 @@ function RequisitionForm({
   if (!v.justification.trim()) errors.justification = 'Add a short justification for approvers.';
   const shown = (k: string) => (attempted ? errors[k] : undefined);
 
+  // The designation belongs to a department, so it goes when the department does. A title that was only filled from it goes too.
+  const dropDesignation = (p: RequisitionInput) => ({ designationTitle: undefined, title: p.designationTitle && p.title === p.designationTitle ? '' : p.title });
+
+  const me = useCurrentEmployee();
+
+  // A Team Lead's departments. One the requisition already sits in (raised for them by HR) stays choosable.
+  const inScope = scope ?? [];
+  const current = departments.find((d) => d.id === v.departmentId);
+  const scopeDepts = current && !inScope.some((d) => d.id === current.id) ? [...inScope, current] : inScope;
+  const pickedDept = scopeDepts.find((d) => d.id === v.departmentId);
+  const multiLocation = (pickedDept?.locations.length ?? 0) > 1;
+  const companyName = companies.find((c) => c.id === v.companyId)?.name ?? '';
+  const pickScoped = (id: string) => {
+    const d = scopeDepts.find((x) => x.id === id);
+    const loc = d ? (d.locations.includes(v.location) ? v.location : d.locations.includes(me.location) ? me.location : (d.locations[0] ?? v.location)) : v.location;
+    setV((p) => ({ ...p, departmentId: id, department: d?.name ?? '', companyId: d?.companyId ?? '', location: loc, currency: locationDef(loc)?.currency ?? p.currency, ...dropDesignation(p) }));
+  };
+
   const changeLocation = (id: string) => {
     // The company stays; the department stays only if it is one the company runs in the new location.
     const d = departments.find((x) => x.id === v.departmentId);
     const keepDept = !!d && d.locations.includes(id);
-    setV((p) => ({ ...p, location: id, currency: locationDef(id)?.currency ?? p.currency, departmentId: keepDept ? p.departmentId : '', department: keepDept ? p.department : '' }));
+    setV((p) => ({ ...p, location: id, currency: locationDef(id)?.currency ?? p.currency, departmentId: keepDept ? p.departmentId : '', department: keepDept ? p.department : '', ...(keepDept ? {} : dropDesignation(p)) }));
   };
 
   const save = (submit: boolean) => {
@@ -187,6 +215,7 @@ function RequisitionForm({
     <Drawer
       open
       onClose={onClose}
+      wide
       title={edit ? `Edit ${edit.code}` : 'New requisition'}
       description="Ask for headcount. It goes Hiring Manager → HR → Management before a job can be opened."
       footer={
@@ -202,64 +231,102 @@ function RequisitionForm({
       }
     >
       <div className="form-grid hm-form">
-        <Fg label="Job title" required error={shown('title')} full>
-          <input value={v.title} onChange={(e) => set('title', e.target.value)} placeholder="e.g. Network Engineer" />
-        </Fg>
-        <Fg label="Location" required>
-          <select value={v.location} onChange={(e) => changeLocation(e.target.value)}>
-            {locations.map((l) => (
-              <option key={l.id} value={l.id}>
-                {l.name}
-              </option>
-            ))}
-          </select>
-        </Fg>
-        <Fg label="Company" required error={shown('companyId')}>
-          <select value={v.companyId} onChange={(e) => setV((p) => ({ ...p, companyId: e.target.value, departmentId: '', department: '' }))}>
-            <option value="">Select…</option>
-            {cos.map((c) => (
-              <option key={c.id} value={c.id}>
-                {c.name}
-              </option>
-            ))}
-          </select>
-        </Fg>
-        <Fg label="Department" required error={shown('departmentId')}>
+        {locked ? (
+          scopeDepts.length > 1 ? (
+            <>
+              <Fg label="Department" required error={shown('departmentId')} hint={`${companyName} · Hiring manager: ${empName(v.hiringManagerId)}`} full={!multiLocation}>
+                <select value={v.departmentId} onChange={(e) => pickScoped(e.target.value)}>
+                  <option value="">Select…</option>
+                  {scopeDepts.map((d) => (
+                    <option key={d.id} value={d.id}>
+                      {d.name} · {companies.find((c) => c.id === d.companyId)?.name}
+                    </option>
+                  ))}
+                </select>
+              </Fg>
+              {multiLocation && (
+                <Fg label="Location" required>
+                  <select value={v.location} onChange={(e) => changeLocation(e.target.value)}>
+                    {locations.filter((l) => pickedDept?.locations.includes(l.id)).map((l) => (
+                      <option key={l.id} value={l.id}>
+                        {l.name}
+                      </option>
+                    ))}
+                  </select>
+                </Fg>
+              )}
+            </>
+          ) : (
+            <Fg label="Requesting for" error={shown('companyId') ?? shown('departmentId')} hint="You can ask for headcount in your own team only." full>
+              <div className="hm-scope">
+                <strong>{companyName || '—'}</strong>
+                <span>{v.department || '—'}</span>
+                <span>{locationDef(v.location)?.name ?? v.location}</span>
+                <span>Hiring manager: {empName(v.hiringManagerId)}</span>
+              </div>
+            </Fg>
+          )
+        ) : (
+          <>
+            <Fg label="Location" required>
+              <select value={v.location} onChange={(e) => changeLocation(e.target.value)}>
+                {locations.map((l) => (
+                  <option key={l.id} value={l.id}>
+                    {l.name}
+                  </option>
+                ))}
+              </select>
+            </Fg>
+            <Fg label="Company" required error={shown('companyId')}>
+              <select value={v.companyId} onChange={(e) => setV((p) => ({ ...p, companyId: e.target.value, departmentId: '', department: '', ...dropDesignation(p) }))}>
+                <option value="">Select…</option>
+                {cos.map((c) => (
+                  <option key={c.id} value={c.id}>
+                    {c.name}
+                  </option>
+                ))}
+              </select>
+            </Fg>
+            <Fg label="Department" required error={shown('departmentId')}>
+              <select
+                value={v.departmentId}
+                disabled={!v.companyId}
+                onChange={(e) => {
+                  const d = depts.find((x) => x.id === e.target.value);
+                  setV((p) => ({ ...p, departmentId: e.target.value, department: d?.name ?? '', ...dropDesignation(p) }));
+                }}
+              >
+                <option value="">{v.companyId ? 'Select…' : 'Choose a company first'}</option>
+                {depts.map((d) => (
+                  <option key={d.id} value={d.id}>
+                    {d.name}
+                  </option>
+                ))}
+              </select>
+            </Fg>
+          </>
+        )}
+        <Fg label="Designation" required={desigs.length > 0} error={shown('designationTitle')} hint="The grade. It carries through to the job and onboarding." full={locked}>
           <select
-            value={v.departmentId}
-            disabled={!v.companyId}
+            value={v.designationTitle ?? ''}
+            disabled={!v.departmentId || !desigs.length}
             onChange={(e) => {
-              const d = depts.find((x) => x.id === e.target.value);
-              setV((p) => ({ ...p, departmentId: e.target.value, department: d?.name ?? '', designationTitle: undefined }));
+              const t = e.target.value;
+              // The job title follows the designation until it has been typed by hand.
+              setV((p) => ({ ...p, designationTitle: t || undefined, title: !p.title.trim() || p.title === p.designationTitle ? t : p.title }));
             }}
           >
-            <option value="">{v.companyId ? 'Select…' : 'Choose a company first'}</option>
-            {depts.map((d) => (
-              <option key={d.id} value={d.id}>
-                {d.name}
+            <option value="">{!v.departmentId ? 'Choose a department first' : desigs.length ? 'Select…' : 'No designations in this department'}</option>
+            {desigs.map((d) => (
+              <option key={d.id} value={d.title}>
+                {d.title}
               </option>
             ))}
           </select>
         </Fg>
-        {desigs.length > 0 && (
-          <Fg label="Designation" hint="The grade this role is hired at. It carries through to the job and onboarding." full>
-            <select
-              value={v.designationTitle ?? ''}
-              onChange={(e) => {
-                const t = e.target.value;
-                // The job title follows the designation until it has been typed by hand.
-                setV((p) => ({ ...p, designationTitle: t || undefined, title: !p.title.trim() || p.title === p.designationTitle ? t : p.title }));
-              }}
-            >
-              <option value="">Select…</option>
-              {desigs.map((d) => (
-                <option key={d.id} value={d.title}>
-                  {d.title}
-                </option>
-              ))}
-            </select>
-          </Fg>
-        )}
+        <Fg label="Job title" required error={shown('title')} hint="Shown on the careers page. Fills from the designation; edit it if the advert should read differently." full>
+          <input value={v.title} onChange={(e) => set('title', e.target.value)} placeholder="e.g. Network Engineer" />
+        </Fg>
         <Fg label="Number of positions" required error={shown('positions')}>
           <input type="number" min={1} value={Number.isNaN(v.positions) ? '' : v.positions} onChange={(e) => set('positions', num(e.target.value))} />
         </Fg>
@@ -277,8 +344,11 @@ function RequisitionForm({
             ))}
           </select>
         </Fg>
+        <Fg label="Target start date" required error={shown('targetStart')}>
+          <DateField value={v.targetStart} min={today} onChange={(e) => set('targetStart', e.target.value)} />
+        </Fg>
         {v.reason === 'Replacement' && (
-          <Fg label="Employee being replaced" required error={shown('replacesId')}>
+          <Fg label="Employee being replaced" required error={shown('replacesId')} full>
             <SearchSelect
               options={EMPLOYEES.map((e) => ({ value: e.id, label: e.name, meta: `${e.employeeCode} · ${e.designation}` }))}
               value={v.replacesId ?? ''}
@@ -287,17 +357,16 @@ function RequisitionForm({
             />
           </Fg>
         )}
-        <Fg label={`Budget minimum (${cur} ${payUnit(cur)})`} required error={shown('budgetMin')}>
+        {!locked && (
+          <Fg label="Hiring manager" required error={shown('hiringManagerId')} full>
+            <SearchSelect options={people()} value={v.hiringManagerId} onChange={(x) => set('hiringManagerId', x)} placeholder="Search employee…" />
+          </Fg>
+        )}
+        <Fg label={`Budget min (${cur} ${payUnit(cur)})`} required error={shown('budgetMin')}>
           <input type="number" min={0} value={Number.isNaN(v.budgetMin) ? '' : v.budgetMin} onChange={(e) => set('budgetMin', num(e.target.value))} />
         </Fg>
-        <Fg label={`Budget maximum (${cur} ${payUnit(cur)})`} required error={shown('budgetMax')}>
+        <Fg label={`Budget max (${cur} ${payUnit(cur)})`} required error={shown('budgetMax')}>
           <input type="number" min={0} value={Number.isNaN(v.budgetMax) ? '' : v.budgetMax} onChange={(e) => set('budgetMax', num(e.target.value))} />
-        </Fg>
-        <Fg label="Target start date" required error={shown('targetStart')}>
-          <DateField value={v.targetStart} min={today} onChange={(e) => set('targetStart', e.target.value)} />
-        </Fg>
-        <Fg label="Hiring manager" required error={shown('hiringManagerId')}>
-          <SearchSelect options={people()} value={v.hiringManagerId} onChange={(x) => set('hiringManagerId', x)} placeholder="Search employee…" />
         </Fg>
         <Fg label="Justification" required error={shown('justification')} full>
           <textarea rows={4} value={v.justification} onChange={(e) => set('justification', e.target.value)} placeholder="Why is this headcount needed?" style={TEXTAREA_STYLE} />

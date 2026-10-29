@@ -8935,6 +8935,20 @@ select:not([multiple]):not([size]):disabled {
 .hm-form .fg.full {
   grid-column: 1 / -1;
 }
+.hm-scope {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 4px 14px;
+  padding: 11px 14px;
+  border: 1px solid var(--line, #e5e7eb);
+  border-radius: 12px;
+  background: var(--bg);
+  font-size: 13px;
+}
+.hm-scope span {
+  color: var(--muted);
+}
 .hm-checks {
   display: grid;
   gap: 8px;
