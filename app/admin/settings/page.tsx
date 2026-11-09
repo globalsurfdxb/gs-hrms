@@ -51,7 +51,8 @@ function Fg({ label, required, children }: { label: string; required?: boolean; 
 }
 
 export default function AdminSettingsPage() {
-  const { location: currentLocation } = useApp();
+  const { location: currentLocation, nav } = useApp();
+  const F = 'administration:admin-settings';
   const { locations, companies, departments, locationUsage, addLocation, updateLocation, removeLocation } = useOrg();
   useEmployeeVersion();
   const { statusOf } = useSeparation();
@@ -171,9 +172,11 @@ export default function AdminSettingsPage() {
         title="System Settings"
         description="Locations your organization operates in — currency, phone format, working hours and seating."
         actions={
-          <Button variant="primary" onClick={openAddLoc}>
-            <PlusIcon /> Add location
-          </Button>
+          nav.allows(F, 'add') && (
+            <Button variant="primary" onClick={openAddLoc}>
+              <PlusIcon /> Add location
+            </Button>
+          )
         }
       />
 
@@ -285,10 +288,12 @@ export default function AdminSettingsPage() {
                       {hc.total} employee{hc.total === 1 ? '' : 's'} ({hc.active} active{hc.joining ? ` · ${hc.joining} joining` : ''}) · {nDepts} dept{nDepts === 1 ? '' : 's'} · {nCos} compan{nCos === 1 ? 'y' : 'ies'}
                     </span>
                     <div className="rt">
-                      <button className="icon-act" onClick={() => openEditLoc(l)} title="Edit">
-                        <EditIcon />
-                      </button>
-                      {l.system ? (
+                      {nav.allows(F, 'edit') && (
+                        <button className="icon-act" onClick={() => openEditLoc(l)} title="Edit">
+                          <EditIcon />
+                        </button>
+                      )}
+                      {!nav.allows(F, 'delete') ? null : l.system ? (
                         <span className="icon-act" title="Built-in locations can't be deleted" style={{ cursor: 'default', color: 'var(--faint)' }}>
                           <ShieldIcon />
                         </span>

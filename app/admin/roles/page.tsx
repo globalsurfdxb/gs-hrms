@@ -5,7 +5,7 @@ import { ROLE_SCOPE } from '@/lib/data';
 import { API_ENABLED, errorMessage } from '@/lib/api';
 import { ApiRole, fetchCatalog, rolesApi } from '@/lib/rolesApi';
 import { logAudit } from '@/lib/employeeStore';
-import { useCurrentEmployee } from '@/context/AppContext';
+import { useApp, useCurrentEmployee } from '@/context/AppContext';
 import { ACTIONS, AccessAction, AccessCategory, AccessFeature, AccessModule, EXTRA_ACTIONS, ExtraAction, SYSTEM_ROLES, buildCatalog, defaultGrants, permKey } from '@/lib/access';
 import { PageHeader } from '@/components/ui/PageHeader';
 import { Button } from '@/components/ui/Card';
@@ -315,6 +315,8 @@ function RoleEditor({
 
 export default function AdminRolesPage() {
   const me = useCurrentEmployee();
+  const { nav } = useApp();
+  const F = 'administration:admin-roles';
   const [catalog, setCatalog] = useState<AccessModule[]>(buildCatalog);
   const [roles, setRoles] = useState<RoleDef[]>(() => {
     const cat = buildCatalog();
@@ -596,9 +598,11 @@ export default function AdminRolesPage() {
             <Button variant="ghost" onClick={openFeature} disabled={connected} title={connected ? 'Custom features are not saved on the server yet' : undefined}>
               <PlusIcon /> Add feature
             </Button>
-            <Button variant="primary" onClick={openAdd}>
-              <PlusIcon /> Add role
-            </Button>
+            {nav.allows(F, 'add') && (
+              <Button variant="primary" onClick={openAdd}>
+                <PlusIcon /> Add role
+              </Button>
+            )}
           </>
         }
       />
@@ -705,13 +709,17 @@ export default function AdminRolesPage() {
                   <p>{role.description || 'No description yet.'}</p>
                 </div>
                 <div className="rl-ha">
-                  <Button variant="ghost" onClick={() => openEdit(role)}>
-                    <EditIcon /> Edit details
-                  </Button>
-                  <Button variant="ghost" onClick={() => openDuplicate(role)}>
-                    Duplicate
-                  </Button>
-                  {!role.system && (
+                  {nav.allows(F, 'edit') && (
+                    <Button variant="ghost" onClick={() => openEdit(role)}>
+                      <EditIcon /> Edit details
+                    </Button>
+                  )}
+                  {nav.allows(F, 'add') && (
+                    <Button variant="ghost" onClick={() => openDuplicate(role)}>
+                      Duplicate
+                    </Button>
+                  )}
+                  {!role.system && nav.allows(F, 'delete') && (
                     <Button variant="ghost" onClick={() => deleteRole(role)}>
                       <XIcon /> Delete
                     </Button>

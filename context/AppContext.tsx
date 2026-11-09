@@ -3,7 +3,8 @@
 import { createContext, useContext, useEffect, useMemo, useState } from 'react';
 import { Location, Role } from '@/lib/types';
 import { PERSONAS, employeeById } from '@/lib/data';
-import { useAccount } from '@/lib/auth';
+import { useAccount, usePermissions } from '@/lib/auth';
+import { NavAccess, navAccess } from '@/lib/navAccess';
 import { useOrg } from '@/context/OrgContext';
 import { useEmployeeVersion } from '@/lib/employeeStore';
 
@@ -17,6 +18,8 @@ interface AppContextValue {
   setLocation: (l: Location) => void;
   role: Role;
   currentEmployeeId: string;
+  /** Menus and page access: granted permissions when connected, the role table in the demo build. */
+  nav: NavAccess;
 }
 
 const AppContext = createContext<AppContextValue | null>(null);
@@ -29,6 +32,7 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
   const account = useAccount();
   const role: Role = account?.role ?? FALLBACK_ROLE;
   const employeeId = account?.employee.id ?? PERSONAS[FALLBACK_ROLE].employeeId;
+  const perms = usePermissions();
 
   // One-time sync from an external store (localStorage) on mount; SSR has no localStorage,
   // so this can't be a lazy useState initializer without a hydration mismatch.
@@ -58,8 +62,9 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
       setLocation,
       role,
       currentEmployeeId: employeeId,
+      nav: navAccess(role, perms),
     }),
-    [location, role, employeeId]
+    [location, role, employeeId, perms]
   );
 
   return <AppContext.Provider value={value}>{children}</AppContext.Provider>;

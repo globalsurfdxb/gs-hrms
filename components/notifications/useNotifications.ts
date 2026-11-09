@@ -12,7 +12,6 @@ import { addDays, daysBetween, todayISO } from '@/lib/dates';
 import { hiringLevel } from '@/lib/hiringAccess';
 import { canDecideStep, candById, appById, useHiring } from '@/lib/hiringStore';
 import { Notice, isRead, markRead, storedFor, useNoticeStore, useNow } from '@/lib/notifications';
-import { PERS } from '@/lib/nav';
 import { routeAllowed } from '@/lib/guard';
 
 export interface ViewNotice extends Notice {
@@ -28,7 +27,7 @@ const dayDiff = (iso: string) => daysBetween(todayISO(), iso);
     clock ticks, so an alert appears when its window opens without anyone sending it. */
 export function useNotifications(scope: 'me' | 'team' | 'both' = 'me') {
   const me = useCurrentEmployee();
-  const { role } = useApp();
+  const { role, nav } = useApp();
   const now = useNow();
   const store = useNoticeStore();
   const { requests, canAct } = useRequests();
@@ -38,7 +37,7 @@ export function useNotifications(scope: 'me' | 'team' | 'both' = 'me') {
   const { records } = useLearning();
   const hiring = useHiring();
 
-  const hasTeam = PERS[role].scopes.includes('team');
+  const hasTeam = nav.scopes.includes('team');
   const wantMe = scope === 'me' || scope === 'both';
   const wantTeam = (scope === 'team' || scope === 'both') && hasTeam;
 
@@ -154,7 +153,7 @@ export function useNotifications(scope: 'me' | 'team' | 'both' = 'me') {
       .map((n) => {
         // Records carry local times or UTC ones: put them all on one scale before comparing.
         const t = Math.min(new Date(n.at).getTime() || now, now);
-        const href = n.href && routeAllowed(role, n.href, { id: me.id, employeeCode: me.employeeCode }) ? n.href : undefined;
+        const href = n.href && routeAllowed(role, n.href, { id: me.id, employeeCode: me.employeeCode }, nav.perms) ? n.href : undefined;
         return { ...n, href, at: new Date(t).toISOString(), unread: !isRead(store, me.id, n.id) };
       })
       .sort((a, b) => b.at.localeCompare(a.at));

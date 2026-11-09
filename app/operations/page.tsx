@@ -15,7 +15,9 @@ import { ExitIcon, JoinIcon, PeopleIcon, ReceiptIcon } from '@/components/icons'
 
 export default function OperationsPage() {
   useEmployeeVersion();
-  const { location } = useApp();
+  const { location, nav } = useApp();
+  // Only the tools this person can open (all of them in the demo build).
+  const sections = OPS.map((s) => ({ ...s, items: s.items.filter((i) => nav.shows(i.href)) })).filter((s) => s.items.length);
   const { locationName } = useOrg();
   const { claims } = useExpense();
   const { cases, statusOf } = useSeparation();
@@ -40,7 +42,7 @@ export default function OperationsPage() {
         />
       </div>
       <p className="rs-defn">{HEADCOUNT_NOTE}</p>
-      <HubGrid sections={OPS} hub="/operations" />
+      <HubGrid sections={sections} hub="/operations" />
     </div>
   );
 }

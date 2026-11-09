@@ -4,11 +4,13 @@ import Link from 'next/link';
 import { usePathname } from 'next/navigation';
 import { HOME_TABS, resolveLocation } from '@/lib/nav';
 import { laCall, useLaChrome } from '@/lib/laStore';
+import { useApp } from '@/context/AppContext';
 
 export function SubTabs() {
   const pathname = usePathname();
   const loc = resolveLocation(pathname);
   const la = useLaChrome();
+  const { nav } = useApp();
 
   if (!la && (pathname === '/modules/leave-attendance' || pathname.startsWith('/modules/leave-attendance/'))) {
     return (
@@ -37,7 +39,7 @@ export function SubTabs() {
   if (loc.module === 'hiring') return null;
 
   if (loc.module !== 'home' || !loc.scope) return null;
-  const tabs = HOME_TABS[loc.scope];
+  const tabs = HOME_TABS[loc.scope].filter((t) => nav.shows(t.href));
 
   return (
     <nav className="zsub">

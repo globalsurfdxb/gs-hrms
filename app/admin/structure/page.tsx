@@ -7,6 +7,7 @@ import { useEmployeeVersion } from '@/lib/employeeStore';
 import { useSeparation } from '@/context/SeparationContext';
 import { departmentsMissingFromMaster, designationsMissingFromMaster, headcountByCompany, headcountByDepartment, headcountByDesignation, sameText } from '@/lib/headcount';
 import { useOrg } from '@/context/OrgContext';
+import { useApp } from '@/context/AppContext';
 import { Department, Designation } from '@/lib/types';
 import { errorMessage } from '@/lib/api';
 import { PageHeader } from '@/components/ui/PageHeader';
@@ -49,6 +50,11 @@ function Fg({ label, required, children }: { label: string; required?: boolean; 
 
 export default function AdminStructurePage() {
   const { connected, companies, departments, designations, locations, locationName, addDepartment, updateDepartment, removeDepartment, addDesignation, updateDesignation, removeDesignation } = useOrg();
+  const { nav } = useApp();
+  const F = 'administration:admin-structure';
+  const canAdd = nav.allows(F, 'add');
+  const canEdit = nav.allows(F, 'edit');
+  const canDelete = nav.allows(F, 'delete');
   const [busy, setBusy] = useState(false);
   const [selectedId, setSelectedId] = useState('');
   const [q, setQ] = useState('');
@@ -210,7 +216,8 @@ export default function AdminStructurePage() {
         title="Departments & Designations"
         description="Pick a company, build its departments, then add the designations under each department."
         actions={
-          company && (
+          company &&
+          canAdd && (
             <Button variant="primary" onClick={openAddDept}>
               <PlusIcon /> Add department
             </Button>
@@ -383,9 +390,11 @@ export default function AdminStructurePage() {
             <Card className="row-gap">
               <EmptyState icon={<TreeIcon />} title={`No departments in ${company.name}`} description="Add the first department, then add designations under it." />
               <div style={{ padding: '0 0 20px', textAlign: 'center' }}>
-                <Button variant="primary" onClick={openAddDept}>
-                  <PlusIcon /> Add department
-                </Button>
+                {canAdd && (
+                  <Button variant="primary" onClick={openAddDept}>
+                    <PlusIcon /> Add department
+                  </Button>
+                )}
               </div>
             </Card>
           )}
@@ -451,12 +460,16 @@ export default function AdminStructurePage() {
                     </span>
                   </div>
                   <div className="st-acts" onClick={(e) => e.stopPropagation()}>
-                    <button className="icon-act" onClick={() => openEditDept(d)} title="Edit department">
-                      <EditIcon />
-                    </button>
-                    <button className="icon-act" onClick={() => deleteDept(d)} title="Delete department">
-                      <XIcon />
-                    </button>
+                    {canEdit && (
+                      <button className="icon-act" onClick={() => openEditDept(d)} title="Edit department">
+                        <EditIcon />
+                      </button>
+                    )}
+                    {canDelete && (
+                      <button className="icon-act" onClick={() => deleteDept(d)} title="Delete department">
+                        <XIcon />
+                      </button>
+                    )}
                   </div>
                 </div>
 
@@ -472,12 +485,16 @@ export default function AdminStructurePage() {
                             <div className="st-des-t">{x.title}</div>
                             <div className="st-des-s">{people(d.name, x.title)} employee(s)</div>
                           </div>
-                          <button className="icon-act" onClick={() => openEditDesig(x)} title="Edit designation">
-                            <EditIcon />
-                          </button>
-                          <button className="icon-act" onClick={() => deleteDesig(x)} title="Delete designation">
-                            <XIcon />
-                          </button>
+                          {canEdit && (
+                            <button className="icon-act" onClick={() => openEditDesig(x)} title="Edit designation">
+                              <EditIcon />
+                            </button>
+                          )}
+                          {canDelete && (
+                            <button className="icon-act" onClick={() => deleteDesig(x)} title="Delete designation">
+                              <XIcon />
+                            </button>
+                          )}
                         </div>
                       ))}
                       {designationsMissingFromMaster(company.name, d.name, all.map((x) => x.title), EMPLOYEES, statusOf).map((m) => (
@@ -492,14 +509,18 @@ export default function AdminStructurePage() {
                             </div>
                             <div className="st-des-s">{m.headcount.total} employee(s)</div>
                           </div>
-                          <button className="icon-act" onClick={() => (setDesDraft({ ...blankDesig(d.id), title: m.title }), setDesMode('add'), setDesError(''), setDesOpen(true))} title="Add to the master list">
-                            <PlusIcon />
-                          </button>
+                          {canAdd && (
+                            <button className="icon-act" onClick={() => (setDesDraft({ ...blankDesig(d.id), title: m.title }), setDesMode('add'), setDesError(''), setDesOpen(true))} title="Add to the master list">
+                              <PlusIcon />
+                            </button>
+                          )}
                         </div>
                       ))}
-                      <button className="st-add" onClick={() => openAddDesig(d)}>
-                        <PlusIcon /> Add designation
-                      </button>
+                      {canAdd && (
+                        <button className="st-add" onClick={() => openAddDesig(d)}>
+                          <PlusIcon /> Add designation
+                        </button>
+                      )}
                     </div>
                     {all.length === 0 && <div className="st-empty">No designations yet — add the first one.</div>}
                   </div>

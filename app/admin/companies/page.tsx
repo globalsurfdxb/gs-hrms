@@ -8,6 +8,7 @@ import { useEmployeeVersion } from '@/lib/employeeStore';
 import { useSeparation } from '@/context/SeparationContext';
 import { countHeadcount, headcountByCompany } from '@/lib/headcount';
 import { useOrg } from '@/context/OrgContext';
+import { useApp } from '@/context/AppContext';
 import { Company } from '@/lib/types';
 import { errorMessage } from '@/lib/api';
 import { PageHeader } from '@/components/ui/PageHeader';
@@ -67,6 +68,8 @@ function Fg({ label, required, children }: { label: string; required?: boolean; 
 
 export default function AdminCompaniesPage() {
   const { connected, companies, departments, locations, locationName, addCompany, updateCompany, removeCompany } = useOrg();
+  const { nav } = useApp();
+  const F = 'administration:admin-companies';
   useEmployeeVersion();
   const { statusOf } = useSeparation();
   const [drawerOpen, setDrawerOpen] = useState(false);
@@ -157,9 +160,11 @@ export default function AdminCompaniesPage() {
         title="Companies"
         description="The legal entities under Global Surf IT — each employee record belongs to one."
         actions={
-          <Button variant="primary" onClick={openAdd}>
-            <PlusIcon /> Add company
-          </Button>
+          nav.allows(F, 'add') && (
+            <Button variant="primary" onClick={openAdd}>
+              <PlusIcon /> Add company
+            </Button>
+          )
         }
       />
 
@@ -291,15 +296,21 @@ export default function AdminCompaniesPage() {
                     <TreeIcon /> {deptCount(c)} department{deptCount(c) === 1 ? '' : 's'} · Manage structure
                   </Link>
                   <div className="co-acts">
-                    <button className="icon-act" onClick={() => toggleStatus(c)} title={inactive ? 'Activate company' : 'Deactivate company'} style={inactive ? undefined : { color: '#15803D' }}>
-                      <CheckIcon />
-                    </button>
-                    <button className="icon-act" onClick={() => openEdit(c)} title="Edit">
-                      <EditIcon />
-                    </button>
-                    <button className="icon-act" onClick={() => remove(c)} title="Delete">
-                      <XIcon />
-                    </button>
+                    {nav.allows(F, 'edit') && (
+                      <>
+                        <button className="icon-act" onClick={() => toggleStatus(c)} title={inactive ? 'Activate company' : 'Deactivate company'} style={inactive ? undefined : { color: '#15803D' }}>
+                          <CheckIcon />
+                        </button>
+                        <button className="icon-act" onClick={() => openEdit(c)} title="Edit">
+                          <EditIcon />
+                        </button>
+                      </>
+                    )}
+                    {nav.allows(F, 'delete') && (
+                      <button className="icon-act" onClick={() => remove(c)} title="Delete">
+                        <XIcon />
+                      </button>
+                    )}
                   </div>
                 </div>
               </div>

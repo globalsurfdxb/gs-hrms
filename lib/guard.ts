@@ -2,18 +2,23 @@ import { directReports } from '@/lib/data';
 import { PERS, resolveLocation } from '@/lib/nav';
 import { Role } from '@/lib/types';
 import { hiringLevel } from '@/lib/hiringAccess';
+import { can } from '@/lib/access';
+import { featuresFor, navAccess } from '@/lib/navAccess';
 
 /* Which pages a signed-in role may open. The shell asks this while rendering, so a page the role may not see is
    never drawn (and never flashes) before the redirect. A backend must still enforce the same rules on every
-   request; this is the front-end half of that. */
+   request; this is the front-end half of that. Connected to the backend, `perms` (the granted permission keys) decide
+   instead of the role table — see lib/navAccess.ts. Hiring Management still follows the role for now. */
 
 const MANAGEMENT: Role[] = ['Super Admin', 'HR', 'Office Admin'];
 
-export function routeAllowed(role: Role, pathname: string, me: { id: string; employeeCode: string }): boolean {
+export function routeAllowed(role: Role, pathname: string, me: { id: string; employeeCode: string }, perms: string[] | null = null): boolean {
   const path = pathname.replace(/\/+$/, '') || '/';
+  const nav = navAccess(role, perms);
 
   // Self-service pages every signed-in person can open.
-  if (['/dashboard', '/profile', '/expense/new', '/expense/claims'].includes(path) || path.startsWith('/my/') || path.startsWith('/modules/')) return true;
+  if (['/dashboard', '/profile', '/expense/new', '/expense/claims'].includes(path) || path.startsWith('/modules/')) return true;
+  if (path.startsWith('/my/')) return nav.shows(path);
 
   // Hiring Management: HR and administrators run it; a Team Lead works with their own requisitions and jobs.
   if (path === '/hiring' || path.startsWith('/hiring/')) {
@@ -26,6 +31,7 @@ export function routeAllowed(role: Role, pathname: string, me: { id: string; emp
   }
 
   // Expense administration.
+  if (perms && path.startsWith('/expense/')) return nav.shows(path);
   if (path === '/expense/approvals') return role !== 'Employee';
   if (path === '/expense/dashboard' || path === '/expense/categories') return MANAGEMENT.includes(role);
 
@@ -34,15 +40,18 @@ export function routeAllowed(role: Role, pathname: string, me: { id: string; emp
   if (m) {
     const code = decodeURIComponent(m[1]);
     const editing = !!m[2];
-    if (MANAGEMENT.includes(role)) return true;
+    const everyone = perms ? ['employee:org:directory', 'employee:ops:directory'].some((id) => can(perms, id, editing ? 'edit' : 'view')) : MANAGEMENT.includes(role);
+    if (everyone) return true;
     if (editing) return false;
     if (code === me.employeeCode) return true;
-    return role === 'Team Lead' && directReports(me.id).some((e) => e.employeeCode === code);
+    const team = perms ? can(perms, 'employee:team:directory') : role === 'Team Lead';
+    return team && directReports(me.id).some((e) => e.employeeCode === code);
   }
 
-  // Everything else follows the role's modules and spaces.
+  // Everything else follows the granted features (connected), or the role's modules and spaces.
   const loc = resolveLocation(path);
-  const persona = PERS[role];
   if (loc.module === 'modules' || loc.module === 'hiring') return true;
+  if (perms && featuresFor(path).length) return nav.shows(path);
+  const persona = perms ? nav : PERS[role];
   return persona.modules.includes(loc.module) && !(loc.scope && !persona.scopes.includes(loc.scope));
 }

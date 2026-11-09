@@ -5,7 +5,7 @@ import { useEffect, useState } from 'react';
 import Link from 'next/link';
 import { usePathname } from 'next/navigation';
 import { useApp } from '@/context/AppContext';
-import { APP_MODULES, HIRING_TABS, PERS, RAIL_LABEL, RailModule, inModule, resolveLocation } from '@/lib/nav';
+import { APP_MODULES, HIRING_TABS, RAIL_LABEL, RailModule, inModule, resolveLocation } from '@/lib/nav';
 import { getLaLastRail, laCall, laIcon, useLaChrome } from '@/lib/laStore';
 import { lastModule } from '@/lib/lastModule';
 import { hiringLevel } from '@/lib/hiringAccess';
@@ -77,8 +77,8 @@ function RailLink({ m, active, onClick }: { m: RailModule; active: boolean; onCl
 
 export function Rail({ open, onClose }: { open: boolean; onClose: () => void }) {
   const pathname = usePathname();
-  const { role } = useApp();
-  const modules = PERS[role].modules;
+  const { role, nav } = useApp();
+  const modules = nav.modules;
   const activeModule = resolveLocation(pathname).module;
   const la = useLaChrome();
 
