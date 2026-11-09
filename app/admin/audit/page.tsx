@@ -11,6 +11,8 @@ import { StatStrip } from '@/components/ui/StatStrip';
 import { ArrowRightIcon, ClockIcon, DownloadIcon, GridIcon, HistoryIcon, SearchIcon, UserIcon } from '@/components/icons';
 import { downloadCsv } from '@/lib/csv';
 import { todayISO } from '@/lib/dates';
+import { API_ENABLED } from '@/lib/api';
+import { ServerAuditLog } from '@/components/admin/ServerAuditLog';
 
 const fmtDay = (iso: string) => {
   const d = new Date(`${iso}T00:00:00Z`);
@@ -31,7 +33,12 @@ const timeOf = (at?: string) => {
 
 const plural = (n: number, one: string, many = `${one}s`) => `${n} ${n === 1 ? one : many}`;
 
+/** Local development reads the server's audit log; the demo build (no backend) shows the log kept in the browser. */
 export default function AuditLogPage() {
+  return API_ENABLED ? <ServerAuditLog /> : <LocalAuditLog />;
+}
+
+function LocalAuditLog() {
   useEmployeeVersion();
   const [q, setQ] = useState('');
   const [field, setField] = useState('all');
