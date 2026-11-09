@@ -28,7 +28,7 @@ export const onUnauthorized = (handler: () => void) => {
   unauthorized = handler;
 };
 
-export async function api<T>(method: 'GET' | 'POST' | 'PATCH' | 'PUT' | 'DELETE', path: string, body?: unknown, query?: Query): Promise<T> {
+async function send(method: 'GET' | 'POST' | 'PATCH' | 'PUT' | 'DELETE', path: string, body?: unknown, query?: Query): Promise<Response> {
   const qs = query ? new URLSearchParams(Object.entries(query).flatMap(([k, v]) => (v === undefined ? [] : [[k, String(v)]]))).toString() : '';
   let res: Response;
   try {
@@ -41,14 +41,26 @@ export async function api<T>(method: 'GET' | 'POST' | 'PATCH' | 'PUT' | 'DELETE'
   } catch {
     throw new ApiError(0, 'network.unreachable', 'The HRMS server cannot be reached. Check your connection and try again.');
   }
-  if (res.status === 204) return undefined as T;
-  const data: unknown = await res.json().catch(() => undefined);
   if (!res.ok) {
     if (res.status === 401 && !path.startsWith('/auth/')) unauthorized?.();
+    const data: unknown = await res.json().catch(() => undefined);
     const e = (data ?? {}) as { code?: string; message?: string; details?: Record<string, unknown>; requestId?: string };
     throw new ApiError(res.status, e.code ?? 'server.error', e.message ?? 'Something went wrong', e.details, e.requestId);
   }
-  return data as T;
+  return res;
+}
+
+export async function api<T>(method: 'GET' | 'POST' | 'PATCH' | 'PUT' | 'DELETE', path: string, body?: unknown, query?: Query): Promise<T> {
+  const res = await send(method, path, body, query);
+  if (res.status === 204) return undefined as T;
+  return (await res.json().catch(() => undefined)) as T;
+}
+
+/** A file the server builds (a CSV export): its text and the file name the server suggests. */
+export async function apiText(path: string, query?: Query): Promise<{ text: string; filename: string | null }> {
+  const res = await send('GET', path, undefined, query);
+  const filename = /filename="([^"]+)"/.exec(res.headers.get('Content-Disposition') ?? '')?.[1] ?? null;
+  return { text: await res.text(), filename };
 }
 
 /** A message for the user. Validation errors (`request.invalid`) list their messages in `details.fields`. */
