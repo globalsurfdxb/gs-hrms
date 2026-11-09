@@ -4,9 +4,9 @@ import { useState } from 'react';
 import Link from 'next/link';
 import { usePathname, useRouter } from 'next/navigation';
 import { useApp, useCurrentEmployee } from '@/context/AppContext';
-import { APP_MODULES, HOME_TABS, PERS, RAIL_LABEL, SCOPE_LABEL, inModule, resolveLocation } from '@/lib/nav';
+import { APP_MODULES, HOME_TABS, RAIL_LABEL, SCOPE_LABEL, inModule, resolveLocation } from '@/lib/nav';
 import { laCall, useLaChrome } from '@/lib/laStore';
-import { signOut } from '@/lib/auth';
+import { signOut, useAuth } from '@/lib/auth';
 import { useLocationName } from '@/components/shell/useLocationName';
 import { NotificationBell } from '@/components/notifications/NotificationBell';
 import { BellIcon, GearIcon, MenuIcon, PlusIcon } from '@/components/icons';
@@ -26,14 +26,16 @@ const UserIcon = () => (
 );
 
 export function TopBar({ onMenu }: { onMenu: () => void }) {
-  const { role } = useApp();
+  const { role, nav } = useApp();
   const me = useCurrentEmployee();
+  // The role as the server names it (a custom role too); the screens treat unknown roles as Employee.
+  const roleName = useAuth().user?.role ?? role;
   const pathname = usePathname();
   const router = useRouter();
   const locName = useLocationName();
   const [menu, setMenu] = useState(false);
   const loc = resolveLocation(pathname);
-  const scopes = PERS[role].scopes;
+  const scopes = nav.scopes;
   const la = useLaChrome();
   // The module's own menus arrive once its runtime has started: hold their place instead of flashing the generic title.
   const laBooting = !la && (pathname === '/modules/leave-attendance' || pathname.startsWith('/modules/leave-attendance/'));
@@ -66,7 +68,7 @@ export function TopBar({ onMenu }: { onMenu: () => void }) {
         ) : (
           <nav className="zscope">
             {scopes.map((s) => (
-              <Link key={s} href={HOME_TABS[s][0].href} className={`st ${loc.scope === s ? 'active' : ''}`}>
+              <Link key={s} href={(HOME_TABS[s].find((t) => nav.shows(t.href)) ?? HOME_TABS[s][0]).href} className={`st ${loc.scope === s ? 'active' : ''}`}>
                 {SCOPE_LABEL[s]}
               </Link>
             ))}
@@ -92,7 +94,7 @@ export function TopBar({ onMenu }: { onMenu: () => void }) {
               </button>
             )
           ) : (
-            PERS[role].modules.includes('administration') && (
+            nav.modules.includes('administration') && nav.shows('/admin/settings') && (
               <Link href="/admin/settings" className="ztb" title="Settings">
                 <GearIcon />
               </Link>
@@ -106,7 +108,7 @@ export function TopBar({ onMenu }: { onMenu: () => void }) {
               <div className="av">{me.avatarInitials}</div>
               <div>
                 <div className="pnm">{me.name}</div>
-                <div className="prl">{role}</div>
+                <div className="prl">{roleName}</div>
               </div>
             </button>
             {menu && (
@@ -119,7 +121,7 @@ export function TopBar({ onMenu }: { onMenu: () => void }) {
                       <div className="zacct-nm">{me.name}</div>
                       <div className="zacct-em">{me.email}</div>
                       <div className="zacct-rl">
-                        {role} · {me.employeeCode} · {locName(me.location)}
+                        {roleName} · {me.employeeCode} · {locName(me.location)}
                       </div>
                     </div>
                   </div>

@@ -17,7 +17,7 @@ import { NoticeToaster } from '@/components/notifications/NoticeToaster';
 
 export function AppShell({ children }: { children: React.ReactNode }) {
   const [open, setOpen] = useState(false);
-  const { role } = useApp();
+  const { role, nav } = useApp();
   const me = useCurrentEmployee();
   const pathname = usePathname();
   const router = useRouter();
@@ -50,7 +50,7 @@ export function AppShell({ children }: { children: React.ReactNode }) {
     return () => window.clearTimeout(id);
   }, [auth.status]);
 
-  const allowed = bare || auth.status !== 'in' || routeAllowed(role, pathname, me);
+  const allowed = bare || auth.status !== 'in' || routeAllowed(role, pathname, me, nav.perms);
 
   useEffect(() => {
     if (!allowed) router.replace('/dashboard');

@@ -179,6 +179,13 @@ export function accountOf(user: SessionUser | null): Account | null {
 
 export const useAccount = (): Account | null => accountOf(useAuth().user);
 
+/** The signed-in person's granted permission keys when connected to the backend; null in the demo build, where the
+    screens follow the built-in role table instead. */
+export function usePermissions(): string[] | null {
+  const user = useAuth().user;
+  return API_ENABLED ? (user?.permissions ?? []) : null;
+}
+
 /** Who is signed in right now, for anything that has to record the person behind an action. */
 export function currentActor(): { name: string; role: Role | null } {
   const acc = accountOf(state.user);
