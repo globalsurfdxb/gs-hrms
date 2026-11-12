@@ -6,6 +6,8 @@ import { notFound, useParams } from 'next/navigation';
 import { ASSETS, EMPLOYEES, REFERENCE_TODAY, directReports, managerOf } from '@/lib/data';
 import { REQUIRED_DOCS } from '@/lib/profiles';
 import { accountFor } from '@/lib/auth';
+import { API_ENABLED } from '@/lib/api';
+import { ServerProfile } from '@/components/directory/ServerProfile';
 import { useApp } from '@/context/AppContext';
 import { canEditEmployees, useEmployeeVersion } from '@/lib/employeeStore';
 import { useOrg } from '@/context/OrgContext';
@@ -47,7 +49,13 @@ const ageOn = (dob: string, today: string) => {
 
 const money = (currency: string, n: number) => `${currency} ${n.toLocaleString('en-US')}`;
 
+/** Local development reads the profile from the server; the demo build (no backend) shows the demo record. */
 export default function EmployeeProfilePage() {
+  const params = useParams<{ code: string }>();
+  return API_ENABLED ? <ServerProfile code={decodeURIComponent(params.code)} /> : <LocalEmployeeProfile />;
+}
+
+function LocalEmployeeProfile() {
   const params = useParams<{ code: string }>();
   const { locationDef, locationName } = useOrg();
   const { statusOf, isAssetReturned } = useSeparation();

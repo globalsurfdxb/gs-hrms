@@ -45,6 +45,8 @@ export function routeAllowed(role: Role, pathname: string, me: { id: string; emp
     if (editing) return false;
     if (code === me.employeeCode) return true;
     const team = perms ? can(perms, 'employee:team:directory') : role === 'Team Lead';
+    // Connected, the server knows the real reporting lines and answers 404 for anyone outside the team.
+    if (perms) return team;
     return team && directReports(me.id).some((e) => e.employeeCode === code);
   }
 

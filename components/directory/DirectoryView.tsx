@@ -1,6 +1,6 @@
 'use client';
 
-import { useMemo, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 import { useApp, useCurrentEmployee } from '@/context/AppContext';
@@ -15,6 +15,8 @@ import { PageHeader } from '@/components/ui/PageHeader';
 import { Card, EmptyState } from '@/components/ui/Card';
 import { StatusBadge } from '@/components/ui/Badge';
 import { EmpId } from '@/components/ui/EmployeeBits';
+import { API_ENABLED, errorMessage } from '@/lib/api';
+import { DataScope, ServerEmployee, employeesApi, initialsOf, statusOfServer, typeOfServer } from '@/lib/employeesApi';
 import { Avatar, toneFor } from '@/components/ui/Avatar';
 import { StatStrip } from '@/components/ui/StatStrip';
 import { BuildingIcon, CheckIcon, EditIcon, FilterIcon, GridIcon, JoinIcon, ListIcon, MapPinIcon, PeopleIcon, PlusIcon, SearchIcon, UserIcon, XIcon } from '@/components/icons';
@@ -68,6 +70,63 @@ function FacetSelect({ label, value, onChange, options, count, total, allLabel, 
   );
 }
 
+/** One person as the directory shows them, built from the demo records or from the server (local development). */
+interface Row {
+  id: string;
+  employeeCode: string;
+  name: string;
+  initials: string;
+  company: string;
+  department: string;
+  designation: string;
+  location: string;
+  seating: string;
+  managerId: string | null;
+  manager: { name: string; code: string } | null;
+  dateOfJoining: string;
+  status: EmploymentStatus;
+  employmentType: string;
+  nationality: string;
+  /** Expired passport, visa, Emirates ID or labour card: a red flag next to the status. */
+  flag: { short: string; full: string };
+}
+
+const fromServer = (e: ServerEmployee): Row => ({
+  id: e.id,
+  employeeCode: e.employeeCode,
+  name: e.name,
+  initials: initialsOf(e.name),
+  company: e.company.name,
+  department: e.department?.name ?? '',
+  designation: e.designation?.name ?? '',
+  location: e.location.id,
+  seating: '',
+  managerId: e.reportingManager?.id ?? null,
+  manager: e.reportingManager && { name: e.reportingManager.name, code: e.reportingManager.employeeCode },
+  dateOfJoining: e.dateOfJoining,
+  status: statusOfServer(e),
+  employmentType: typeOfServer(e),
+  nationality: '',
+  flag: { short: '', full: '' },
+});
+
+/** The server's directory: everyone in the caller's data scope. */
+function useServerDirectory() {
+  const [state, setState] = useState<{ scope: DataScope; items: ServerEmployee[] } | { error: string } | null>(null);
+  useEffect(() => {
+    if (!API_ENABLED) return;
+    let cancelled = false;
+    employeesApi
+      .all()
+      .then((r) => !cancelled && setState(r))
+      .catch((e) => !cancelled && setState({ error: errorMessage(e) }));
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+  return state;
+}
+
 export function DirectoryView({ forceTeam = false }: { forceTeam?: boolean }) {
   const { role } = useApp();
   const { locations, locationName } = useOrg();
@@ -81,66 +140,96 @@ export function DirectoryView({ forceTeam = false }: { forceTeam?: boolean }) {
   const setFilter = (k: FilterKey, v: string) => setF((p) => ({ ...p, [k]: v }));
   const version = useEmployeeVersion();
   useExpiryVersion();
-  /** Expired passport, visa, Emirates ID or labour card: shown as a red flag next to the status. */
-  const flagFor = (e: Employee) => {
-    const issues = statusOf(e) === 'Inactive' ? [] : complianceIssues(e);
-    return { short: complianceShort(issues), full: complianceLabel(issues) };
-  };
-  const canEdit = canEditEmployees(role);
+  const server = useServerDirectory();
+  const serverError = server && 'error' in server ? server.error : '';
+  const serverData = server && 'items' in server ? server : null;
+  // Editing is not on the server yet, so the pencil stays with the demo data.
+  const canEdit = !API_ENABLED && canEditEmployees(role);
   const router = useRouter();
 
-  const teamMode = forceTeam || role === 'Team Lead';
+  // Connected, the server's data scope decides; a team view lists direct reports only, as in the demo.
+  const teamMode = forceTeam || (API_ENABLED ? serverData?.scope === 'TEAM' : role === 'Team Lead');
 
-  const scopeBase = useMemo(() => {
-    if (teamMode) return directReports(me.id);
-    return EMPLOYEES;
+  const scopeBase = useMemo<Row[]>(() => {
+    if (API_ENABLED) {
+      const items = serverData?.items ?? [];
+      return (teamMode ? items.filter((e) => e.reportingManager?.employeeCode === me.employeeCode) : items).map(fromServer);
+    }
+    return (teamMode ? directReports(me.id) : EMPLOYEES).map((e: Employee): Row => {
+      const status = statusOf(e);
+      const issues = status === 'Inactive' ? [] : complianceIssues(e);
+      const mgr = EMPLOYEES.find((m) => m.id === e.reportingManagerId);
+      return {
+        id: e.id,
+        employeeCode: e.employeeCode,
+        name: e.name,
+        initials: e.avatarInitials,
+        company: e.company,
+        department: e.department,
+        designation: e.designation,
+        location: e.location,
+        seating: e.seatingLocation,
+        managerId: e.reportingManagerId,
+        manager: mgr ? { name: mgr.name, code: mgr.employeeCode } : null,
+        dateOfJoining: e.dateOfJoining,
+        status,
+        employmentType: e.employmentType,
+        nationality: e.nationality,
+        flag: { short: complianceShort(issues), full: complianceLabel(issues) },
+      };
+    });
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [teamMode, me.id, version]);
+  }, [teamMode, me.id, me.employeeCode, version, serverData, statusOf]);
 
-  const hasDocIssue = (e: Employee) => statusOf(e) !== 'Inactive' && complianceIssues(e).length > 0;
-  const test = (e: Employee, k: FilterKey, v: string): boolean => {
+  const test = (e: Row, k: FilterKey, v: string): boolean => {
     switch (k) {
       case 'loc':
         return e.location === v;
       case 'dept':
         return e.department === v;
       case 'status':
-        return statusOf(e) === v;
+        return e.status === v;
       case 'company':
         return e.company === v;
       case 'desig':
         return e.designation === v;
       case 'mgr':
-        return v === 'none' ? !e.reportingManagerId : e.reportingManagerId === v;
+        return v === 'none' ? !e.managerId : e.managerId === v;
       case 'type':
         return e.employmentType === v;
       case 'nat':
         return e.nationality === v;
       case 'docs':
-        return hasDocIssue(e);
+        return !!e.flag.short;
     }
   };
+  const needle = q.trim().toLowerCase();
+  const matchesSearch = (e: Row) => {
+    if (!needle) return true;
+    const demo = API_ENABLED ? undefined : EMPLOYEES.find((x) => x.id === e.id);
+    return demo ? matchesEmployee(demo, q) : `${e.name} ${e.employeeCode} ${e.designation} ${e.department} ${e.company}`.toLowerCase().includes(needle);
+  };
   /** The people who pass the search and every filter except the one named, so each dropdown can show what choosing a value would leave. */
-  const matching = (skip?: FilterKey) => scopeBase.filter((e) => matchesEmployee(e, q) && FILTER_KEYS.every((k) => k === skip || f[k] === ALL || test(e, k, f[k])));
-  const facets = Object.fromEntries(FILTER_KEYS.map((k) => [k, matching(k)])) as Record<FilterKey, Employee[]>;
+  const matching = (skip?: FilterKey) => scopeBase.filter((e) => matchesSearch(e) && FILTER_KEYS.every((k) => k === skip || f[k] === ALL || test(e, k, f[k])));
+  const facets = Object.fromEntries(FILTER_KEYS.map((k) => [k, matching(k)])) as Record<FilterKey, Row[]>;
   const countOf = (k: FilterKey) => (v: string) => facets[k].filter((e) => test(e, k, v)).length;
 
-  const byName = (a: Employee, b: Employee) => a.name.localeCompare(b.name);
+  const byName = (a: Row, b: Row) => a.name.localeCompare(b.name);
   const rows = [...matching()].sort(
     sort === 'name' ? byName : sort === 'dept' ? (a, b) => a.department.localeCompare(b.department) || byName(a, b) : sort === 'newest' ? (a, b) => b.dateOfJoining.localeCompare(a.dateOfJoining) : sort === 'oldest' ? (a, b) => a.dateOfJoining.localeCompare(b.dateOfJoining) : () => 0
   );
 
-  const uniq = (get: (e: Employee) => string): Opt[] => [...new Set(scopeBase.map(get).filter(Boolean))].sort((a, b) => a.localeCompare(b)).map((v) => ({ value: v, label: v }));
+  const uniq = (get: (e: Row) => string): Opt[] => [...new Set(scopeBase.map(get).filter(Boolean))].sort((a, b) => a.localeCompare(b)).map((v) => ({ value: v, label: v }));
   const managers: Opt[] = [
-    ...[...new Set(scopeBase.map((e) => e.reportingManagerId).filter((id): id is string => !!id))]
-      .map((id) => ({ value: id, label: EMPLOYEES.find((m) => m.id === id)?.name ?? id }))
+    ...[...new Map(scopeBase.flatMap((e) => (e.managerId && e.manager ? [[e.managerId, e.manager.name] as const] : []))).entries()]
+      .map(([id, name]) => ({ value: id, label: name }))
       .sort((a, b) => a.label.localeCompare(b.label)),
-    ...(scopeBase.some((e) => !e.reportingManagerId) ? [{ value: 'none', label: 'No manager' }] : []),
+    ...(scopeBase.some((e) => !e.managerId) ? [{ value: 'none', label: 'No manager' }] : []),
   ];
   const valueLabel = (k: FilterKey, v: string) => (k === 'loc' ? locationName(v) : k === 'mgr' ? (managers.find((m) => m.value === v)?.label ?? v) : k === 'docs' ? 'Expired documents' : v);
 
   const inLocation = scopeBase.filter((e) => f.loc === ALL || e.location === f.loc);
-  const countStatus = (s: EmploymentStatus) => inLocation.filter((e) => statusOf(e) === s).length;
+  const countStatus = (s: EmploymentStatus) => inLocation.filter((e) => e.status === s).length;
   const activeN = countStatus('Active');
   const joiningN = countStatus('Onboarding');
   const leavingN = countStatus('Offboarding');
@@ -188,6 +277,11 @@ export function DirectoryView({ forceTeam = false }: { forceTeam?: boolean }) {
       />
 
       <Card className="row-gap">
+        {API_ENABLED && (serverError || !serverData) && (
+          <div role={serverError ? 'alert' : 'status'} style={{ margin: '12px 16px 0', padding: '10px 12px', borderRadius: 8, fontSize: 13, color: serverError ? 'var(--danger)' : 'var(--muted)', background: serverError ? 'var(--danger-50)' : 'var(--gray-50)' }}>
+            {serverError || 'Loading the directory…'}
+          </div>
+        )}
         <div className="tbar">
           <div className="tsearch">
             <SearchIcon />
@@ -234,8 +328,8 @@ export function DirectoryView({ forceTeam = false }: { forceTeam?: boolean }) {
             <FacetSelect label="Designation" allLabel="All designations" value={f.desig} onChange={(v) => setFilter('desig', v)} options={uniq((e) => e.designation)} count={countOf('desig')} total={facets.desig.length} />
             {!teamMode && <FacetSelect label="Reports to" allLabel="Anyone" value={f.mgr} onChange={(v) => setFilter('mgr', v)} options={managers} count={countOf('mgr')} total={facets.mgr.length} />}
             <FacetSelect label="Employment type" allLabel="All types" value={f.type} onChange={(v) => setFilter('type', v)} options={uniq((e) => e.employmentType)} count={countOf('type')} total={facets.type.length} />
-            <FacetSelect label="Nationality" allLabel="All nationalities" value={f.nat} onChange={(v) => setFilter('nat', v)} options={uniq((e) => e.nationality)} count={countOf('nat')} total={facets.nat.length} />
-            <FacetSelect label="Documents" allLabel="Any" value={f.docs} onChange={(v) => setFilter('docs', v)} options={[{ value: 'issues', label: 'Expired documents' }]} count={countOf('docs')} total={facets.docs.length} />
+            {!API_ENABLED && <FacetSelect label="Nationality" allLabel="All nationalities" value={f.nat} onChange={(v) => setFilter('nat', v)} options={uniq((e) => e.nationality)} count={countOf('nat')} total={facets.nat.length} />}
+            {!API_ENABLED && <FacetSelect label="Documents" allLabel="Any" value={f.docs} onChange={(v) => setFilter('docs', v)} options={[{ value: 'issues', label: 'Expired documents' }]} count={countOf('docs')} total={facets.docs.length} />}
           </div>
         )}
 
@@ -281,13 +375,13 @@ export function DirectoryView({ forceTeam = false }: { forceTeam?: boolean }) {
               </thead>
               <tbody>
                 {rows.map((e) => {
-                  const mgr = EMPLOYEES.find((m) => m.id === e.reportingManagerId);
+                  const mgr = e.manager;
                   const tone = toneFor(e.department);
                   return (
                     <tr key={e.id} className="clickable" onClick={() => router.push(`/directory/${e.employeeCode}`)}>
                       <td>
                         <Link href={`/directory/${e.employeeCode}`} className="person" onClick={(ev) => ev.stopPropagation()}>
-                          <Avatar initials={e.avatarInitials} seed={e.department} />
+                          <Avatar initials={e.initials} seed={e.department} />
                           <div>
                             <div className="nm">{e.name}</div>
                             <div className="sb">
@@ -303,13 +397,13 @@ export function DirectoryView({ forceTeam = false }: { forceTeam?: boolean }) {
                       </td>
                       <td>
                         <div>{locationName(e.location)}</div>
-                        <div className="sb">{e.seatingLocation}</div>
+                        {e.seating && <div className="sb">{e.seating}</div>}
                       </td>
                       <td>
                         {mgr ? (
                           <>
                             {mgr.name}
-                            <EmpId code={mgr.employeeCode} />
+                            <EmpId code={mgr.code} />
                           </>
                         ) : (
                           '—'
@@ -317,8 +411,8 @@ export function DirectoryView({ forceTeam = false }: { forceTeam?: boolean }) {
                       </td>
                       <td>
                         <div className="ex-statuscell">
-                          <StatusBadge status={statusOf(e)} />
-                          <ComplianceFlag text={flagFor(e).short} title={flagFor(e).full} />
+                          <StatusBadge status={e.status} />
+                          <ComplianceFlag text={e.flag.short} title={e.flag.full} />
                         </div>
                       </td>
                       {canEdit && (
@@ -339,7 +433,7 @@ export function DirectoryView({ forceTeam = false }: { forceTeam?: boolean }) {
         {!!rows.length && view === 'grid' && (
           <div className="lc-pgrid">
             {rows.map((e) => {
-              const mgr = EMPLOYEES.find((m) => m.id === e.reportingManagerId);
+              const mgr = e.manager;
               const tone = toneFor(e.department);
               return (
                 <Link key={e.id} href={`/directory/${e.employeeCode}`} className="lc-pcard">
@@ -359,7 +453,7 @@ export function DirectoryView({ forceTeam = false }: { forceTeam?: boolean }) {
                     </button>
                   )}
                   <div className="top">
-                    <Avatar initials={e.avatarInitials} seed={e.department} size={44} />
+                    <Avatar initials={e.initials} seed={e.department} size={44} />
                     <div style={{ minWidth: 0 }}>
                       <div className="nm">{e.name}</div>
                       <div className="ds">
@@ -371,16 +465,17 @@ export function DirectoryView({ forceTeam = false }: { forceTeam?: boolean }) {
                     <span className="lc-dept" style={{ background: tone.bg, color: tone.fg }}>
                       {e.department}
                     </span>
-                    <StatusBadge status={statusOf(e)} />
+                    <StatusBadge status={e.status} />
                   </div>
-                  {flagFor(e).short && (
+                  {e.flag.short && (
                     <div style={{ marginTop: 8 }}>
-                      <ComplianceFlag text={flagFor(e).short} title={flagFor(e).full} />
+                      <ComplianceFlag text={e.flag.short} title={e.flag.full} />
                     </div>
                   )}
                   <div className="meta">
                     <div>
-                      <MapPinIcon /> {locationName(e.location)} · {e.seatingLocation}
+                      <MapPinIcon /> {locationName(e.location)}
+                      {e.seating && ` · ${e.seating}`}
                     </div>
                     <div>
                       <UserIcon /> {mgr ? `Reports to ${mgr.name}` : 'No reporting manager'}
