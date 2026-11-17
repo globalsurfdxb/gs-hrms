@@ -5,20 +5,61 @@ import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 import { useOrg } from '@/context/OrgContext';
 import { ApiError, errorMessage } from '@/lib/api';
-import { ServerEmployee, employeesApi } from '@/lib/employeesApi';
+import { EmploymentUpdate, ServerEmployee, employeesApi } from '@/lib/employeesApi';
 import { EMERGENCY_GROUPS, PROFILE_TEXT, ProfileTextKey, ProfileUpdate, ServerProfileData, profilesApi } from '@/lib/profilesApi';
 import { BLOOD_GROUPS, EMAIL_RE, GENDERS, MARITAL_STATUSES, NATIONALITIES, WORK_MODES, phoneOk, withCurrent } from '@/lib/options';
 import { todayISO } from '@/lib/dates';
 import { Fg, RowList, Sub, TEXTAREA } from '@/components/profile/EditBits';
 import { DateField } from '@/components/ui/DateField';
+import { SearchSelect } from '@/components/ui/SearchSelect';
 import { ConfirmDialog } from '@/components/ui/ConfirmDialog';
 import { Button, Card, EmptyState } from '@/components/ui/Card';
-import { ArrowLeftIcon, PeopleIcon } from '@/components/icons';
+import { ArrowLeftIcon, PeopleIcon, ShieldIcon, XIcon } from '@/components/icons';
 
-/* Edit an employee's profile on the server (local development). Covers what the server stores so far: personal
-   details, work contact and placement extras, emergency contacts, experience, education and family. Only changed
-   fields and lists are sent; the server checks access (Directory → Edit), validates again and records one Audit Log
-   entry. Job fields (organization, department, manager, dates) are shown read-only until their endpoint exists. */
+/* Edit an employee on the server (local development): the employment record (name, location, organization,
+   department, designation, manager, type, joining date) and the profile (personal details, work contact and placement
+   extras, emergency contacts, experience, education, family). Only what changed is sent — employment first, because a
+   move between UAE and India switches the stored emergency contact groups the profile save then checks. The server
+   checks access (Directory → Edit), validates again and records one Audit Log entry per part saved. Identity, bank
+   and salary are not on the server yet. */
+
+/** The employment record as the form holds it ("" = none). */
+interface Job {
+  fullName: string;
+  locationId: string;
+  companyId: string;
+  departmentId: string;
+  designationId: string;
+  reportingManagerId: string;
+  employmentType: ServerEmployee['employmentType'];
+  dateOfJoining: string;
+}
+const JOB_KEYS = ['fullName', 'locationId', 'companyId', 'departmentId', 'designationId', 'reportingManagerId', 'employmentType', 'dateOfJoining'] as const;
+const EMPLOYMENT_TYPES: { value: ServerEmployee['employmentType']; label: string }[] = [
+  { value: 'PERMANENT', label: 'Permanent' },
+  { value: 'CONTRACT', label: 'Contract' },
+  { value: 'PROBATION', label: 'Probation' },
+];
+const jobOf = (e: ServerEmployee): Job => ({
+  fullName: e.name,
+  locationId: e.location.id,
+  companyId: e.company.id,
+  departmentId: e.department?.id ?? '',
+  designationId: e.designation?.id ?? '',
+  reportingManagerId: e.reportingManager?.id ?? '',
+  employmentType: e.employmentType,
+  dateOfJoining: e.dateOfJoining,
+});
+/** Only the employment fields that changed, ready to PATCH ("" becomes null). */
+function jobChanges(orig: Job, j: Job): EmploymentUpdate {
+  const body: Record<string, unknown> = {};
+  for (const k of JOB_KEYS) {
+    const a = orig[k].trim();
+    const b = j[k].trim();
+    if (a !== b) body[k] = b || null;
+  }
+  return body as EmploymentUpdate;
+}
 
 type Text = Record<ProfileTextKey, string>;
 interface Emergency {
@@ -58,7 +99,15 @@ interface Form {
 }
 type Errs = Record<string, string>;
 
-const LABELS: Record<ProfileTextKey | 'emergencyContacts' | 'experience' | 'education' | 'family', string> = {
+const LABELS: Record<ProfileTextKey | (typeof JOB_KEYS)[number] | 'emergencyContacts' | 'experience' | 'education' | 'family', string> = {
+  fullName: 'Name',
+  locationId: 'Work location',
+  companyId: 'Organization',
+  departmentId: 'Department',
+  designationId: 'Designation',
+  reportingManagerId: 'Reporting manager',
+  employmentType: 'Employment type',
+  dateOfJoining: 'Joining date',
   firstName: 'First name',
   middleName: 'Middle name',
   lastName: 'Last name',
@@ -160,11 +209,22 @@ function validate(f: Form, groups: readonly string[]): Errs {
   return e;
 }
 
+/** The employment checks the server makes (BR-EMP-002), so the form can say what to fix before saving. */
+function validateJob(j: Job, needsDesignation: boolean): Errs {
+  const e: Errs = {};
+  if (!j.fullName.trim()) e.fullName = 'Name is required.';
+  if (!j.companyId) e.companyId = 'Choose an organization.';
+  if (!j.departmentId) e.departmentId = 'Choose a department.';
+  if (j.departmentId && needsDesignation && !j.designationId) e.designationId = 'Choose a designation.';
+  if (!j.dateOfJoining) e.dateOfJoining = 'Joining date is required.';
+  return e;
+}
+
 const TABS = ['Personal', 'Employment', 'Emergency', 'Experience & Education', 'Family'] as const;
 type Tab = (typeof TABS)[number];
 const TAB_OF = (key: string): Tab => {
   const head = key.split('.')[0];
-  if (['workPhone', 'extension', 'seatingLocation', 'probationEnd'].includes(head)) return 'Employment';
+  if (['workPhone', 'extension', 'seatingLocation', 'probationEnd', 'locationId', 'companyId', 'departmentId', 'designationId', 'reportingManagerId', 'employmentType', 'dateOfJoining'].includes(head)) return 'Employment';
   if (head === 'emergencyContacts') return 'Emergency';
   if (['experience', 'education', 'totalExperience'].includes(head)) return 'Experience & Education';
   if (head === 'family') return 'Family';
@@ -226,24 +286,94 @@ export function ServerProfileEdit({ code }: { code: string }) {
 
 function Editor({ e, p }: { e: ServerEmployee; p: ServerProfileData }) {
   const router = useRouter();
-  const { locationDef, locationName } = useOrg();
+  const { locations, companies, departments, designations, locationDef, locationName } = useOrg();
   const orig = useMemo(() => toForm(p), [p]);
   const [form, setForm] = useState<Form>(orig);
+  const [jobOrig, setJobOrig] = useState<Job>(() => jobOf(e));
+  const [job, setJob] = useState<Job>(() => jobOf(e));
   const [tab, setTab] = useState<Tab>('Personal');
   const [attempted, setAttempted] = useState(false);
   const [saving, setSaving] = useState(false);
   const [serverError, setServerError] = useState('');
   const [leaveTo, setLeaveTo] = useState<string | null>(null);
+  const [adapted, setAdapted] = useState<string[]>([]);
+  const [people, setPeople] = useState<ServerEmployee[] | null>(null);
 
-  const isIndia = locationDef(e.location.id)?.template === 'india';
+  // Everyone, for the manager picker (editors see the whole directory).
+  useEffect(() => {
+    let cancelled = false;
+    employeesApi
+      .all()
+      .then((r) => !cancelled && setPeople(r.items))
+      .catch(() => !cancelled && setPeople([]));
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  const tplOf = (loc: string) => locationDef(loc)?.template ?? 'uae';
+  const isIndia = tplOf(job.locationId) === 'india';
   const groups = isIndia ? EMERGENCY_GROUPS.india : EMERGENCY_GROUPS.uae;
   const v = form.v;
   const set = (k: ProfileTextKey, val: string) => setForm((f) => ({ ...f, v: { ...f.v, [k]: val } }));
   const setList = <K extends Exclude<keyof Form, 'v'>>(k: K, val: Form[K]) => setForm((f) => ({ ...f, [k]: val }));
+  const setJ = (patch: Partial<Job>) => setJob((j) => ({ ...j, ...patch }));
 
+  /* organisation cascade (BR-EMP-002): what fits the chosen location and organization */
+  const operatesIn = (c: { location: string }, loc: string) => c.location === 'Both' || c.location === loc;
+  const companyOptions = companies.filter((c) => c.id === job.companyId || (c.status === 'Active' && operatesIn(c, job.locationId)));
+  const deptOptions = departments.filter((d) => d.companyId === job.companyId && (d.locations.includes(job.locationId) || d.id === job.departmentId));
+  const desigOptions = designations.filter((d) => d.departmentId === job.departmentId);
+  const managerOptions = useMemo(() => {
+    if (!people) return [];
+    const below = new Set<string>();
+    const walk = (id: string) =>
+      people.filter((x) => x.reportingManager?.id === id && !below.has(x.id)).forEach((x) => (below.add(x.id), walk(x.id)));
+    walk(e.id);
+    return people.filter((x) => x.id !== e.id && !below.has(x.id) && x.status !== 'INACTIVE').map((x) => ({ value: x.id, label: x.name, meta: x.employeeCode }));
+  }, [people, e.id]);
+
+  /* Changing the work location adjusts what depends on it, and says what it did (as the demo editor does). */
+  const changeLocation = (loc: string) => {
+    if (loc === job.locationId) return;
+    const notes: string[] = [];
+    const next: Job = { ...job, locationId: loc };
+    const co = companies.find((c) => c.id === next.companyId);
+    if (co && !operatesIn(co, loc)) {
+      notes.push(`${co.name} does not operate in ${locationName(loc)}, so organization, department and designation were cleared. Choose them again.`);
+      next.companyId = '';
+      next.departmentId = '';
+      next.designationId = '';
+    } else if (next.departmentId && !departments.find((d) => d.id === next.departmentId)?.locations.includes(loc)) {
+      notes.push(`The department does not operate in ${locationName(loc)}, so department and designation were cleared. Choose them again.`);
+      next.departmentId = '';
+      next.designationId = '';
+    }
+    const seating = locationDef(loc)?.seating ?? [];
+    let nextForm = form;
+    if (form.v.seatingLocation && !seating.includes(form.v.seatingLocation)) {
+      notes.push(`Seating location "${form.v.seatingLocation}" is not used in ${locationName(loc)} and was cleared.`);
+      nextForm = { ...nextForm, v: { ...nextForm.v, seatingLocation: '' } };
+    }
+    const from = tplOf(job.locationId);
+    const to = tplOf(loc);
+    if (from !== to) {
+      const map = (g: string) => {
+        const i = (EMERGENCY_GROUPS[from] as readonly string[]).indexOf(g);
+        return i === -1 ? g : EMERGENCY_GROUPS[to][i];
+      };
+      nextForm = { ...nextForm, emergencyContacts: nextForm.emergencyContacts.map((c) => ({ ...c, group: map(c.group) })) };
+      notes.push(`Emergency contact groups switched to the ${to === 'india' ? 'India' : 'UAE'} list.`);
+    }
+    setJob(next);
+    setForm(nextForm);
+    setAdapted(notes);
+  };
+
+  const jobBody = useMemo(() => jobChanges(jobOrig, job), [jobOrig, job]);
   const body = useMemo(() => changesOf(orig, form), [orig, form]);
-  const changed = Object.keys(body) as (keyof typeof LABELS)[];
-  const errors = useMemo(() => validate(form, groups), [form, groups]);
+  const changed = [...Object.keys(jobBody), ...Object.keys(body)] as (keyof typeof LABELS)[];
+  const errors = useMemo(() => ({ ...validateJob(job, desigOptions.length > 0), ...validate(form, groups) }), [job, form, groups, desigOptions.length]);
   const errorList = Object.entries(errors).map(([key, msg]) => ({ key, msg, tab: TAB_OF(key) }));
   const errorTabs = new Set(errorList.map((x) => x.tab));
   const err = (k: string) => (attempted ? errors[k] : undefined);
@@ -268,8 +398,20 @@ function Editor({ e, p }: { e: ServerEmployee; p: ServerProfileData }) {
     }
     if (!changed.length) return;
     setSaving(true);
+    // Employment first: a move between UAE and India switches the stored contact groups the profile save then checks.
+    const hasJob = Object.keys(jobBody).length > 0;
+    if (hasJob) {
+      try {
+        await employeesApi.updateEmployment(e.employeeCode, jobBody);
+        setJobOrig(job);
+      } catch (x) {
+        setServerError(errorMessage(x));
+        setSaving(false);
+        return;
+      }
+    }
     try {
-      await profilesApi.update(e.employeeCode, body);
+      if (Object.keys(body).length) await profilesApi.update(e.employeeCode, body);
       try {
         sessionStorage.setItem('gsit.flash', JSON.stringify({ code: e.employeeCode, labels: changed.map((k) => LABELS[k]) }));
       } catch {
@@ -277,7 +419,7 @@ function Editor({ e, p }: { e: ServerEmployee; p: ServerProfileData }) {
       }
       router.push(profileHref);
     } catch (x) {
-      setServerError(errorMessage(x));
+      setServerError(hasJob ? `The employment details were saved, but the other changes were not: ${errorMessage(x)}` : errorMessage(x));
       setSaving(false);
     }
   };
@@ -322,6 +464,23 @@ function Editor({ e, p }: { e: ServerEmployee; p: ServerProfileData }) {
           if (to) router.push(to);
         }}
       />
+
+      {adapted.length > 0 && (
+        <div className="note-box warn adapt-note">
+          <ShieldIcon />
+          <div style={{ flex: 1 }}>
+            <b>Location changed to {locationName(job.locationId)} — these fields were adjusted:</b>
+            <ul>
+              {adapted.map((n) => (
+                <li key={n}>{n}</li>
+              ))}
+            </ul>
+          </div>
+          <button className="icon-act" onClick={() => setAdapted([])} aria-label="Dismiss">
+            <XIcon />
+          </button>
+        </div>
+      )}
 
       {attempted && errorList.length > 0 && (
         <div className="fm-errsum" role="alert">
@@ -396,8 +555,8 @@ function Editor({ e, p }: { e: ServerEmployee; p: ServerProfileData }) {
               <div>
                 <Sub first>Identity</Sub>
                 <div className="form-grid">
-                  <Fg label="Full name (as per passport)" hint="Changed with the employment record, not here yet.">
-                    {ro(e.name)}
+                  <Fg label="Full name (as per passport)" required error={err('fullName')}>
+                    <input value={job.fullName} onChange={(ev) => setJ({ fullName: ev.target.value })} />
                   </Fg>
                   {isIndia && (
                     <>
@@ -441,21 +600,91 @@ function Editor({ e, p }: { e: ServerEmployee; p: ServerProfileData }) {
             {tab === 'Employment' && (
               <div>
                 <Sub first>Job</Sub>
-                <p className="sb" style={{ marginBottom: 12 }}>
-                  Organization, department, designation, manager and dates are read-only here until the employment record can be edited.
-                </p>
                 <div className="form-grid">
-                  <Fg label="Employee ID">{ro(e.employeeCode)}</Fg>
-                  <Fg label="Organization">{ro(e.company.name)}</Fg>
-                  <Fg label="Department">{ro(e.department?.name ?? '—')}</Fg>
-                  <Fg label="Designation">{ro(e.designation?.name ?? '—')}</Fg>
-                  <Fg label="Reporting manager">{ro(e.reportingManager ? `${e.reportingManager.name} (${e.reportingManager.employeeCode})` : 'No manager')}</Fg>
-                  <Fg label="Joining date">{ro(e.dateOfJoining)}</Fg>
+                  <Fg label="Employee ID" hint="Assigned at onboarding.">
+                    {ro(e.employeeCode)}
+                  </Fg>
+                  <Fg label="Organization" required error={err('companyId')} hint={!companyOptions.length ? `No active organization operates in ${locationName(job.locationId)}.` : undefined}>
+                    <select value={job.companyId} onChange={(ev) => setJ({ companyId: ev.target.value, departmentId: '', designationId: '' })}>
+                      {!job.companyId && <option value="">Select…</option>}
+                      {companyOptions.map((c) => (
+                        <option key={c.id} value={c.id}>
+                          {c.name}
+                        </option>
+                      ))}
+                    </select>
+                  </Fg>
+                  <Fg
+                    label="Department"
+                    required
+                    error={err('departmentId')}
+                    hint={job.companyId && !deptOptions.length ? `This organization has no departments in ${locationName(job.locationId)}. Choose another organization, or add departments under Administration → Departments & Designations.` : undefined}
+                  >
+                    <select value={job.departmentId} onChange={(ev) => setJ({ departmentId: ev.target.value, designationId: '' })} disabled={!job.companyId}>
+                      <option value="">{job.companyId ? 'Select…' : 'Choose an organization first'}</option>
+                      {deptOptions.map((d) => (
+                        <option key={d.id} value={d.id}>
+                          {d.name}
+                        </option>
+                      ))}
+                    </select>
+                  </Fg>
+                  <Fg label="Designation" required={desigOptions.length > 0} error={err('designationId')}>
+                    <select value={job.designationId} onChange={(ev) => setJ({ designationId: ev.target.value })} disabled={!job.departmentId}>
+                      <option value="">{job.departmentId ? (desigOptions.length ? 'Select…' : 'No designations in this department') : 'Choose a department first'}</option>
+                      {desigOptions.map((d) => (
+                        <option key={d.id} value={d.id}>
+                          {d.title}
+                        </option>
+                      ))}
+                    </select>
+                  </Fg>
+                  <Fg label="Reporting manager" hint="Nobody in their own reporting line is listed." error={err('reportingManagerId')}>
+                    <SearchSelect
+                      options={[
+                        { value: '', label: 'No manager' },
+                        ...(job.reportingManagerId && !managerOptions.some((o) => o.value === job.reportingManagerId) && e.reportingManager
+                          ? [{ value: e.reportingManager.id, label: e.reportingManager.name, meta: e.reportingManager.employeeCode }]
+                          : []),
+                        ...managerOptions,
+                      ]}
+                      value={job.reportingManagerId}
+                      onChange={(val) => setJ({ reportingManagerId: val })}
+                      placeholder={people ? 'Search by name or employee ID…' : 'Loading people…'}
+                    />
+                  </Fg>
+                  <Fg label="Employment type">
+                    <select value={job.employmentType} onChange={(ev) => setJ({ employmentType: ev.target.value as Job['employmentType'] })}>
+                      {EMPLOYMENT_TYPES.map((t) => (
+                        <option key={t.value} value={t.value}>
+                          {t.label}
+                        </option>
+                      ))}
+                    </select>
+                  </Fg>
+                  <Fg label="Employment status" hint="Managed by Onboarding and Offboarding.">
+                    {ro(e.status.charAt(0) + e.status.slice(1).toLowerCase())}
+                  </Fg>
+                </div>
+                <Sub>Dates</Sub>
+                <div className="form-grid">
+                  <Fg label="Joining date" required error={err('dateOfJoining')}>
+                    <DateField value={job.dateOfJoining} onChange={(ev) => setJ({ dateOfJoining: ev.target.value })} />
+                  </Fg>
+                  <Fg label="Probation completion">{input('probationEnd', { type: 'date' })}</Fg>
                 </div>
                 <Sub>Placement</Sub>
                 <div className="form-grid">
-                  <Fg label="Work location">{ro(locationName(e.location.id))}</Fg>
-                  <Fg label="Seating location">{select('seatingLocation', locationDef(e.location.id)?.seating ?? [])}</Fg>
+                  <Fg label="Work location" hint="Changing it also updates the fields that depend on the location. A summary appears above.">
+                    <select value={job.locationId} onChange={(ev) => changeLocation(ev.target.value)}>
+                      {locations.map((l) => (
+                        <option key={l.id} value={l.id}>
+                          {l.name}
+                        </option>
+                      ))}
+                    </select>
+                  </Fg>
+                  <Fg label="Seating location">{select('seatingLocation', locationDef(job.locationId)?.seating ?? [])}</Fg>
                   <Fg label="Probation completion">{input('probationEnd', { type: 'date' })}</Fg>
                   <Fg label="Work phone (official mobile)" error={err('workPhone')}>
                     {input('workPhone', { type: 'tel' })}

@@ -43,7 +43,22 @@ export const employeesApi = {
   },
   /** 404 employee.not_found when the person does not exist or is outside the caller's scope. */
   get: (code: string) => api<ServerEmployee>('GET', `/employees/${encodeURIComponent(code)}`),
+  /** Directory → Edit only. Fields left out stay; null clears department, designation or manager. */
+  updateEmployment: (code: string, body: EmploymentUpdate) => api<ServerEmployee>('PATCH', `/employees/${encodeURIComponent(code)}/employment`, body),
 };
+
+/** PATCH /employees/:code/employment. Email, code and status are not editable (BR-EMP-004). */
+export interface EmploymentUpdate {
+  fullName?: string;
+  locationId?: string;
+  companyId?: string;
+  departmentId?: string | null;
+  designationId?: string | null;
+  reportingManagerId?: string | null;
+  employmentType?: ServerEmployee['employmentType'];
+  /** YYYY-MM-DD */
+  dateOfJoining?: string;
+}
 
 /** "ACTIVE" → "Active", as the rest of the app spells statuses and types. */
 const title = (s: string) => s.charAt(0) + s.slice(1).toLowerCase();
