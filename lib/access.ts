@@ -73,6 +73,17 @@ export function buildCatalog(): AccessModule[] {
         features: s.items.map((i) => ({ id: `employee:ops:${i.key}`, label: i.label })),
       })),
       cat('employee', 'reports', 'Reports', 4, ['Reports & analytics']),
+      /* Passport, Emirates ID, Aadhaar, PAN, UAN and bank details. View shows them masked, Edit changes them, and
+         "Reveal full numbers" shows a whole number (each reveal is audited). HR and Super Admin by default. */
+      {
+        id: 'sensitive',
+        label: 'Identity & bank',
+        rank: 4,
+        features: [
+          { id: 'employee:sensitive:identity-bank', label: 'Identity & bank details', actions: ['edit'] },
+          { id: 'employee:sensitive:reveal-numbers', label: 'Reveal full numbers', actions: [] },
+        ],
+      },
     ],
   };
   const hiring: AccessModule = {
@@ -171,6 +182,7 @@ export function defaultGrants(role: Role, catalog: AccessModule[]): string[] {
       if (m.id === 'employee') {
         if (c.id === 'my' || c.id === 'team' || c.id === 'org') allowed = p.scopes.includes(c.id as Scope);
         else if (c.id === 'reports') allowed = p.modules.includes('reports' as RailModule);
+        else if (c.id === 'sensitive') allowed = RANK[role] >= c.rank;
         else allowed = p.modules.includes('operations' as RailModule);
       } else if (m.id === 'administration') allowed = p.modules.includes('administration' as RailModule);
       else if (m.id === 'hiring' && isTalentRole(role)) allowed = role === 'Talent Acquisition Manager' || c.id === 'recruiting';

@@ -6,6 +6,8 @@ import { useOrg } from '@/context/OrgContext';
 import { ApiError, errorMessage } from '@/lib/api';
 import { ServerEmployee, employeesApi, initialsOf, statusOfServer, typeOfServer } from '@/lib/employeesApi';
 import { ServerProfileData, profilesApi } from '@/lib/profilesApi';
+import { ServerIdentityBank, identityBankApi } from '@/lib/identityBankApi';
+import { BankView, IdentityView, identityTabName } from '@/components/directory/ServerIdentityBank';
 import { todayISO } from '@/lib/dates';
 import { StatusBadge } from '@/components/ui/Badge';
 import { Card, EmptyState } from '@/components/ui/Card';
@@ -14,8 +16,8 @@ import { toneFor } from '@/components/ui/Avatar';
 import { ArrowLeftIcon, BookIcon, BuildingIcon, EditIcon, PeopleIcon, XIcon } from '@/components/icons';
 
 /* An employee's profile read from the server (local development): the directory record plus the profile (personal
-   details, emergency contacts, experience, education, family). Identity documents, bank, salary and files arrive with
-   their own tables. Someone outside the viewer's data scope is a 404, shown the same as a code that does not exist.
+   details, emergency contacts, experience, education, family), and — for those allowed — identity and Bank & PF with
+   masked numbers. Salary and files arrive with their own tables. Someone outside the viewer's data scope is a 404, shown the same as a code that does not exist.
    The Edit button follows the server's `canEdit`. */
 
 function Field({ k, v }: { k: string; v: React.ReactNode }) {
@@ -41,13 +43,14 @@ const ageOn = (dob: string, today: string) => {
   return ty - by - (tm < bm || (tm === bm && td < bd) ? 1 : 0);
 };
 
-const TABS = ['Overview', 'Personal', 'Employment', 'Emergency', 'Experience & Education', 'Family'] as const;
-type Tab = (typeof TABS)[number];
+const BASE_TABS = ['Overview', 'Personal', 'Employment', 'Emergency', 'Experience & Education', 'Family'];
 
 export function ServerProfile({ code }: { code: string }) {
   const { locationName, locationDef } = useOrg();
   const [state, setState] = useState<{ code: string; e?: ServerEmployee; p?: ServerProfileData; error?: string; missing?: boolean } | null>(null);
-  const [tab, setTab] = useState<Tab>('Overview');
+  const [tab, setTab] = useState('Overview');
+  // Identity & bank: only for those allowed (and your own record); a 404 simply leaves the tabs out.
+  const [ib, setIb] = useState<{ code: string; data: ServerIdentityBank | null } | null>(null);
   const [saved, setSaved] = useState<string[] | null>(null);
 
   useEffect(() => {
@@ -55,6 +58,10 @@ export function ServerProfile({ code }: { code: string }) {
     Promise.all([employeesApi.get(code), profilesApi.get(code)])
       .then(([e, p]) => !cancelled && setState({ code, e, p }))
       .catch((err) => !cancelled && setState({ code, missing: err instanceof ApiError && err.status === 404, error: errorMessage(err) }));
+    identityBankApi
+      .get(code)
+      .then((data) => !cancelled && setIb({ code, data }))
+      .catch(() => !cancelled && setIb({ code, data: null }));
     return () => {
       cancelled = true;
     };
@@ -108,6 +115,8 @@ export function ServerProfile({ code }: { code: string }) {
   const tone = toneFor(e.department?.name ?? '');
   const mgr = e.reportingManager;
   const isIndia = locationDef(e.location.id)?.template === 'india';
+  const idb = ib?.code === code ? ib.data : null;
+  const TABS = idb ? [...BASE_TABS.slice(0, 3), identityTabName(idb), ...BASE_TABS.slice(3), 'Bank & PF'] : BASE_TABS;
   const manager = mgr ? (
     <>
       {mgr.name}
@@ -216,7 +225,7 @@ export function ServerProfile({ code }: { code: string }) {
                   </div>
                 </div>
                 <p className="sb" style={{ marginTop: 18 }}>
-                  Identity documents, bank, salary, files and assets will appear here once the server stores them.
+                  Salary, files and assets will appear here once the server stores them.
                 </p>
               </div>
             )}
@@ -285,6 +294,10 @@ export function ServerProfile({ code }: { code: string }) {
                 </div>
               </div>
             )}
+
+            {idb && tab === identityTabName(idb) && <IdentityView ib={idb} />}
+
+            {idb && tab === 'Bank & PF' && <BankView ib={idb} locationLabel={locationName(e.location.id)} />}
 
             {tab === 'Emergency' && (
               <div>

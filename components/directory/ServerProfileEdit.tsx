@@ -7,6 +7,8 @@ import { useOrg } from '@/context/OrgContext';
 import { ApiError, errorMessage } from '@/lib/api';
 import { EmploymentUpdate, ServerEmployee, employeesApi } from '@/lib/employeesApi';
 import { EMERGENCY_GROUPS, PROFILE_TEXT, ProfileTextKey, ProfileUpdate, ServerProfileData, profilesApi } from '@/lib/profilesApi';
+import { BANK_TAB_KEYS, IB_LABELS, IbKey, ServerIdentityBank, identityBankApi } from '@/lib/identityBankApi';
+import { BankFields, IbForm, IdentityFields, ibChanges, ibFormOf, identityTabName, validateIb } from '@/components/directory/ServerIdentityBank';
 import { BLOOD_GROUPS, EMAIL_RE, GENDERS, MARITAL_STATUSES, NATIONALITIES, WORK_MODES, phoneOk, withCurrent } from '@/lib/options';
 import { todayISO } from '@/lib/dates';
 import { Fg, RowList, Sub, TEXTAREA } from '@/components/profile/EditBits';
@@ -20,8 +22,9 @@ import { ArrowLeftIcon, PeopleIcon, ShieldIcon, XIcon } from '@/components/icons
    department, designation, manager, type, joining date) and the profile (personal details, work contact and placement
    extras, emergency contacts, experience, education, family). Only what changed is sent — employment first, because a
    move between UAE and India switches the stored emergency contact groups the profile save then checks. The server
-   checks access (Directory → Edit), validates again and records one Audit Log entry per part saved. Identity, bank
-   and salary are not on the server yet. */
+   checks access (Directory → Edit; Identity & bank → Edit for those tabs), validates again and records Audit Log entries
+   per part saved. Identity and bank numbers are never loaded into the form: typing one replaces the stored number.
+   Salary is not on the server yet. */
 
 /** The employment record as the form holds it ("" = none). */
 interface Job {
@@ -220,10 +223,12 @@ function validateJob(j: Job, needsDesignation: boolean): Errs {
   return e;
 }
 
-const TABS = ['Personal', 'Employment', 'Emergency', 'Experience & Education', 'Family'] as const;
-type Tab = (typeof TABS)[number];
-const TAB_OF = (key: string): Tab => {
+const BASE_TABS = ['Personal', 'Employment', 'Emergency', 'Experience & Education', 'Family'];
+type Tab = string;
+const IB_KEYS = new Set<string>(Object.keys(IB_LABELS));
+const TAB_OF = (key: string, idTab: string): Tab => {
   const head = key.split('.')[0];
+  if (IB_KEYS.has(head)) return BANK_TAB_KEYS.includes(head as IbKey) ? 'Bank & PF' : idTab;
   if (['workPhone', 'extension', 'seatingLocation', 'probationEnd', 'locationId', 'companyId', 'departmentId', 'designationId', 'reportingManagerId', 'employmentType', 'dateOfJoining'].includes(head)) return 'Employment';
   if (head === 'emergencyContacts') return 'Emergency';
   if (['experience', 'education', 'totalExperience'].includes(head)) return 'Experience & Education';
@@ -232,12 +237,17 @@ const TAB_OF = (key: string): Tab => {
 };
 
 export function ServerProfileEdit({ code }: { code: string }) {
-  const [state, setState] = useState<{ code: string; e?: ServerEmployee; p?: ServerProfileData; missing?: boolean; error?: string } | null>(null);
+  const [state, setState] = useState<{ code: string; e?: ServerEmployee; p?: ServerProfileData; ib?: ServerIdentityBank | null; missing?: boolean; error?: string } | null>(null);
 
   useEffect(() => {
     let cancelled = false;
-    Promise.all([employeesApi.get(code), profilesApi.get(code)])
-      .then(([e, p]) => !cancelled && setState({ code, e, p }))
+    // Identity & bank only for those allowed to change it; otherwise the tabs are left out.
+    const ib = identityBankApi.get(code).then(
+      (x) => (x.canEdit ? x : null),
+      () => null,
+    );
+    Promise.all([employeesApi.get(code), profilesApi.get(code), ib])
+      .then(([e, p, ib]) => !cancelled && setState({ code, e, p, ib }))
       .catch((err) => !cancelled && setState({ code, missing: err instanceof ApiError && err.status === 404, error: errorMessage(err) }));
     return () => {
       cancelled = true;
@@ -281,10 +291,10 @@ export function ServerProfileEdit({ code }: { code: string }) {
       </div>
     );
   }
-  return <Editor key={loaded.e.id} e={loaded.e} p={loaded.p} />;
+  return <Editor key={loaded.e.id} e={loaded.e} p={loaded.p} ib={loaded.ib ?? null} />;
 }
 
-function Editor({ e, p }: { e: ServerEmployee; p: ServerProfileData }) {
+function Editor({ e, p, ib: ibLoaded }: { e: ServerEmployee; p: ServerProfileData; ib: ServerIdentityBank | null }) {
   const router = useRouter();
   const { locations, companies, departments, designations, locationDef, locationName } = useOrg();
   const orig = useMemo(() => toForm(p), [p]);
@@ -298,6 +308,10 @@ function Editor({ e, p }: { e: ServerEmployee; p: ServerProfileData }) {
   const [leaveTo, setLeaveTo] = useState<string | null>(null);
   const [adapted, setAdapted] = useState<string[]>([]);
   const [people, setPeople] = useState<ServerEmployee[] | null>(null);
+  const [ib, setIb] = useState<ServerIdentityBank | null>(ibLoaded);
+  const ibOrig = useMemo(() => (ib ? ibFormOf(ib) : null), [ib]);
+  const [ibForm, setIbForm] = useState<IbForm | null>(ibOrig);
+  const setIbField = (k: IbKey, val: string) => setIbForm((f) => (f ? { ...f, [k]: val } : f));
 
   // Everyone, for the manager picker (editors see the whole directory).
   useEffect(() => {
@@ -314,6 +328,11 @@ function Editor({ e, p }: { e: ServerEmployee; p: ServerProfileData }) {
   const tplOf = (loc: string) => locationDef(loc)?.template ?? 'uae';
   const isIndia = tplOf(job.locationId) === 'india';
   const groups = isIndia ? EMERGENCY_GROUPS.india : EMERGENCY_GROUPS.uae;
+  // A move to the other country clears its identity and bank details on save, so they are edited after the move.
+  const ibMoving = !!ib && (tplOf(job.locationId) === 'india') !== (ib.template === 'INDIA');
+  const ibEditable = !!ib && !!ibForm && !ibMoving;
+  const idTab = ib ? identityTabName(ib) : '';
+  const TABS = ib ? [...BASE_TABS.slice(0, 2), idTab, ...BASE_TABS.slice(2), 'Bank & PF'] : BASE_TABS;
   const v = form.v;
   const set = (k: ProfileTextKey, val: string) => setForm((f) => ({ ...f, v: { ...f.v, [k]: val } }));
   const setList = <K extends Exclude<keyof Form, 'v'>>(k: K, val: Form[K]) => setForm((f) => ({ ...f, [k]: val }));
@@ -364,6 +383,10 @@ function Editor({ e, p }: { e: ServerEmployee; p: ServerProfileData }) {
       };
       nextForm = { ...nextForm, emergencyContacts: nextForm.emergencyContacts.map((c) => ({ ...c, group: map(c.group) })) };
       notes.push(`Emergency contact groups switched to the ${to === 'india' ? 'India' : 'UAE'} list.`);
+      if (ib) {
+        notes.push(`Saving clears the ${from === 'india' ? 'India' : 'UAE'} identity fields and the bank details (the passport stays). Add the ${to === 'india' ? 'India' : 'UAE'} details after saving.`);
+        setIbForm(ibOrig);
+      }
     }
     setJob(next);
     setForm(nextForm);
@@ -372,9 +395,14 @@ function Editor({ e, p }: { e: ServerEmployee; p: ServerProfileData }) {
 
   const jobBody = useMemo(() => jobChanges(jobOrig, job), [jobOrig, job]);
   const body = useMemo(() => changesOf(orig, form), [orig, form]);
-  const changed = [...Object.keys(jobBody), ...Object.keys(body)] as (keyof typeof LABELS)[];
-  const errors = useMemo(() => ({ ...validateJob(job, desigOptions.length > 0), ...validate(form, groups) }), [job, form, groups, desigOptions.length]);
-  const errorList = Object.entries(errors).map(([key, msg]) => ({ key, msg, tab: TAB_OF(key) }));
+  const ibBody = useMemo(() => (ibEditable && ibOrig && ibForm ? ibChanges(ibOrig, ibForm) : {}), [ibEditable, ibOrig, ibForm]);
+  const changed = [...Object.keys(jobBody), ...Object.keys(body), ...Object.keys(ibBody)];
+  const labelOf = (k: string) => LABELS[k as keyof typeof LABELS] ?? IB_LABELS[k as IbKey] ?? k;
+  const errors = useMemo(
+    () => ({ ...validateJob(job, desigOptions.length > 0), ...validate(form, groups), ...(ibEditable && ib && ibForm ? validateIb(ibForm, ib) : {}) }),
+    [job, form, groups, desigOptions.length, ibEditable, ib, ibForm],
+  );
+  const errorList = Object.entries(errors).map(([key, msg]) => ({ key, msg, tab: TAB_OF(key, idTab) }));
   const errorTabs = new Set(errorList.map((x) => x.tab));
   const err = (k: string) => (attempted ? errors[k] : undefined);
 
@@ -412,14 +440,22 @@ function Editor({ e, p }: { e: ServerEmployee; p: ServerProfileData }) {
     }
     try {
       if (Object.keys(body).length) await profilesApi.update(e.employeeCode, body);
+    } catch (x) {
+      setServerError(hasJob ? `The employment details were saved, but the other changes were not: ${errorMessage(x)}` : errorMessage(x));
+      setSaving(false);
+      return;
+    }
+    try {
+      if (Object.keys(ibBody).length) setIb(await identityBankApi.update(e.employeeCode, ibBody));
       try {
-        sessionStorage.setItem('gsit.flash', JSON.stringify({ code: e.employeeCode, labels: changed.map((k) => LABELS[k]) }));
+        sessionStorage.setItem('gsit.flash', JSON.stringify({ code: e.employeeCode, labels: changed.map(labelOf) }));
       } catch {
         /* the banner is a nicety */
       }
       router.push(profileHref);
     } catch (x) {
-      setServerError(hasJob ? `The employment details were saved, but the other changes were not: ${errorMessage(x)}` : errorMessage(x));
+      const earlier = hasJob || Object.keys(body).length > 0;
+      setServerError(earlier ? `The other changes were saved, but the identity and bank details were not: ${errorMessage(x)}` : errorMessage(x));
       setSaving(false);
     }
   };
@@ -802,6 +838,20 @@ function Editor({ e, p }: { e: ServerEmployee; p: ServerProfileData }) {
               </div>
             )}
 
+            {ib && ibForm && tab === idTab &&
+              (ibMoving ? (
+                <p className="sb">The work location is changing to another country. Save the move first, then add the identity details for the new country.</p>
+              ) : (
+                <IdentityFields ib={ib} f={ibForm} set={setIbField} err={err} />
+              ))}
+
+            {ib && ibForm && tab === 'Bank & PF' &&
+              (ibMoving ? (
+                <p className="sb">The work location is changing to another country. Save the move first, then add the bank details for the new country.</p>
+              ) : (
+                <BankFields ib={ib} f={ibForm} set={setIbField} err={err} locationLabel={locationName(job.locationId)} />
+              ))}
+
             {tab === 'Family' && (
               <RowList<Family>
                 rows={form.family}
@@ -839,8 +889,8 @@ function Editor({ e, p }: { e: ServerEmployee; p: ServerProfileData }) {
               Fix {errorList.length} error{errorList.length === 1 ? '' : 's'} to save
             </span>
           ) : changed.length ? (
-            <span title={changed.map((k) => LABELS[k]).join(', ')}>
-              <b>{changed.length}</b> unsaved change{changed.length === 1 ? '' : 's'}: {changed.map((k) => LABELS[k]).join(', ')}
+            <span title={changed.map(labelOf).join(', ')}>
+              <b>{changed.length}</b> unsaved change{changed.length === 1 ? '' : 's'}: {changed.map(labelOf).join(', ')}
             </span>
           ) : (
             <span style={{ color: 'var(--muted)' }}>No changes yet</span>
