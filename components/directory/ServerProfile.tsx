@@ -8,6 +8,8 @@ import { ServerEmployee, employeesApi, initialsOf, statusOfServer, typeOfServer 
 import { ServerProfileData, profilesApi } from '@/lib/profilesApi';
 import { ServerIdentityBank, identityBankApi } from '@/lib/identityBankApi';
 import { BankView, IdentityView, identityTabName } from '@/components/directory/ServerIdentityBank';
+import { SalaryPanel, mayViewSalary } from '@/components/directory/ServerSalary';
+import { useAuth } from '@/lib/auth';
 import { todayISO } from '@/lib/dates';
 import { StatusBadge } from '@/components/ui/Badge';
 import { Card, EmptyState } from '@/components/ui/Card';
@@ -52,6 +54,7 @@ export function ServerProfile({ code }: { code: string }) {
   // Identity & bank: only for those allowed (and your own record); a 404 simply leaves the tabs out.
   const [ib, setIb] = useState<{ code: string; data: ServerIdentityBank | null } | null>(null);
   const [saved, setSaved] = useState<string[] | null>(null);
+  const user = useAuth().user;
 
   useEffect(() => {
     let cancelled = false;
@@ -116,7 +119,11 @@ export function ServerProfile({ code }: { code: string }) {
   const mgr = e.reportingManager;
   const isIndia = locationDef(e.location.id)?.template === 'india';
   const idb = ib?.code === code ? ib.data : null;
-  const TABS = idb ? [...BASE_TABS.slice(0, 3), identityTabName(idb), ...BASE_TABS.slice(3), 'Bank & PF'] : BASE_TABS;
+  const TABS = [
+    ...(idb ? [...BASE_TABS.slice(0, 3), identityTabName(idb), ...BASE_TABS.slice(3), 'Bank & PF'] : BASE_TABS),
+    // Loaded only when opened: reading someone else's salary is audited.
+    ...(mayViewSalary(user, code) ? ['Salary'] : []),
+  ];
   const manager = mgr ? (
     <>
       {mgr.name}
@@ -298,6 +305,8 @@ export function ServerProfile({ code }: { code: string }) {
             {idb && tab === identityTabName(idb) && <IdentityView ib={idb} />}
 
             {idb && tab === 'Bank & PF' && <BankView ib={idb} locationLabel={locationName(e.location.id)} />}
+
+            {tab === 'Salary' && TABS.includes('Salary') && <SalaryPanel code={e.employeeCode} locationLabel={locationName(e.location.id)} />}
 
             {tab === 'Emergency' && (
               <div>
