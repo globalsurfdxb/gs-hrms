@@ -12,6 +12,8 @@ import { useScoped } from '@/components/hiring/useScoped';
 import { canDecideStep, decideRequisition, jobForRequisition, reqById, setRequisitionStatus, submitRequisition } from '@/lib/hiringStore';
 import { Job } from '@/lib/hiringTypes';
 import { useRouter } from 'next/navigation';
+import { API_ENABLED } from '@/lib/api';
+import { ServerRequisitionDetail } from '@/components/hiring/ServerRequisitionDetail';
 
 const Row = ({ label, children }: { label: string; children: React.ReactNode }) => (
   <div className="tx-read">
@@ -22,6 +24,10 @@ const Row = ({ label, children }: { label: string; children: React.ReactNode }) 
 
 export default function RequisitionDetailPage() {
   const { id } = useParams<{ id: string }>();
+  return API_ENABLED ? <ServerRequisitionDetail id={decodeURIComponent(id)} /> : <LocalRequisitionDetail id={id} />;
+}
+
+function LocalRequisitionDetail({ id }: { id: string }) {
   const { s, level, me, requisitions } = useScoped();
   const actor = useActor();
   const router = useRouter();

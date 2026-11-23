@@ -11,13 +11,15 @@ import { RequisitionDrawer } from '@/components/hiring/HiringForms';
 import { useScoped } from '@/components/hiring/useScoped';
 import { jobForRequisition } from '@/lib/hiringStore';
 import { RequisitionStatus } from '@/lib/hiringTypes';
+import { API_ENABLED } from '@/lib/api';
+import { ServerRequisitions } from '@/components/hiring/ServerRequisitions';
 
 const STATUSES: ('All' | RequisitionStatus)[] = ['All', 'Draft', 'Pending Approval', 'Approved', 'On Hold', 'Rejected', 'Closed'];
 
 export default function RequisitionsPage() {
   return (
     <Suspense fallback={null}>
-      <Requisitions />
+      {API_ENABLED ? <ServerRequisitions /> : <Requisitions />}
     </Suspense>
   );
 }
