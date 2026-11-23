@@ -9,6 +9,9 @@ import { EmploymentUpdate, ServerEmployee, employeesApi } from '@/lib/employeesA
 import { EMERGENCY_GROUPS, PROFILE_TEXT, ProfileTextKey, ProfileUpdate, ServerProfileData, profilesApi } from '@/lib/profilesApi';
 import { BANK_TAB_KEYS, IB_LABELS, IbKey, ServerIdentityBank, identityBankApi } from '@/lib/identityBankApi';
 import { BankFields, IbForm, IdentityFields, ibChanges, ibFormOf, identityTabName, validateIb } from '@/components/directory/ServerIdentityBank';
+import { SalaryFields, SalaryForm, mayEditSalary, salaryBody, salaryFormOf, useSalary, validateSalary } from '@/components/directory/ServerSalary';
+import { salaryApi } from '@/lib/salaryApi';
+import { useAuth } from '@/lib/auth';
 import { BLOOD_GROUPS, EMAIL_RE, GENDERS, MARITAL_STATUSES, NATIONALITIES, WORK_MODES, phoneOk, withCurrent } from '@/lib/options';
 import { todayISO } from '@/lib/dates';
 import { Fg, RowList, Sub, TEXTAREA } from '@/components/profile/EditBits';
@@ -233,6 +236,7 @@ const TAB_OF = (key: string, idTab: string): Tab => {
   if (head === 'emergencyContacts') return 'Emergency';
   if (['experience', 'education', 'totalExperience'].includes(head)) return 'Experience & Education';
   if (head === 'family') return 'Family';
+  if (head === 'earnings' || head === 'deductions') return 'Salary';
   return 'Personal';
 };
 
@@ -312,6 +316,13 @@ function Editor({ e, p, ib: ibLoaded }: { e: ServerEmployee; p: ServerProfileDat
   const ibOrig = useMemo(() => (ib ? ibFormOf(ib) : null), [ib]);
   const [ibForm, setIbForm] = useState<IbForm | null>(ibOrig);
   const setIbField = (k: IbKey, val: string) => setIbForm((f) => (f ? { ...f, [k]: val } : f));
+  // Salary: for Salary → Edit (never your own); loaded when the tab is opened, because a read is audited.
+  const salEditable = mayEditSalary(useAuth().user, e.employeeCode);
+  const sal = useSalary(e.employeeCode, salEditable && tab === 'Salary');
+  const salOrig = useMemo(() => (sal.salary ? salaryFormOf(sal.salary) : null), [sal.salary]);
+  const [salEdits, setSalEdits] = useState<SalaryForm | null>(null);
+  const salForm = salEdits ?? salOrig;
+  const setSalList = (k: keyof SalaryForm, rows: SalaryForm['earnings']) => setSalEdits((f) => ({ ...(f ?? salOrig!), [k]: rows }));
 
   // Everyone, for the manager picker (editors see the whole directory).
   useEffect(() => {
@@ -332,7 +343,7 @@ function Editor({ e, p, ib: ibLoaded }: { e: ServerEmployee; p: ServerProfileDat
   const ibMoving = !!ib && (tplOf(job.locationId) === 'india') !== (ib.template === 'INDIA');
   const ibEditable = !!ib && !!ibForm && !ibMoving;
   const idTab = ib ? identityTabName(ib) : '';
-  const TABS = ib ? [...BASE_TABS.slice(0, 2), idTab, ...BASE_TABS.slice(2), 'Bank & PF'] : BASE_TABS;
+  const TABS = [...(ib ? [...BASE_TABS.slice(0, 2), idTab, ...BASE_TABS.slice(2), 'Bank & PF'] : BASE_TABS), ...(salEditable ? ['Salary'] : [])];
   const v = form.v;
   const set = (k: ProfileTextKey, val: string) => setForm((f) => ({ ...f, v: { ...f.v, [k]: val } }));
   const setList = <K extends Exclude<keyof Form, 'v'>>(k: K, val: Form[K]) => setForm((f) => ({ ...f, [k]: val }));
@@ -396,11 +407,17 @@ function Editor({ e, p, ib: ibLoaded }: { e: ServerEmployee; p: ServerProfileDat
   const jobBody = useMemo(() => jobChanges(jobOrig, job), [jobOrig, job]);
   const body = useMemo(() => changesOf(orig, form), [orig, form]);
   const ibBody = useMemo(() => (ibEditable && ibOrig && ibForm ? ibChanges(ibOrig, ibForm) : {}), [ibEditable, ibOrig, ibForm]);
-  const changed = [...Object.keys(jobBody), ...Object.keys(body), ...Object.keys(ibBody)];
-  const labelOf = (k: string) => LABELS[k as keyof typeof LABELS] ?? IB_LABELS[k as IbKey] ?? k;
+  const salBody = useMemo(() => (salOrig && salEdits ? salaryBody(salOrig, salEdits) : null), [salOrig, salEdits]);
+  const changed = [...Object.keys(jobBody), ...Object.keys(body), ...Object.keys(ibBody), ...(salBody ? ['salary'] : [])];
+  const labelOf = (k: string) => (k === 'salary' ? 'Salary' : (LABELS[k as keyof typeof LABELS] ?? IB_LABELS[k as IbKey] ?? k));
   const errors = useMemo(
-    () => ({ ...validateJob(job, desigOptions.length > 0), ...validate(form, groups), ...(ibEditable && ib && ibForm ? validateIb(ibForm, ib) : {}) }),
-    [job, form, groups, desigOptions.length, ibEditable, ib, ibForm],
+    () => ({
+      ...validateJob(job, desigOptions.length > 0),
+      ...validate(form, groups),
+      ...(ibEditable && ib && ibForm ? validateIb(ibForm, ib) : {}),
+      ...(salEdits ? validateSalary(salEdits) : {}),
+    }),
+    [job, form, groups, desigOptions.length, ibEditable, ib, ibForm, salEdits],
   );
   const errorList = Object.entries(errors).map(([key, msg]) => ({ key, msg, tab: TAB_OF(key, idTab) }));
   const errorTabs = new Set(errorList.map((x) => x.tab));
@@ -445,8 +462,20 @@ function Editor({ e, p, ib: ibLoaded }: { e: ServerEmployee; p: ServerProfileDat
       setSaving(false);
       return;
     }
+    const hasIb = Object.keys(ibBody).length > 0;
     try {
-      if (Object.keys(ibBody).length) setIb(await identityBankApi.update(e.employeeCode, ibBody));
+      if (hasIb) setIb(await identityBankApi.update(e.employeeCode, ibBody));
+    } catch (x) {
+      const earlier = hasJob || Object.keys(body).length > 0;
+      setServerError(earlier ? `The other changes were saved, but the identity and bank details were not: ${errorMessage(x)}` : errorMessage(x));
+      setSaving(false);
+      return;
+    }
+    try {
+      if (salBody) {
+        sal.set(await salaryApi.replace(e.employeeCode, salBody));
+        setSalEdits(null);
+      }
       try {
         sessionStorage.setItem('gsit.flash', JSON.stringify({ code: e.employeeCode, labels: changed.map(labelOf) }));
       } catch {
@@ -454,8 +483,8 @@ function Editor({ e, p, ib: ibLoaded }: { e: ServerEmployee; p: ServerProfileDat
       }
       router.push(profileHref);
     } catch (x) {
-      const earlier = hasJob || Object.keys(body).length > 0;
-      setServerError(earlier ? `The other changes were saved, but the identity and bank details were not: ${errorMessage(x)}` : errorMessage(x));
+      const earlier = hasJob || Object.keys(body).length > 0 || hasIb;
+      setServerError(earlier ? `The other changes were saved, but the salary was not: ${errorMessage(x)}` : errorMessage(x));
       setSaving(false);
     }
   };
@@ -850,6 +879,22 @@ function Editor({ e, p, ib: ibLoaded }: { e: ServerEmployee; p: ServerProfileDat
                 <p className="sb">The work location is changing to another country. Save the move first, then add the bank details for the new country.</p>
               ) : (
                 <BankFields ib={ib} f={ibForm} set={setIbField} err={err} locationLabel={locationName(job.locationId)} />
+              ))}
+
+            {salEditable && tab === 'Salary' &&
+              (sal.loading ? (
+                <p className="sb">Loading…</p>
+              ) : !sal.salary || !salForm ? (
+                <p className="sb">Could not load the salary: {sal.error}</p>
+              ) : (
+                <>
+                  {(tplOf(job.locationId) === 'india') !== (sal.salary.template === 'INDIA') && (
+                    <p className="sb">
+                      The work location is changing to another country: the currency becomes {isIndia ? 'INR' : 'AED'} on save and the amounts are kept as they are. Review them after saving.
+                    </p>
+                  )}
+                  <SalaryFields s={sal.salary} f={salForm} set={setSalList} err={err} />
+                </>
               ))}
 
             {tab === 'Family' && (

@@ -74,14 +74,16 @@ export function buildCatalog(): AccessModule[] {
       })),
       cat('employee', 'reports', 'Reports', 4, ['Reports & analytics']),
       /* Passport, Emirates ID, Aadhaar, PAN, UAN and bank details. View shows them masked, Edit changes them, and
-         "Reveal full numbers" shows a whole number (each reveal is audited). HR and Super Admin by default. */
+         "Reveal full numbers" shows a whole number (each reveal is audited). Salary: View reads the salary
+         structure, Edit changes it. HR and Super Admin by default. */
       {
         id: 'sensitive',
-        label: 'Identity & bank',
+        label: 'Identity, bank & salary',
         rank: 4,
         features: [
           { id: 'employee:sensitive:identity-bank', label: 'Identity & bank details', actions: ['edit'] },
           { id: 'employee:sensitive:reveal-numbers', label: 'Reveal full numbers', actions: [] },
+          { id: 'employee:sensitive:salary', label: 'Salary', actions: ['edit'] },
         ],
       },
     ],
