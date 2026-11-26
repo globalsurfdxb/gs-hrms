@@ -1,18 +1,24 @@
 'use client';
 
-import { useEffect, useState } from 'react';
+import { useCallback, useEffect, useState } from 'react';
 import Link from 'next/link';
 import { Card, CardHeader, EmptyState, Button } from '@/components/ui/Card';
-import { ArrowLeftIcon, HistoryIcon, JoinIcon, WarnIcon } from '@/components/icons';
+import { ArrowLeftIcon, HistoryIcon, JoinIcon, PlusIcon, WarnIcon } from '@/components/icons';
 import { Banner, Hero, JobBadge, fmtDate, payUnit } from '@/components/hiring/HiringBits';
 import { ServerRecruiterDrawer } from '@/components/hiring/ServerJobForm';
+import { ServerPipeline } from '@/components/hiring/ServerPipeline';
+import { ServerCandidateDrawer } from '@/components/hiring/ServerCandidateForm';
 import { ApiError, errorMessage } from '@/lib/api';
+import { can } from '@/lib/access';
+import { usePermissions } from '@/lib/auth';
+import { ServerApplication, pipelineApi } from '@/lib/candidatesApi';
 import { JOB_ACTION_LABEL, JOB_STATUS, JobAction, type ServerJobDetail as JobData, jobsApi } from '@/lib/jobsApi';
 import { EMPLOYMENT, amount } from '@/lib/requisitionsApi';
 
 /* One job from the backend (local development). Status buttons come from `viewer.actions` and the recruiter button
-   from `viewer.canChangeRecruiter` (BR-HIR-021), so the screen does not repeat the rules. The History tab lists the
-   job's own changes; the pipeline, candidates, interviews and offers connect in the next steps. */
+   from `viewer.canChangeRecruiter` (BR-HIR-021), so the screen does not repeat the rules. The Pipeline tab needs
+   Candidates → View; Add candidate needs Candidates → Add and an open job. The History tab lists the job's own changes.
+   Interviews and offers connect in later steps. */
 
 const Read = ({ l, children }: { l: string; children: React.ReactNode }) => (
   <div className="tx-read">
@@ -45,6 +51,13 @@ export function ServerJobDetail({ id }: { id: string }) {
   const [changing, setChanging] = useState(false);
   const [busy, setBusy] = useState(false);
   const [msg, setMsg] = useState<{ text: string; tone: 'info' | 'warn' } | null>(null);
+  const [apps, setApps] = useState<ServerApplication[] | null>(null);
+  const [appsError, setAppsError] = useState('');
+  const [adding, setAdding] = useState(false);
+  const perms = usePermissions() ?? [];
+  const seesCandidates = can(perms, 'hiring:recruiting:candidates');
+  const canAdd = can(perms, 'hiring:recruiting:candidates', 'add');
+  const notify = useCallback((text: string, tone: 'info' | 'warn' = 'info') => setMsg({ text, tone }), []);
 
   useEffect(() => {
     let live = true;
@@ -60,6 +73,26 @@ export function ServerJobDetail({ id }: { id: string }) {
       live = false;
     };
   }, [id]);
+
+  // Every application on the job, for the board (see ServerPipeline).
+  const loadApps = useCallback(() => {
+    let live = true;
+    if (seesCandidates) {
+      pipelineApi
+        .all(id)
+        .then((rows) => {
+          if (!live) return;
+          setApps(rows);
+          setAppsError('');
+        })
+        .catch((e) => live && setAppsError(errorMessage(e)));
+    }
+    return () => {
+      live = false;
+    };
+  }, [id, seesCandidates]);
+  useEffect(loadApps, [loadApps]);
+  const onApps = useCallback((change: (rows: ServerApplication[]) => ServerApplication[]) => setApps((rows) => (rows ? change(rows) : rows)), []);
 
   if (missing) return <NotFound />;
   if (!job) {
@@ -93,6 +126,9 @@ export function ServerJobDetail({ id }: { id: string }) {
   const awaiting = !job.recruiter;
   const history = [...job.history].reverse();
   const days = [...new Set(history.map((h) => localDay(h.at)))];
+  // Live from the loaded pipeline once it is there: active = not closed out and not hired (the server's count).
+  const counts = apps ? { active: apps.filter((a) => !a.exit && a.stage !== 'HIRED').length, total: apps.length } : job.candidates;
+  const open = job.status === 'OPEN';
 
   return (
     <div className="hm-page">
@@ -117,11 +153,16 @@ export function ServerJobDetail({ id }: { id: string }) {
                 {awaiting ? 'Choose recruiter' : 'Change recruiter'}
               </Button>
             )}
+            {canAdd && (
+              <Button variant="primary" onClick={() => setAdding(true)} disabled={!open} title={open ? undefined : 'Candidates can be added while the job is open'}>
+                <PlusIcon /> Add candidate
+              </Button>
+            )}
           </>
         }
         stats={[
           { label: 'Positions filled', value: `${job.filled}/${job.positions}`, progress: job.positions ? (job.filled / job.positions) * 100 : 0, hint: job.status === 'FILLED' ? 'Job is filled' : `${Math.max(0, job.positions - job.filled)} to go` },
-          { label: 'Active candidates', value: job.candidates.active, hint: `${job.candidates.total} applied in total` },
+          { label: 'Active candidates', value: counts.active, hint: `${counts.total} applied in total` },
           { label: 'Closes', value: fmtDate(job.closingDate), hint: `${amount(job.budgetMin)} – ${amount(job.budgetMax)} ${payUnit(cur)}` },
         ]}
       />
@@ -147,11 +188,26 @@ export function ServerJobDetail({ id }: { id: string }) {
 
       {tab === 'pipeline' ? (
         <Card>
-          <CardHeader title="Candidate pipeline" sub={`${job.candidates.active} active · ${job.candidates.total} applied`} />
-          <div className="note-box" style={{ margin: '0 20px 20px' }}>
-            <WarnIcon />
-            <div>The pipeline board and adding candidates are being connected to the server next. Until then, the counts above are live.</div>
-          </div>
+          <CardHeader title="Candidate pipeline" sub="Drag a card to a column, or use Move to… on the card. Rejecting asks for a reason." />
+          {!seesCandidates ? (
+            <div className="note-box" style={{ margin: '0 20px 20px' }}>
+              <WarnIcon />
+              <div>Seeing candidates needs Candidates → View. The counts above are live.</div>
+            </div>
+          ) : appsError ? (
+            <Banner tone="warn">
+              The candidates could not be loaded: {appsError}{' '}
+              <button type="button" className="btn sm ghost" onClick={loadApps}>
+                Try again
+              </button>
+            </Banner>
+          ) : !apps ? (
+            <p className="sb" style={{ padding: '0 20px 20px' }}>
+              Loading…
+            </p>
+          ) : (
+            <ServerPipeline job={job} apps={apps} onApps={onApps} notify={notify} />
+          )}
         </Card>
       ) : tab === 'history' ? (
         <Card>
@@ -233,6 +289,16 @@ export function ServerJobDetail({ id }: { id: string }) {
           setChanging(false);
           setJob(j);
           setMsg({ text: `${j.code} is now recruited by ${j.recruiter?.name ?? '—'}.`, tone: 'info' });
+        }}
+      />
+      <ServerCandidateDrawer
+        job={adding ? job : null}
+        applied={new Set((apps ?? []).map((a) => a.candidate.id))}
+        onClose={() => setAdding(false)}
+        onDone={(text) => {
+          setAdding(false);
+          notify(text);
+          loadApps();
         }}
       />
     </div>
