@@ -158,6 +158,46 @@ export interface DuplicateCandidate {
   phone: string;
 }
 
+/** The counts on the Candidates page. */
+export interface CandidateSummary {
+  total: number;
+  /** Candidates with an application still in the pipeline. */
+  inPipeline: number;
+  /** Candidates hired. */
+  hired: number;
+  /** Rejected applications, across all jobs. */
+  rejected: number;
+}
+
+export type CandidateListQuery = {
+  /** Name, email, phone, company, title, city or an exact tag. */
+  q?: string;
+  jobId?: string;
+  /** Alone: an application still in the pipeline at this stage. */
+  stage?: ServerStage;
+  /** An application closed out this way. */
+  exit?: ServerExit;
+  source?: ServerSource;
+  locationId?: string;
+  page: number;
+  /** At most 200. */
+  pageSize: number;
+};
+
+/** An application as the candidate profile holds it, from a pipeline action's answer. */
+export const asCandidateApplication = (d: ServerApplicationDetail): ServerApplicationSummary & { history: StageChange[] } => ({
+  id: d.id,
+  job: d.job,
+  stage: d.stage,
+  exit: d.exit,
+  exitFrom: d.exitFrom,
+  exitReason: d.exitReason,
+  exitNote: d.exitNote,
+  appliedAt: d.appliedAt,
+  stageChangedAt: d.stageChangedAt,
+  history: d.history,
+});
+
 export interface CreateCandidateBody {
   name: string;
   email: string;
@@ -209,6 +249,14 @@ export const pipelineApi = {
 };
 
 export const candidatesApi = {
+  /** Newest first, one page. Without full hiring access only candidates on your own jobs, with only those applications. */
+  list: (query: CandidateListQuery) => api<{ items: ServerCandidate[]; total: number }>('GET', '/hiring/candidates', undefined, query),
+  /** The Candidates page counts for a location, over the same candidates as the list. */
+  summary: (locationId: string) => api<CandidateSummary>('GET', '/hiring/candidates/summary', undefined, { locationId }),
+  /** 404 when it does not exist or is not yours to see. A view with salary is audited. */
+  get: (id: string) => api<ServerCandidateDetail>('GET', `/hiring/candidates/${id}`),
+  /** Notes cannot be changed or deleted afterwards. */
+  addNote: (id: string, text: string) => api<ServerCandidateDetail>('POST', `/hiring/candidates/${id}/notes`, { text }),
   /** Same email, or the same last nine phone digits. */
   duplicates: (email: string, phone: string) => api<DuplicateCandidate[]>('GET', '/hiring/candidates/duplicates', undefined, { email: email || undefined, phone: phone || undefined }),
   /** 409 `candidate.duplicate` (with `details.candidateId` when the caller may see them) if already on file. */

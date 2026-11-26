@@ -12,6 +12,8 @@ import { CandidateDrawer } from '@/components/hiring/HiringForms';
 import { useScoped } from '@/components/hiring/useScoped';
 import { appsForCandidate, isActiveApp, jobById } from '@/lib/hiringStore';
 import { SOURCES, STAGES } from '@/lib/hiringTypes';
+import { API_ENABLED } from '@/lib/api';
+import { ServerCandidates } from '@/components/hiring/ServerCandidates';
 
 const initials = (n: string) =>
   n
@@ -23,9 +25,7 @@ const initials = (n: string) =>
 
 export default function CandidatesPage() {
   return (
-    <Suspense fallback={null}>
-      <Candidates />
-    </Suspense>
+    <Suspense fallback={null}>{API_ENABLED ? <ServerCandidates /> : <Candidates />}</Suspense>
   );
 }
 

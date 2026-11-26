@@ -5,26 +5,30 @@ import Link from 'next/link';
 import { Drawer } from '@/components/ui/Drawer';
 import { Button } from '@/components/ui/Card';
 import { SearchSelect } from '@/components/ui/SearchSelect';
-import { Fg, TEXTAREA_STYLE, payUnit } from '@/components/hiring/HiringBits';
+import { Fg, TEXTAREA_STYLE, payUnit, useHiringLocation } from '@/components/hiring/HiringBits';
 import { ApiError, errorMessage } from '@/lib/api';
 import { can } from '@/lib/access';
 import { useAuth, usePermissions } from '@/lib/auth';
 import { SOURCES, Source } from '@/lib/hiringTypes';
 import { EMAIL_RE } from '@/lib/options';
 import { AMOUNT_RE } from '@/lib/requisitionsApi';
-import { type PickPerson, type ServerJobDetail as JobData, jobsApi } from '@/lib/jobsApi';
+import { type PickPerson, type ServerJob, jobsApi } from '@/lib/jobsApi';
 import { CreateCandidateBody, DuplicateCandidate, SOURCE_CODE, candidatesApi } from '@/lib/candidatesApi';
 
-/* Add a candidate to a job, from the backend (local development). The same form as CandidateForm in HiringForms.tsx.
+/* Add a candidate, from the backend (local development). The same form as CandidateForm in HiringForms.tsx. From a
+   job page the job is fixed; from the Candidates page an open job is chosen, or — with full hiring access — none, and
+   the candidate stays in the talent pool of the chosen location (without full access a job is required, BR-HIR-022).
    While the email or phone is typed, the server is asked who is already on file (only people the caller may see,
-   BR-HIR-007/022); someone found can be added to this job instead. Salary fields show only to callers who may see
-   salary on this job: full hiring access, its hiring manager or its recruiter. The referrer list comes from
+   BR-HIR-007/022); someone found can be added to the job instead. Salary fields show only to callers who may see
+   salary on that job: full hiring access, its hiring manager or its recruiter. The referrer list comes from
    /hiring/people. */
 
 const VISAS = ['Employment visa', 'Visit visa', 'Golden visa', 'Spouse / dependant visa', 'Cancelled visa', 'Needs sponsorship'];
 const YEARS_RE = /^\d{1,2}(\.\d)?$/;
 
-const blank = () => ({
+const blank = (locationId: string) => ({
+  jobId: '',
+  locationId,
   name: '',
   email: '',
   phone: '',
@@ -47,25 +51,55 @@ const blank = () => ({
 });
 type Form = ReturnType<typeof blank>;
 
-/** Open while `job` is set. `applied`: candidate ids already on this job. `onDone` gets the message to show. */
-export function ServerCandidateDrawer({ job, applied, onClose, onDone }: { job: JobData | null; applied: Set<string>; onClose: () => void; onDone: (text: string) => void }) {
-  return job ? <CandidateForm key={job.id} job={job} applied={applied} onClose={onClose} onDone={onDone} /> : null;
+/** `job`: add to this job (job page); otherwise one is chosen. `applied`: candidate ids already on that job.
+    `onDone` gets the message to show and the candidate's id. */
+export function ServerCandidateDrawer({
+  open,
+  job,
+  applied,
+  onClose,
+  onDone,
+}: {
+  open: boolean;
+  job?: ServerJob;
+  applied?: Set<string>;
+  onClose: () => void;
+  onDone: (text: string, candidateId: string) => void;
+}) {
+  return open ? <CandidateForm key={job?.id ?? 'any'} preset={job} applied={applied ?? new Set()} onClose={onClose} onDone={onDone} /> : null;
 }
 
-function CandidateForm({ job, applied, onClose, onDone }: { job: JobData; applied: Set<string>; onClose: () => void; onDone: (text: string) => void }) {
+function CandidateForm({ preset, applied, onClose, onDone }: { preset?: ServerJob; applied: Set<string>; onClose: () => void; onDone: (text: string, candidateId: string) => void }) {
   const perms = usePermissions() ?? [];
   const me = useAuth().user?.employeeId;
-  const [v, setV] = useState<Form>(blank);
+  const { loc, locations } = useHiringLocation();
+  const [v, setV] = useState<Form>(() => blank(loc));
   const [attempted, setAttempted] = useState(false);
   const [busy, setBusy] = useState(false);
   const [serverError, setServerError] = useState('');
   const [people, setPeople] = useState<PickPerson[] | null>(null);
+  const [openJobs, setOpenJobs] = useState<ServerJob[] | null>(preset ? [] : null);
   const set = <K extends keyof Form>(k: K, val: Form[K]) => setV((p) => ({ ...p, [k]: val }));
 
+  // Without a fixed job: the open jobs the caller may add to (their own unless they have full access).
+  useEffect(() => {
+    if (preset) return;
+    let live = true;
+    jobsApi
+      .open()
+      .then((j) => live && setOpenJobs(j))
+      .catch(() => live && setOpenJobs([]));
+    return () => {
+      live = false;
+    };
+  }, [preset]);
+
   const full = can(perms, 'hiring:recruiting:jobs') && can(perms, 'hiring:requisitions:requisitions');
-  const seesPay = full || (!!me && (me === job.hiringManager.id || me === job.recruiter?.id));
-  const cur = job.budgetMin.currency;
-  const india = job.location.id === 'Kochi';
+  const job = preset ?? openJobs?.find((j) => j.id === v.jobId);
+  const seesPay = full || (!!me && !!job && (me === job.hiringManager.id || me === job.recruiter?.id));
+  const locationId = job?.location.id ?? v.locationId;
+  const cur = job?.budgetMin.currency ?? locations.find((l) => l.id === locationId)?.currency ?? 'AED';
+  const india = locationId === 'Kochi';
 
   // Who is already on file with this email or phone, asked once the typing pauses.
   const email = v.email.trim();
@@ -105,6 +139,7 @@ function CandidateForm({ job, applied, onClose, onDone }: { job: JobData; applie
     .filter(Boolean);
 
   const errors: Record<string, string> = {};
+  if (!job && !full) errors.jobId = 'Choose one of your open jobs.';
   if (v.name.trim().length < 2) errors.name = 'Name is required.';
   if (!email) errors.email = 'Email is required.';
   else if (!EMAIL_RE.test(email)) errors.email = 'That does not look like an email address.';
@@ -121,6 +156,8 @@ function CandidateForm({ job, applied, onClose, onDone }: { job: JobData; applie
   if (!v.consent) errors.consent = 'Confirm the candidate has consented to their data being stored.';
   const shown = (k: string) => (attempted ? errors[k] : undefined);
 
+  const doneText = (name: string) => (preset ? `${name} was added to the pipeline at Applied.` : job ? `${name} was added and applied to ${job.title}.` : `${name} was added to the talent pool.`);
+
   const save = async () => {
     setAttempted(true);
     setServerError('');
@@ -130,7 +167,8 @@ function CandidateForm({ job, applied, onClose, onDone }: { job: JobData; applie
       name: v.name.trim(),
       email,
       phone,
-      jobId: job.id,
+      jobId: job?.id,
+      locationId: job ? undefined : v.locationId,
       currentCity: opt(v.currentCity),
       currentCompany: opt(v.currentCompany),
       currentTitle: opt(v.currentTitle),
@@ -151,7 +189,7 @@ function CandidateForm({ job, applied, onClose, onDone }: { job: JobData; applie
     setBusy(true);
     try {
       const c = await candidatesApi.create(body);
-      onDone(`${c.name} was added to the pipeline at Applied.`);
+      onDone(doneText(c.name), c.id);
     } catch (e) {
       setServerError(errorMessage(e));
       // Saved before the check came back: show who it is (only someone the caller may see has an id).
@@ -168,12 +206,12 @@ function CandidateForm({ job, applied, onClose, onDone }: { job: JobData; applie
   };
 
   const addExisting = async (c: DuplicateCandidate) => {
-    if (busy) return;
+    if (busy || !job) return;
     setBusy(true);
     setServerError('');
     try {
       await candidatesApi.apply(c.id, job.id);
-      onDone(`${c.name} was added to the pipeline at Applied.`);
+      onDone(preset ? `${c.name} was added to the pipeline at Applied.` : `${c.name} was added to ${job.title} at Applied.`, c.id);
     } catch (e) {
       setServerError(errorMessage(e));
     } finally {
@@ -187,7 +225,7 @@ function CandidateForm({ job, applied, onClose, onDone }: { job: JobData; applie
     <Drawer
       open
       onClose={onClose}
-      title={`Add candidate to ${job.title}`}
+      title={preset ? `Add candidate to ${preset.title}` : 'Add candidate'}
       description="Duplicates are checked by email and phone before anything is saved."
       footer={
         <>
@@ -220,9 +258,8 @@ function CandidateForm({ job, applied, onClose, onDone }: { job: JobData; applie
                 <Link href={`/hiring/candidates/${c.id}`} className="btn sm ghost">
                   Open profile
                 </Link>
-                {applied.has(c.id) ? (
-                  <span className="hint">Already applied to this job</span>
-                ) : (
+                {job && applied.has(c.id) && <span className="hint">Already applied to this job</span>}
+                {job && !applied.has(c.id) && (
                   <Button size="sm" variant="primary" disabled={busy} onClick={() => addExisting(c)}>
                     Add to {job.title}
                   </Button>
@@ -233,6 +270,29 @@ function CandidateForm({ job, applied, onClose, onDone }: { job: JobData; applie
         </div>
       )}
       <div className="form-grid hm-form">
+        {!preset && (
+          <Fg label="Apply to job" required={!full} error={shown('jobId')} hint={full ? 'Leave empty to keep the candidate in the talent pool.' : 'One of your open jobs.'} full>
+            <select value={v.jobId} disabled={openJobs === null} onChange={(e) => set('jobId', e.target.value)}>
+              <option value="">{openJobs === null ? 'Loading…' : full ? 'No job yet' : 'Choose a job…'}</option>
+              {(openJobs ?? []).map((j) => (
+                <option key={j.id} value={j.id}>
+                  {j.code} · {j.title} · {j.location.name}
+                </option>
+              ))}
+            </select>
+          </Fg>
+        )}
+        {!job && full && (
+          <Fg label="Location" required>
+            <select value={v.locationId} onChange={(e) => set('locationId', e.target.value)}>
+              {locations.map((l) => (
+                <option key={l.id} value={l.id}>
+                  {l.name}
+                </option>
+              ))}
+            </select>
+          </Fg>
+        )}
         <Fg label="Full name" required error={shown('name')}>
           <input value={v.name} maxLength={120} onChange={(e) => set('name', e.target.value)} />
         </Fg>
