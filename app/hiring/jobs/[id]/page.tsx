@@ -16,9 +16,15 @@ import { Pipeline } from '@/components/hiring/Pipeline';
 import { useScoped } from '@/components/hiring/useScoped';
 import { appsForJob, isActiveApp, isMyJob, jobById, recruiterIdOf, recruiterLabel, reqById, setJobStatus } from '@/lib/hiringStore';
 import { JobStatus } from '@/lib/hiringTypes';
+import { API_ENABLED } from '@/lib/api';
+import { ServerJobDetail } from '@/components/hiring/ServerJobDetail';
 
 export default function JobDetailPage() {
   const { id } = useParams<{ id: string }>();
+  return API_ENABLED ? <ServerJobDetail id={decodeURIComponent(id)} /> : <LocalJobDetail id={id} />;
+}
+
+function LocalJobDetail({ id }: { id: string }) {
   const { s, level, me } = useScoped();
   const actor = useActor();
   const { role } = useApp();

@@ -12,10 +12,16 @@ import { JobDrawer } from '@/components/hiring/HiringForms';
 import { useScoped } from '@/components/hiring/useScoped';
 import { isActiveApp, jobForRequisition, recruiterIdOf, recruiterLabel } from '@/lib/hiringStore';
 import { JobStatus, Requisition } from '@/lib/hiringTypes';
+import { API_ENABLED } from '@/lib/api';
+import { ServerJobs } from '@/components/hiring/ServerJobs';
 
 const STATUSES: ('All' | JobStatus)[] = ['All', 'Open', 'Draft', 'On Hold', 'Filled', 'Closed'];
 
 export default function JobsPage() {
+  return API_ENABLED ? <ServerJobs /> : <LocalJobs />;
+}
+
+function LocalJobs() {
   const { s, level, jobs, applications, currency, requisitions } = useScoped();
   const router = useRouter();
   const [q, setQ] = useState('');
