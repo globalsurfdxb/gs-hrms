@@ -33,6 +33,8 @@ import {
   updateCandidateTags,
 } from '@/lib/hiringStore';
 import { Application, EXITS, Exit, STAGES, Stage } from '@/lib/hiringTypes';
+import { API_ENABLED } from '@/lib/api';
+import { ServerCandidateProfile } from '@/components/hiring/ServerCandidateProfile';
 
 const initials = (n: string) =>
   n
@@ -51,6 +53,10 @@ interface Event {
 
 export default function CandidateProfilePage() {
   const { id } = useParams<{ id: string }>();
+  return API_ENABLED ? <ServerCandidateProfile key={id} id={decodeURIComponent(id)} /> : <LocalCandidateProfile id={id} />;
+}
+
+function LocalCandidateProfile({ id }: { id: string }) {
   const { s, level, me } = useScoped();
   const actor = useActor();
   const [msg, setMsg] = useState<{ text: string; tone: 'info' | 'warn' } | null>(null);

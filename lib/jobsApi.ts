@@ -105,6 +105,15 @@ export const jobsApi = {
       if (items.length >= r.total || !r.items.length) return items;
     }
   },
+  /** Every OPEN job the caller may see, in one location or all of them (to add a candidate to). */
+  async open(locationId?: string): Promise<ServerJob[]> {
+    const items: ServerJob[] = [];
+    for (let page = 1; ; page++) {
+      const r = await api<{ items: ServerJob[]; total: number }>('GET', '/hiring/jobs', undefined, { status: 'OPEN', locationId, page, pageSize: PAGE });
+      items.push(...r.items);
+      if (items.length >= r.total || !r.items.length) return items;
+    }
+  },
   /** 404 when it does not exist or is not yours to see. */
   get: (id: string) => api<ServerJobDetail>('GET', `/hiring/jobs/${id}`),
   create: (requisitionId: string, body: CreateJobBody) => api<ServerJobDetail>('POST', `/hiring/requisitions/${requisitionId}/job`, body),

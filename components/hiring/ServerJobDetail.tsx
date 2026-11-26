@@ -292,7 +292,8 @@ export function ServerJobDetail({ id }: { id: string }) {
         }}
       />
       <ServerCandidateDrawer
-        job={adding ? job : null}
+        open={adding}
+        job={job}
         applied={new Set((apps ?? []).map((a) => a.candidate.id))}
         onClose={() => setAdding(false)}
         onDone={(text) => {
