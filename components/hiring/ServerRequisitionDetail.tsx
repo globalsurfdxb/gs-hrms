@@ -2,16 +2,17 @@
 
 import { useEffect, useState } from 'react';
 import Link from 'next/link';
+import { useRouter } from 'next/navigation';
 import { Card, CardHeader, EmptyState, Button } from '@/components/ui/Card';
 import { ArrowLeftIcon, CheckIcon, InboxIcon, WarnIcon, XIcon } from '@/components/icons';
 import { Banner, Hero, ReqBadge, TEXTAREA_STYLE, fmtDate, fmtDateTime, payUnit } from '@/components/hiring/HiringBits';
 import { ServerRequisitionDrawer } from '@/components/hiring/ServerRequisitionForm';
+import { ServerJobDrawer } from '@/components/hiring/ServerJobForm';
 import { ApiError, errorMessage } from '@/lib/api';
 import { EMPLOYMENT, REASON, REQ_STATUS, STEP_LABEL, ServerRequisition, amount, designationOf, requisitionsApi } from '@/lib/requisitionsApi';
 
 /* One requisition from the backend (local development). Buttons follow `viewer` from the server: edit and submit,
-   decide the pending step, hold / resume / close. Every action returns the updated requisition. Opening a job from it
-   comes with the jobs screens; until then an existing job shows its code only. */
+   decide the pending step, hold / resume / close, create the job. Every action returns the updated requisition. */
 
 const Row = ({ label, children }: { label: string; children: React.ReactNode }) => (
   <div className="tx-read">
@@ -42,6 +43,8 @@ export function ServerRequisitionDetail({ id }: { id: string }) {
   const [notice, setNotice] = useState('');
   const [busy, setBusy] = useState(false);
   const [edit, setEdit] = useState(false);
+  const [jobFor, setJobFor] = useState(false);
+  const router = useRouter();
 
   useEffect(() => {
     let live = true;
@@ -124,7 +127,16 @@ export function ServerRequisitionDetail({ id }: { id: string }) {
                 {r.status === 'REJECTED' ? 'Resubmit for approval' : 'Submit for approval'}
               </Button>
             )}
-            {r.job && <span className="btn ghost" title="The jobs screens connect to the server next">{r.job.code}</span>}
+            {viewer.canCreateJob && (
+              <Button variant="primary" onClick={() => setJobFor(true)}>
+                Create job
+              </Button>
+            )}
+            {r.job && (
+              <Link href={`/hiring/jobs/${r.job.id}`} className="btn primary">
+                Open {r.job.code}
+              </Link>
+            )}
           </>
         }
         stats={[
@@ -241,6 +253,7 @@ export function ServerRequisitionDetail({ id }: { id: string }) {
         </Card>
       </div>
 
+      <ServerJobDrawer requisition={jobFor ? r : null} onClose={() => setJobFor(false)} onDone={(j) => router.push(`/hiring/jobs/${j.id}`)} />
       <ServerRequisitionDrawer
         open={edit}
         edit={r}
